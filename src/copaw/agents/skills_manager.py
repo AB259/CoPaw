@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel
 import frontmatter
 
-from ..constant import ACTIVE_SKILLS_DIR, CUSTOMIZED_SKILLS_DIR
+from ..constant import get_request_working_dir
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +54,12 @@ def get_builtin_skills_dir() -> Path:
 
 def get_customized_skills_dir() -> Path:
     """Get the path to customized skills directory in working_dir."""
-    return CUSTOMIZED_SKILLS_DIR
+    return get_request_working_dir() / "customized_skills"
 
 
 def get_active_skills_dir() -> Path:
     """Get the path to active skills directory in working_dir."""
-    return ACTIVE_SKILLS_DIR
+    return get_request_working_dir() / "active_skills"
 
 
 def get_working_skills_dir() -> Path:

@@ -16,20 +16,25 @@ from typing import Optional
 from agentscope.message import Msg
 
 from ...config import load_config
-from ...constant import get_runtime_working_dir
+from ...constant import get_request_working_dir
 from .file_handling import download_file_from_base64, download_file_from_url
 
 logger = logging.getLogger(__name__)
 
 # Only allow local paths under this dir (channels save media here).
-_ALLOWED_MEDIA_ROOT = get_runtime_working_dir() / "media"
+# Use function accessor for request-scoped directory resolution
+def _get_allowed_media_root() -> Path:
+    """Get allowed media root for current request."""
+    return get_request_working_dir() / "media"
+
+_ALLOWED_MEDIA_ROOT = None  # Deprecated: use _get_allowed_media_root() instead
 
 
 def _is_allowed_media_path(path: str) -> bool:
     """True if path is a file under _ALLOWED_MEDIA_ROOT."""
     try:
         resolved = Path(path).expanduser().resolve()
-        root = _ALLOWED_MEDIA_ROOT.resolve()
+        root = _get_allowed_media_root().resolve()
         return resolved.is_file() and str(resolved).startswith(str(root))
     except Exception:
         return False

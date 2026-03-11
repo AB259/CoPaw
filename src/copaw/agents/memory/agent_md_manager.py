@@ -4,7 +4,7 @@ and memory directories."""
 from datetime import datetime
 from pathlib import Path
 
-from ...constant import get_runtime_working_dir
+from ...constant import get_request_working_dir
 
 
 class AgentMdManager:
@@ -125,4 +125,10 @@ class AgentMdManager:
         file_path.write_text(content, encoding="utf-8")
 
 
-AGENT_MD_MANAGER = AgentMdManager(working_dir=get_runtime_working_dir())
+def get_agent_md_manager() -> AgentMdManager:
+    """Get AgentMdManager for current request.
+
+    Returns:
+        AgentMdManager instance for the current request-scoped working directory
+    """
+    return AgentMdManager(working_dir=get_request_working_dir())

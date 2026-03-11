@@ -15,7 +15,7 @@ from ..constant import (
     CHATS_FILE,
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH_ENV,
     RUNNING_IN_CONTAINER,
-    get_runtime_working_dir,
+    get_request_working_dir,
 )
 from .config import Config, HeartbeatConfig, LastApiConfig, LastDispatchConfig
 
@@ -329,10 +329,15 @@ def get_config_path(user_id: str | None = None) -> Path:
 
     Args:
         user_id: User identifier for subdirectory isolation.
-                 None uses the current runtime working directory.
+                 None uses the current request-scoped working directory.
     """
-    from ..constant import get_working_dir
-    base = get_working_dir(user_id)
+    if user_id is not None:
+        from ..constant import get_working_dir
+        base = get_working_dir(user_id)
+    else:
+        # Use request-scoped working dir when in a request context
+        from ..constant import get_request_working_dir
+        base = get_request_working_dir()
     return base / "config.json"
 
 
@@ -417,9 +422,16 @@ def get_jobs_path(user_id: str | None = None) -> Path:
 
     Args:
         user_id: User identifier for subdirectory isolation.
+                 None uses the current request-scoped working directory.
     """
-    from ..constant import get_working_dir
-    return get_working_dir(user_id) / JOBS_FILE
+    if user_id is not None:
+        from ..constant import get_working_dir
+        base = get_working_dir(user_id)
+    else:
+        # Use request-scoped working dir when in a request context
+        from ..constant import get_request_working_dir
+        base = get_request_working_dir()
+    return base / JOBS_FILE
 
 
 def get_chats_path(user_id: str | None = None) -> Path:
@@ -427,6 +439,13 @@ def get_chats_path(user_id: str | None = None) -> Path:
 
     Args:
         user_id: User identifier for subdirectory isolation.
+                 None uses the current request-scoped working directory.
     """
-    from ..constant import get_working_dir
-    return get_working_dir(user_id) / CHATS_FILE
+    if user_id is not None:
+        from ..constant import get_working_dir
+        base = get_working_dir(user_id)
+    else:
+        # Use request-scoped working dir when in a request context
+        from ..constant import get_request_working_dir
+        base = get_request_working_dir()
+    return base / CHATS_FILE

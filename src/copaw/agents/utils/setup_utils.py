@@ -24,7 +24,7 @@ def copy_md_files(
     Returns:
         List of copied file names.
     """
-    from ...constant import get_runtime_working_dir
+    from ...constant import get_request_working_dir
 
     # Get md_files directory path with language subdirectory
     md_files_dir = Path(__file__).parent.parent / "md_files" / language
@@ -41,7 +41,7 @@ def copy_md_files(
             return []
 
     # Ensure working directory exists
-    working_dir = get_runtime_working_dir()
+    working_dir = get_request_working_dir()  # Use request-scoped
     working_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy all .md files to working directory

@@ -10,7 +10,7 @@ from typing import Optional
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
-from ...constant import get_runtime_working_dir
+from ...constant import get_request_working_dir
 from .file_io import _resolve_file_path
 
 # Skip binary / large files
@@ -112,7 +112,7 @@ async def grep_search(  # pylint: disable=too-many-branches
             ],
         )
 
-    search_root = Path(_resolve_file_path(path)) if path else get_runtime_working_dir()
+    search_root = Path(_resolve_file_path(path)) if path else get_request_working_dir()  # Use request-scoped
 
     if not search_root.exists():
         return ToolResponse(
@@ -236,7 +236,7 @@ async def glob_search(
             ],
         )
 
-    search_root = Path(_resolve_file_path(path)) if path else get_runtime_working_dir()
+    search_root = Path(_resolve_file_path(path)) if path else get_request_working_dir()  # Use request-scoped
 
     if not search_root.exists():
         return ToolResponse(

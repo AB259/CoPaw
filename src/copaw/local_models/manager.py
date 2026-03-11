@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from ..constant import MODELS_DIR
+from ..constant import get_request_working_dir
 from .schema import (
     BackendType,
     DownloadSource,
@@ -19,18 +19,31 @@ from .schema import (
 
 logger = logging.getLogger(__name__)
 
-MANIFEST_PATH = MODELS_DIR / "manifest.json"
+
+def _get_models_dir() -> Path:
+    """Get models directory for current request."""
+    return get_request_working_dir() / "models"
 
 
 def _ensure_models_dir() -> Path:
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    return MODELS_DIR
+    models_dir = _get_models_dir()
+    models_dir.mkdir(parents=True, exist_ok=True)
+    return models_dir
+
+
+MANIFEST_PATH = None  # Computed per-request via _get_manifest_path()
+
+
+def _get_manifest_path() -> Path:
+    """Get manifest.json path for current request."""
+    return _get_models_dir() / "manifest.json"
 
 
 def _load_manifest() -> LocalModelsManifest:
-    if MANIFEST_PATH.is_file():
+    manifest_path = _get_manifest_path()
+    if manifest_path.is_file():
         try:
-            raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
             return LocalModelsManifest.model_validate(raw)
         except (json.JSONDecodeError, ValueError):
             logger.warning("Corrupted manifest.json, starting fresh")
@@ -39,7 +52,7 @@ def _load_manifest() -> LocalModelsManifest:
 
 def _save_manifest(manifest: LocalModelsManifest) -> None:
     _ensure_models_dir()
-    MANIFEST_PATH.write_text(
+    _get_manifest_path().write_text(
         json.dumps(
             manifest.model_dump(mode="json"),
             indent=2,
@@ -136,7 +149,7 @@ class LocalModelManager:
             ) from e
 
         _ensure_models_dir()
-        local_dir = MODELS_DIR / _sanitize_repo_id(repo_id)
+        local_dir = _get_models_dir() / _sanitize_repo_id(repo_id)
 
         # MLX models are directory-based — download entire repo
         if backend == BackendType.MLX:
@@ -191,7 +204,7 @@ class LocalModelManager:
         backend: BackendType,
     ) -> LocalModelInfo:
         _ensure_models_dir()
-        local_dir = MODELS_DIR / _sanitize_repo_id(repo_id)
+        local_dir = _get_models_dir() / _sanitize_repo_id(repo_id)
 
         # MLX models require config/tokenizer files in addition to weights.
         # ModelScope file download pulls only one file, so use full snapshot.

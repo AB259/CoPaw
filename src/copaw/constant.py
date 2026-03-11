@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import contextvars
 import os
 from pathlib import Path
 
@@ -18,10 +19,24 @@ DEFAULT_SECRET_DIR = (
     .resolve()
 )
 
-# Runtime state for user-specific directory
+# Runtime state for user-specific directory (for single-user mode / daemon mode)
 _current_user_id: str | None = None
 _runtime_working_dir: Path = DEFAULT_WORKING_DIR
 _runtime_secret_dir: Path = DEFAULT_SECRET_DIR
+
+# Context variables for request-scoped user isolation (multi-user concurrent mode)
+_request_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "request_user_id",
+    default=None,
+)
+
+# Request-scoped directory cache (computed per-request)
+_request_working_dir: contextvars.ContextVar[Path | None] = (
+    contextvars.ContextVar("request_working_dir", default=None)
+)
+_request_secret_dir: contextvars.ContextVar[Path | None] = (
+    contextvars.ContextVar("request_secret_dir", default=None)
+)
 
 
 def get_working_dir(user_id: str | None = None) -> Path:
@@ -83,7 +98,67 @@ def get_current_user_id() -> str | None:
     return _current_user_id
 
 
-# Backward compatibility aliases - these now point to runtime values
+# ============================================================================
+# Request-scoped directory access (for multi-user concurrent mode)
+# ============================================================================
+
+
+def set_request_user_id(user_id: str | None) -> contextvars.Token:
+    """设置请求级用户 ID，返回 token 用于恢复。
+
+    Args:
+        user_id: 用户标识
+
+    Returns:
+        contextvars.Token 用于恢复之前的值
+    """
+    token = _request_user_id.set(user_id)
+    if user_id:
+        _request_working_dir.set(DEFAULT_WORKING_DIR / user_id)
+        _request_secret_dir.set(DEFAULT_SECRET_DIR / user_id)
+    else:
+        _request_working_dir.set(DEFAULT_WORKING_DIR)
+        _request_secret_dir.set(DEFAULT_SECRET_DIR)
+    return token
+
+
+def reset_request_user_id(token: contextvars.Token) -> None:
+    """恢复之前的用户 ID 上下文。
+
+    Args:
+        token: set_request_user_id 返回的 token
+    """
+    _request_user_id.reset(token)
+
+
+def get_request_user_id() -> str | None:
+    """获取当前请求的用户 ID。"""
+    return _request_user_id.get()
+
+
+def get_request_working_dir() -> Path:
+    """获取请求级工作目录，回退到运行时目录。
+
+    在 Channel 处理多用户并发请求时，返回当前请求 user_id 对应的目录。
+    在无请求上下文的场景中（如 CLI、Daemon），回退到 _runtime_working_dir。
+    """
+    wd = _request_working_dir.get()
+    return wd if wd is not None else _runtime_working_dir
+
+
+def get_request_secret_dir() -> Path:
+    """获取请求级敏感目录，回退到运行时目录。
+
+    在 Channel 处理多用户并发请求时，返回当前请求 user_id 对应的目录。
+    在无请求上下文的场景中（如 CLI、Daemon），回退到 _runtime_secret_dir。
+    """
+    sd = _request_secret_dir.get()
+    return sd if sd is not None else _runtime_secret_dir
+
+
+# ============================================================================
+# Module-level constants (now use request-scoped accessors)
+# ============================================================================
 WORKING_DIR = DEFAULT_WORKING_DIR
 SECRET_DIR = DEFAULT_SECRET_DIR
 
@@ -124,21 +199,42 @@ DOCS_ENABLED = os.environ.get("COPAW_OPENAPI_DOCS", "false").lower() in (
     "yes",
 )
 
-# Skills directories
-# Active skills directory (activated skills that agents use)
-ACTIVE_SKILLS_DIR = get_runtime_working_dir() / "active_skills"
-# Customized skills directory (user-created skills)
-CUSTOMIZED_SKILLS_DIR = get_runtime_working_dir() / "customized_skills"
+# Skills directories - use function accessors for request-scoped access
+# Note: These are now functions to support request-scoped directory resolution
 
-# Memory directory
-MEMORY_DIR = get_runtime_working_dir() / "memory"
 
-# Custom channel modules (installed via `copaw channels install`); manager
-# loads BaseChannel subclasses from here.
-CUSTOM_CHANNELS_DIR = get_runtime_working_dir() / "custom_channels"
+def get_active_skills_dir() -> Path:
+    """Get active skills directory for current request."""
+    return get_request_working_dir() / "active_skills"
 
-# Local models directory
-MODELS_DIR = get_runtime_working_dir() / "models"
+
+def get_customized_skills_dir() -> Path:
+    """Get customized skills directory for current request."""
+    return get_request_working_dir() / "customized_skills"
+
+
+def get_memory_dir() -> Path:
+    """Get memory directory for current request."""
+    return get_request_working_dir() / "memory"
+
+
+def get_custom_channels_dir() -> Path:
+    """Get custom channel modules directory for current request."""
+    return get_request_working_dir() / "custom_channels"
+
+
+def get_models_dir() -> Path:
+    """Get local models directory for current request."""
+    return get_request_working_dir() / "models"
+
+
+# Backward compatibility: module-level variables that resolve at access time
+# These will use the request-scoped directory when in a request context
+ACTIVE_SKILLS_DIR = None  # Use get_active_skills_dir() instead
+CUSTOMIZED_SKILLS_DIR = None  # Use get_customized_skills_dir() instead
+MEMORY_DIR = None  # Use get_memory_dir() instead
+CUSTOM_CHANNELS_DIR = None  # Use get_custom_channels_dir() instead
+MODELS_DIR = None  # Use get_models_dir() instead
 
 # Memory compaction configuration
 MEMORY_COMPACT_KEEP_RECENT = int(

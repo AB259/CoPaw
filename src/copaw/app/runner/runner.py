@@ -29,6 +29,9 @@ from ...config import load_config
 from ...constant import (
     MEMORY_COMPACT_RATIO,
     get_runtime_working_dir,
+    set_request_user_id,
+    reset_request_user_id,
+    get_request_working_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,16 +67,21 @@ class AgentRunner(Runner):
         request: AgentRequest = None,
         **kwargs,
     ):
-        """
-        Handle agent query.
-        """
+        """Handle agent query with per-request user isolation."""
+        # Set request context for user-specific directory routing
+        user_token = set_request_user_id(request.user_id if request else None)
+
         # Command path: do not create agent; yield from run_command_path
         query = _get_last_user_text(msgs)
         if query and _is_command(query):
             logger.info("Command path: %s", query.strip()[:50])
-            async for msg, last in run_command_path(request, msgs, self):
-                yield msg, last
-            return
+            try:
+                async for msg, last in run_command_path(request, msgs, self):
+                    yield msg, last
+                return
+            finally:
+                # Always restore previous context
+                reset_request_user_id(user_token)
 
         agent = None
         chat = None
@@ -102,7 +110,7 @@ class AgentRunner(Runner):
                 session_id=session_id,
                 user_id=user_id,
                 channel=channel,
-                working_dir=str(get_runtime_working_dir()),
+                working_dir=str(get_request_working_dir()),  # Use request-scoped
             )
 
             # Get MCP clients from manager (hot-reloadable)
@@ -196,15 +204,19 @@ class AgentRunner(Runner):
                 ) + e.args[1:]
             raise
         finally:
-            if agent is not None and session_state_loaded:
-                await self.session.save_session_state(
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent=agent,
-                )
+            try:
+                if agent is not None and session_state_loaded:
+                    await self.session.save_session_state(
+                        session_id=session_id,
+                        user_id=user_id,
+                        agent=agent,
+                    )
 
-            if self._chat_manager is not None and chat is not None:
-                await self._chat_manager.update_chat(chat)
+                if self._chat_manager is not None and chat is not None:
+                    await self._chat_manager.update_chat(chat)
+            finally:
+                # Always restore previous context
+                reset_request_user_id(user_token)
 
     async def init_handler(self, *args, **kwargs):
         """
@@ -221,6 +233,7 @@ class AgentRunner(Runner):
                 "using existing environment variables",
             )
 
+        # Use runtime working dir for session storage (global initialization)
         session_dir = str(get_runtime_working_dir() / "sessions")
         self.session = SafeJSONSession(save_dir=session_dir)
 
@@ -243,8 +256,9 @@ class AgentRunner(Runner):
                 toolkit.register_tool_function(edit_file)
 
                 # Initialize MemoryManager with new parameters
+                # Note: MemoryManager now uses request-scoped directories internally
                 self.memory_manager = MemoryManager(
-                    working_dir=str(get_runtime_working_dir()),
+                    working_dir=str(get_runtime_working_dir()),  # Base path, overridden per-request
                     chat_model=chat_model,
                     formatter=formatter,
                     token_counter=token_counter,

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
-from ..constant import get_secret_dir, get_working_dir
+from ..constant import get_secret_dir, get_working_dir, get_request_secret_dir
 from .models import (
     CustomProviderData,
     ModelInfo,
@@ -38,6 +38,7 @@ from .ollama_manager import _base_url_to_host as _base_url_to_ollama_host
 logger = logging.getLogger(__name__)
 
 # Module-level defaults (use runtime values)
+# Note: These are deprecated, use get_providers_json_path() instead
 _PROVIDERS_JSON = get_secret_dir() / "providers.json"
 _LEGACY_PROVIDERS_JSON_CANDIDATES = (
     Path(__file__).resolve().parent / "providers.json",
@@ -103,8 +104,12 @@ def get_providers_json_path(user_id: str | None = None) -> Path:
 
     Args:
         user_id: User identifier for subdirectory isolation.
+                 None uses the current request-scoped secret directory.
     """
-    return get_secret_dir(user_id) / "providers.json"
+    if user_id is not None:
+        return get_secret_dir(user_id) / "providers.json"
+    # Use request-scoped secret dir when in a request context
+    return get_request_secret_dir() / "providers.json"
 
 
 def get_ollama_host() -> Optional[str]:
