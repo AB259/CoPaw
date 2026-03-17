@@ -652,7 +652,9 @@ async def browser_use(  # pylint: disable=R0911,R0912
                 user_id=user_id,
             )
         if action == "resize":
-            return await _action_resize(page_id, width, height, user_id=user_id)
+            return await _action_resize(
+                page_id, width, height, user_id=user_id
+            )
         if action == "console_messages":
             return await _action_console_messages(
                 page_id,
@@ -661,11 +663,17 @@ async def browser_use(  # pylint: disable=R0911,R0912
                 user_id=user_id,
             )
         if action == "handle_dialog":
-            return await _action_handle_dialog(page_id, accept, prompt_text, user_id=user_id)
+            return await _action_handle_dialog(
+                page_id, accept, prompt_text, user_id=user_id
+            )
         if action == "file_upload":
-            return await _action_file_upload(page_id, paths_json, user_id=user_id)
+            return await _action_file_upload(
+                page_id, paths_json, user_id=user_id
+            )
         if action == "fill_form":
-            return await _action_fill_form(page_id, fields_json, user_id=user_id)
+            return await _action_fill_form(
+                page_id, fields_json, user_id=user_id
+            )
         if action == "install":
             return await _action_install()
         if action == "press_key":
@@ -710,9 +718,13 @@ async def browser_use(  # pylint: disable=R0911,R0912
                 user_id=user_id,
             )
         if action == "tabs":
-            return await _action_tabs(page_id, tab_action, index, user_id=user_id)
+            return await _action_tabs(
+                page_id, tab_action, index, user_id=user_id
+            )
         if action == "wait_for":
-            return await _action_wait_for(page_id, wait_time, text, text_gone, user_id=user_id)
+            return await _action_wait_for(
+                page_id, wait_time, text, text_gone, user_id=user_id
+            )
         if action == "pdf":
             return await _action_pdf(page_id, path, user_id=user_id)
         if action == "close":
@@ -764,7 +776,9 @@ def _get_locator_by_ref(
     return locator
 
 
-def _attach_page_listeners(page, page_id: str, user_state: UserBrowserState) -> None:
+def _attach_page_listeners(
+    page, page_id: str, user_state: UserBrowserState
+) -> None:
     """Attach console and request listeners for a page."""
     logs = user_state.console_logs.setdefault(page_id, [])
 
@@ -834,7 +848,9 @@ def _attach_context_listeners(context, user_state: UserBrowserState) -> None:
     context.on("page", on_page)
 
 
-async def _ensure_browser_for_user(user_id: str | None = None) -> bool:  # pylint: disable=too-many-branches
+async def _ensure_browser_for_user(
+    user_id: str | None = None,
+) -> bool:  # pylint: disable=too-many-branches
     """Start browser for a specific user if not running. Return True if ready."""
     if user_id is None:
         user_id = _get_current_user_id()
@@ -846,7 +862,10 @@ async def _ensure_browser_for_user(user_id: str | None = None) -> bool:  # pylin
 
     # Check browser state based on mode
     if _USE_SYNC_PLAYWRIGHT:
-        if user_state._sync_browser is not None and user_state._sync_context is not None:
+        if (
+            user_state._sync_browser is not None
+            and user_state._sync_context is not None
+        ):
             _touch_activity_user(user_id)
             return True
     else:
@@ -1133,7 +1152,9 @@ async def _action_open(
 
     if not await _ensure_browser_for_user(user_id):
         user_state = _state["users"].get(user_id)
-        err = (user_state._last_browser_error if user_state else None) or "Browser not started"
+        err = (
+            user_state._last_browser_error if user_state else None
+        ) or "Browser not started"
         return _tool_response(
             json.dumps(
                 {"ok": False, "error": err},
@@ -1373,6 +1394,7 @@ async def _action_screenshot(
                         if screenshot_type == "jpeg"
                         else "png",
                     )
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {
@@ -1561,7 +1583,9 @@ async def _action_type(
         )
     try:
         if ref:
-            locator = _get_locator_by_ref(page, page_id, ref, frame_selector, user_id)
+            locator = _get_locator_by_ref(
+                page, page_id, ref, frame_selector, user_id
+            )
             if locator is None:
                 return _tool_response(
                     json.dumps(
@@ -1621,6 +1645,7 @@ async def _action_type(
                     await loc.fill(text or "")
                 if submit:
                     await loc.press("Enter")
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Typed into {ref or selector}"},
@@ -1638,7 +1663,9 @@ async def _action_type(
         )
 
 
-async def _action_eval(page_id: str, code: str, user_id: str | None = None) -> ToolResponse:
+async def _action_eval(
+    page_id: str, code: str, user_id: str | None = None
+) -> ToolResponse:
     code = (code or "").strip()
     if not code:
         return _tool_response(
@@ -1683,6 +1710,7 @@ async def _action_eval(page_id: str, code: str, user_id: str | None = None) -> T
                 ensure_ascii=False,
                 indent=2,
             )
+        _touch_activity_user(user_id)
         return _tool_response(out)
     except Exception as e:
         return _tool_response(
@@ -1694,7 +1722,9 @@ async def _action_eval(page_id: str, code: str, user_id: str | None = None) -> T
         )
 
 
-async def _action_pdf(page_id: str, path: str, user_id: str | None = None) -> ToolResponse:
+async def _action_pdf(
+    page_id: str, path: str, user_id: str | None = None
+) -> ToolResponse:
     path = (path or "page.pdf").strip() or "page.pdf"
     page = _get_page(page_id, user_id)
     if not page:
@@ -1710,6 +1740,7 @@ async def _action_pdf(page_id: str, path: str, user_id: str | None = None) -> To
             await _run_sync(page.pdf, path=path)
         else:
             await page.pdf(path=path)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"PDF saved to {path}", "path": path},
@@ -1727,7 +1758,9 @@ async def _action_pdf(page_id: str, path: str, user_id: str | None = None) -> To
         )
 
 
-async def _action_close(page_id: str, user_id: str | None = None) -> ToolResponse:
+async def _action_close(
+    page_id: str, user_id: str | None = None
+) -> ToolResponse:
     """Close a page for a specific user."""
     if user_id is None:
         user_id = _get_current_user_id()
@@ -1793,7 +1826,9 @@ async def _action_snapshot(
     frame_selector: str = "",
     user_id: str | None = None,
 ) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -1848,6 +1883,7 @@ async def _action_snapshot(
             with open(filename.strip(), "w", encoding="utf-8") as f:
                 f.write(snapshot)
             out["filename"] = filename.strip()
+        _touch_activity_user(user_id)
         return _tool_response(json.dumps(out, ensure_ascii=False, indent=2))
     except Exception as e:
         return _tool_response(
@@ -1859,7 +1895,9 @@ async def _action_snapshot(
         )
 
 
-async def _action_navigate_back(page_id: str, user_id: str | None = None) -> ToolResponse:
+async def _action_navigate_back(
+    page_id: str, user_id: str | None = None
+) -> ToolResponse:
     page = _get_page(page_id, user_id)
     if not page:
         return _tool_response(
@@ -1968,6 +2006,7 @@ async def _action_evaluate(
                 ensure_ascii=False,
                 indent=2,
             )
+        _touch_activity_user(user_id)
         return _tool_response(out)
     except Exception as e:
         return _tool_response(
@@ -2010,6 +2049,7 @@ async def _action_resize(
             )
         else:
             await page.set_viewport_size({"width": width, "height": height})
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Resized to {width}x{height}"},
@@ -2033,7 +2073,9 @@ async def _action_console_messages(
     filename: str,
     user_id: str | None = None,
 ) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -2065,6 +2107,7 @@ async def _action_console_messages(
     if filename and filename.strip():
         with open(filename.strip(), "w", encoding="utf-8") as f:
             f.write(text)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {
@@ -2076,6 +2119,7 @@ async def _action_console_messages(
                 indent=2,
             ),
         )
+    _touch_activity_user(user_id)
     return _tool_response(
         json.dumps(
             {"ok": True, "messages": filtered, "text": text},
@@ -2091,7 +2135,9 @@ async def _action_handle_dialog(
     prompt_text: str,
     user_id: str | None = None,
 ) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -2136,6 +2182,7 @@ async def _action_handle_dialog(
                 await _run_sync(dialog.dismiss)
             else:
                 await dialog.dismiss()
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": "Dialog handled"},
@@ -2153,8 +2200,12 @@ async def _action_handle_dialog(
         )
 
 
-async def _action_file_upload(page_id: str, paths_json: str, user_id: str | None = None) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+async def _action_file_upload(
+    page_id: str, paths_json: str, user_id: str | None = None
+) -> ToolResponse:
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -2194,6 +2245,7 @@ async def _action_file_upload(page_id: str, paths_json: str, user_id: str | None
                 await _run_sync(chooser.set_files, paths)
             else:
                 await chooser.set_files(paths)
+            _touch_activity_user(user_id)
             return _tool_response(
                 json.dumps(
                     {"ok": True, "message": f"Uploaded {len(paths)} file(s)"},
@@ -2205,6 +2257,7 @@ async def _action_file_upload(page_id: str, paths_json: str, user_id: str | None
             await _run_sync(chooser.set_files, [])
         else:
             await chooser.set_files([])
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": "File chooser cancelled"},
@@ -2222,8 +2275,12 @@ async def _action_file_upload(page_id: str, paths_json: str, user_id: str | None
         )
 
 
-async def _action_fill_form(page_id: str, fields_json: str, user_id: str | None = None) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+async def _action_fill_form(
+    page_id: str, fields_json: str, user_id: str | None = None
+) -> ToolResponse:
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -2300,6 +2357,7 @@ async def _action_fill_form(page_id: str, fields_json: str, user_id: str | None 
                     )
                 else:
                     await locator.fill(str(value) if value is not None else "")
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Filled {len(fields)} field(s)"},
@@ -2392,7 +2450,9 @@ async def _action_install() -> ToolResponse:
         )
 
 
-async def _action_press_key(page_id: str, key: str, user_id: str | None = None) -> ToolResponse:
+async def _action_press_key(
+    page_id: str, key: str, user_id: str | None = None
+) -> ToolResponse:
     key = (key or "").strip()
     if not key:
         return _tool_response(
@@ -2416,6 +2476,7 @@ async def _action_press_key(page_id: str, key: str, user_id: str | None = None) 
             await _run_sync(page.keyboard.press, key)
         else:
             await page.keyboard.press(key)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Pressed key {key}"},
@@ -2439,7 +2500,9 @@ async def _action_network_requests(
     filename: str,
     user_id: str | None = None,
 ) -> ToolResponse:
-    user_state = _get_user_state() if user_id is None else _state["users"].get(user_id)
+    user_state = (
+        _get_user_state() if user_id is None else _state["users"].get(user_id)
+    )
     if not user_state:
         return _tool_response(
             json.dumps(
@@ -2469,6 +2532,7 @@ async def _action_network_requests(
     if filename and filename.strip():
         with open(filename.strip(), "w", encoding="utf-8") as f:
             f.write(text)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {
@@ -2480,6 +2544,7 @@ async def _action_network_requests(
                 indent=2,
             ),
         )
+    _touch_activity_user(user_id)
     return _tool_response(
         json.dumps(
             {"ok": True, "requests": requests, "text": text},
@@ -2489,7 +2554,9 @@ async def _action_network_requests(
     )
 
 
-async def _action_run_code(page_id: str, code: str, user_id: str | None = None) -> ToolResponse:
+async def _action_run_code(
+    page_id: str, code: str, user_id: str | None = None
+) -> ToolResponse:
     """Run JS in page (like eval). Use evaluate for element (ref)."""
     code = (code or "").strip()
     if not code:
@@ -2535,6 +2602,7 @@ async def _action_run_code(page_id: str, code: str, user_id: str | None = None) 
                 ensure_ascii=False,
                 indent=2,
             )
+        _touch_activity_user(user_id)
         return _tool_response(out)
     except Exception as e:
         return _tool_response(
@@ -2617,6 +2685,7 @@ async def _action_drag(
             await _run_sync(start_locator.drag_to, end_locator)
         else:
             await start_locator.drag_to(end_locator)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": "Drag completed"},
@@ -2663,7 +2732,9 @@ async def _action_hover(
         )
     try:
         if ref:
-            locator = _get_locator_by_ref(page, page_id, ref, frame_selector, user_id)
+            locator = _get_locator_by_ref(
+                page, page_id, ref, frame_selector, user_id
+            )
             if locator is None:
                 return _tool_response(
                     json.dumps(
@@ -2679,6 +2750,7 @@ async def _action_hover(
             await _run_sync(locator.hover)
         else:
             await locator.hover()
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Hovered {ref or selector}"},
@@ -2750,6 +2822,7 @@ async def _action_select_option(
             await _run_sync(locator.select_option, value=values)
         else:
             await locator.select_option(value=values)
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": f"Selected {values}"},
@@ -2834,7 +2907,9 @@ async def _action_tabs(  # pylint: disable=too-many-return-statements
             if not user_state._sync_context:
                 ok = await _ensure_browser_for_user(user_id)
                 if not ok:
-                    err = user_state._last_browser_error or "Browser not started"
+                    err = (
+                        user_state._last_browser_error or "Browser not started"
+                    )
                     return _tool_response(
                         json.dumps(
                             {"ok": False, "error": err},
@@ -2846,7 +2921,9 @@ async def _action_tabs(  # pylint: disable=too-many-return-statements
             if not user_state.context:
                 ok = await _ensure_browser_for_user(user_id)
                 if not ok:
-                    err = user_state._last_browser_error or "Browser not started"
+                    err = (
+                        user_state._last_browser_error or "Browser not started"
+                    )
                     return _tool_response(
                         json.dumps(
                             {"ok": False, "error": err},
@@ -2961,6 +3038,7 @@ async def _action_wait_for(
                     state="hidden",
                     timeout=30000,
                 )
+        _touch_activity_user(user_id)
         return _tool_response(
             json.dumps(
                 {"ok": True, "message": "Wait completed"},
