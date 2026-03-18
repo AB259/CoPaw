@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional, Set
@@ -54,6 +55,11 @@ class CronManager:
         # Track started users: {user_id: Set[job_id]}
         self._user_jobs: Dict[str, Set[str]] = {}
         self._started = False
+        # User scan interval (minutes), configurable via env var
+        self._scan_interval_minutes = int(
+            os.environ.get("COPAW_CRON_USER_SCAN_MINUTES", "5"),
+        )
+        self._scan_job_id = "_cron_user_scan"
 
     def _get_repo_for_user(self, user_id: str) -> JsonJobRepository:
         """Get repository for specific user.
@@ -65,6 +71,7 @@ class CronManager:
             JsonJobRepository for user's jobs.json
         """
         from ...config.utils import get_jobs_path
+
         return JsonJobRepository(get_jobs_path(user_id))
 
     async def start(self) -> None:
@@ -75,13 +82,74 @@ class CronManager:
             self._scheduler.start()
             self._started = True
 
+            # Immediately scan and load users
+            await self._scan_and_load_users()
+
+            # Add periodic scan job
+            if self._scan_interval_minutes > 0:
+                self._scheduler.add_job(
+                    self._scan_and_load_users,
+                    trigger=IntervalTrigger(
+                        minutes=self._scan_interval_minutes,
+                    ),
+                    id=self._scan_job_id,
+                    replace_existing=True,
+                )
+                logger.info(
+                    "cron user scan scheduled: every %s minutes",
+                    self._scan_interval_minutes,
+                )
+
     async def stop(self) -> None:
         """Stop the scheduler."""
         async with self._lock:
             if not self._started:
                 return
+            # Remove scan job
+            if self._scheduler.get_job(self._scan_job_id):
+                self._scheduler.remove_job(self._scan_job_id)
             self._scheduler.shutdown(wait=False)
             self._started = False
+
+    async def _scan_and_load_users(self) -> None:
+        """Scan all user directories and load cron jobs for unloaded users.
+
+        Iterates over ~/.copaw/*/ directories and calls start_user() for each
+        user not yet loaded.
+        """
+        from ...constant import list_all_user_ids
+
+        try:
+            user_ids = list_all_user_ids()
+            if not user_ids:
+                logger.debug("cron scan: no users found")
+                return
+
+            loaded_count = 0
+            for user_id in user_ids:
+                if user_id not in self._user_jobs:
+                    try:
+                        await self.start_user(user_id)
+                        loaded_count += 1
+                        logger.info(
+                            "cron scan: auto-loaded jobs for user=%s",
+                            user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "cron scan: failed to load jobs for user=%s: %s",
+                            user_id,
+                            e,
+                        )
+
+            if loaded_count > 0:
+                logger.info(
+                    "cron scan: loaded jobs for %d new user(s) (total users: %d)",
+                    loaded_count,
+                    len(self._user_jobs),
+                )
+        except Exception:
+            logger.exception("cron scan: failed to scan and load users")
 
     async def start_user(self, user_id: str) -> None:
         """Load and start jobs for a specific user.
@@ -155,7 +223,11 @@ class CronManager:
         repo = self._get_repo_for_user(user_id)
         return await repo.list_jobs()
 
-    async def get_job(self, job_id: str, user_id: str) -> Optional[CronJobSpec]:
+    async def get_job(
+        self,
+        job_id: str,
+        user_id: str,
+    ) -> Optional[CronJobSpec]:
         """Get a specific job for a user.
 
         Args:
@@ -183,7 +255,9 @@ class CronManager:
     # ----- write/control -----
 
     async def create_or_replace_job(
-        self, spec: CronJobSpec, user_id: str
+        self,
+        spec: CronJobSpec,
+        user_id: str,
     ) -> None:
         """Create or replace a job for a user.
 
@@ -260,6 +334,7 @@ class CronManager:
 
             # Use per-user heartbeat config
             from ...config.utils import load_config, get_config_path
+
             config = load_config(get_config_path(user_id))
             hb = config.agents.defaults.heartbeat
             if hb is None:
@@ -281,7 +356,10 @@ class CronManager:
                     interval_seconds,
                 )
             else:
-                logger.info("heartbeat disabled for user=%s, job removed", user_id)
+                logger.info(
+                    "heartbeat disabled for user=%s, job removed",
+                    user_id,
+                )
 
     async def run_job(self, job_id: str, user_id: str) -> None:
         """Trigger a job to run in the background.
@@ -335,7 +413,11 @@ class CronManager:
 
     # ----- internal -----
 
-    async def _register_or_update(self, user_id: str, spec: CronJobSpec) -> None:
+    async def _register_or_update(
+        self,
+        user_id: str,
+        spec: CronJobSpec,
+    ) -> None:
         """Register or update a job in the scheduler.
 
         Args:
@@ -408,6 +490,7 @@ class CronManager:
 
         # Set request context for user isolation during execution
         from ...constant import set_request_user_id, reset_request_user_id
+
         token = set_request_user_id(user_id)
         try:
             await self._execute_once(user_id, job)
@@ -469,6 +552,7 @@ class CronManager:
         try:
             # Set request context for user isolation
             from ...constant import set_request_user_id, reset_request_user_id
+
             token = set_request_user_id(user_id)
             try:
                 await run_heartbeat_once(
