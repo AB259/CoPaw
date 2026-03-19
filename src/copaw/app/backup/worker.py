@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import tempfile
 import zipfile
@@ -16,6 +17,8 @@ from .models import BackupTask, BackupTaskStatus
 from .s3_client import S3BackupClient
 from .task_store import TaskStore
 
+logger = logging.getLogger(__name__)
+
 
 class BackupWorker:
     """Async worker for backup and restore operations."""
@@ -25,7 +28,11 @@ class BackupWorker:
         self.config = config
         self.s3_client = S3BackupClient(config)
 
-    async def run_backup_task(self, task: BackupTask) -> None:
+    # pylint: disable=too-many-statements
+    async def run_backup_task(
+        self,
+        task: BackupTask,
+    ) -> None:
         """Execute a backup task."""
         task.status = BackupTaskStatus.RUNNING
         task.started_at = datetime.now()
@@ -37,6 +44,15 @@ class BackupWorker:
             else:
                 user_ids = self._get_all_user_ids()
 
+            # Check for empty user list to avoid division by zero
+            if not user_ids:
+                task.status = BackupTaskStatus.COMPLETED
+                task.current_step = "completed"
+                task.progress_percent = 100
+                task.completed_at = datetime.now()
+                self.task_store.save(task)
+                return
+
             task.total_users = len(user_ids)
             task.current_step = "compressing"
             self.task_store.save(task)
@@ -46,9 +62,9 @@ class BackupWorker:
             date_str = datetime.now().strftime("%Y-%m-%d")
 
             for i, user_id in enumerate(user_ids):
-                # Update progress
-                task.processed_users = i
-                task.progress_percent = int((i / len(user_ids)) * 50)
+                # Update progress (1-indexed)
+                task.processed_users = i + 1
+                task.progress_percent = int(((i + 1) / len(user_ids)) * 50)
                 self.task_store.save(task)
 
                 # Compress user directory
@@ -59,12 +75,21 @@ class BackupWorker:
                 zip_path = (
                     Path(tempfile.gettempdir()) / f"backup_{user_id}.zip"
                 )
-                await self._compress_user(user_dir, zip_path)
+                await self._compress_user(user_id, user_dir, zip_path)
                 local_paths.append(str(zip_path))
 
             # Upload to S3
             task.current_step = "uploading"
             self.task_store.save(task)
+
+            # Check for empty local_paths to avoid division by zero
+            if not local_paths:
+                task.status = BackupTaskStatus.COMPLETED
+                task.current_step = "completed"
+                task.progress_percent = 100
+                task.completed_at = datetime.now()
+                self.task_store.save(task)
+                return
 
             for i, zip_path_str in enumerate(local_paths):
                 zip_path = Path(zip_path_str)
@@ -77,7 +102,7 @@ class BackupWorker:
                 )
                 s3_keys.append(s3_key)
 
-                # Update progress
+                # Update progress (1-indexed)
                 task.processed_users = i + 1
                 task.progress_percent = 50 + int(
                     ((i + 1) / len(local_paths)) * 50,
@@ -101,10 +126,14 @@ class BackupWorker:
             for path in task.local_zip_paths:
                 try:
                     Path(path).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temp file {path}: {e}")
 
-    async def run_restore_task(self, task: BackupTask) -> None:
+    # pylint: disable=too-many-statements
+    async def run_restore_task(
+        self,
+        task: BackupTask,
+    ) -> None:
         """Execute a restore task."""
         task.status = BackupTaskStatus.RUNNING
         task.started_at = datetime.now()
@@ -122,6 +151,15 @@ class BackupWorker:
                 user_ids = list(
                     backups["backups"].get(task.backup_date, {}).keys(),
                 )
+
+            # Check for empty user list to avoid division by zero
+            if not user_ids:
+                task.status = BackupTaskStatus.COMPLETED
+                task.current_step = "completed"
+                task.progress_percent = 100
+                task.completed_at = datetime.now()
+                self.task_store.save(task)
+                return
 
             task.total_users = len(user_ids)
             task.current_step = "backing_up_current"
@@ -144,8 +182,8 @@ class BackupWorker:
 
             # Download and restore
             for i, user_id in enumerate(user_ids):
-                task.processed_users = i
-                task.progress_percent = int((i / len(user_ids)) * 50)
+                task.processed_users = i + 1
+                task.progress_percent = int(((i + 1) / len(user_ids)) * 50)
                 self.task_store.save(task)
 
                 s3_key = self.s3_client.get_backup_key(
@@ -164,6 +202,14 @@ class BackupWorker:
 
                 user_dir = DEFAULT_WORKING_DIR / user_id
                 await self._extract_zip(zip_path, user_dir)
+
+            # Clean up rollback data after successful restore
+            rollback_dir = DEFAULT_WORKING_DIR / ".rollback" / task.task_id
+            if rollback_dir.exists():
+                try:
+                    shutil.rmtree(rollback_dir)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup rollback dir: {e}")
 
             task.current_step = "completed"
             task.status = BackupTaskStatus.COMPLETED
@@ -189,7 +235,12 @@ class BackupWorker:
 
         return list_all_user_ids()
 
-    async def _compress_user(self, user_dir: Path, zip_path: Path) -> str:
+    async def _compress_user(
+        self,
+        user_id: str,  # pylint: disable=unused-argument
+        user_dir: Path,
+        zip_path: Path,
+    ) -> str:
         """Compress user directory to zip."""
 
         def _do_compress():
@@ -258,6 +309,6 @@ class BackupWorker:
 
                 # Restore from rollback
                 await self._extract_zip(path, user_dir)
-            except Exception:
+            except Exception as e:
                 # Continue rollback for other users
-                pass
+                logger.error(f"Failed to rollback {rollback_path}: {e}")
