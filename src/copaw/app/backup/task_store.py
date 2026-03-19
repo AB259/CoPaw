@@ -29,7 +29,7 @@ class TaskStore:
             self._file_path.parent.mkdir(parents=True, exist_ok=True)
             self._file_path.write_text("{}")
 
-    def _load_all(self) -> dict:
+    def _load_all(self) -> dict[str, BackupTask]:
         """Load all tasks from file."""
         self._ensure_file()
         try:
@@ -44,17 +44,16 @@ class TaskStore:
         data = {k: v.model_dump(mode="json") for k, v in tasks.items()}
         json_str = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
-        # Atomic write
-        fd, temp_path = tempfile.mkstemp(dir=self._file_path.parent)
-        try:
-            os.write(fd, json_str.encode("utf-8"))
-            os.close(fd)
-            os.replace(temp_path, self._file_path)
-        except Exception:
-            os.close(fd)
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise
+        # Atomic write using NamedTemporaryFile
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=self._file_path.parent,
+            delete=False,
+            encoding="utf-8",
+        ) as tmp_file:
+            tmp_file.write(json_str)
+            temp_path = tmp_file.name
+        os.replace(temp_path, self._file_path)
 
     def save(self, task: BackupTask) -> None:
         """Save or update a task."""
@@ -75,7 +74,12 @@ class TaskStore:
         task_type: str | None = None,
         limit: int = 50,
     ) -> list[BackupTask]:
-        """Get tasks with optional filters."""
+        """Get tasks with optional filters.
+
+        Note: The lock is released before filtering by status/type, which is
+        acceptable for this use case as filtering doesn't require strict
+        consistency.
+        """
         with self._lock:
             tasks = self._load_all()
             result = list(tasks.values())
