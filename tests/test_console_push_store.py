@@ -92,3 +92,30 @@ async def test_get_recent_expires_old_messages():
     with patch("time.time", return_value=now + 70):
         messages = await get_recent("alice", max_age_seconds=60)
         assert len(messages) == 0  # Message expired
+
+
+@pytest.mark.asyncio
+async def test_message_consumed_once_across_methods():
+    """测试消息在任何方法中只消费一次"""
+    from copaw.app.console_push_store import append, get_recent, take
+
+    await append("alice", "session_1", "Message 1")
+
+    # Consume via get_recent
+    messages1 = await get_recent("alice", max_age_seconds=60)
+    assert len(messages1) == 1
+
+    # Should not appear in take
+    messages2 = await take("alice", "session_1")
+    assert len(messages2) == 0
+
+    # Add another message
+    await append("alice", "session_1", "Message 2")
+
+    # Consume via take
+    messages3 = await take("alice", "session_1")
+    assert len(messages3) == 1
+
+    # Should not appear in get_recent
+    messages4 = await get_recent("alice", max_age_seconds=60)
+    assert len(messages4) == 0
