@@ -492,17 +492,22 @@ class SkillService:
                 e,
             )
 
-        skills: list[SkillInfo] = []
+        # Use dict to deduplicate by skill name, customized takes precedence
+        skills: dict[str, SkillInfo] = {}
 
-        # Collect from builtin and customized skills
-        skills.extend(
-            _read_skills_from_dir(get_builtin_skills_dir(), "builtin"),
-        )
-        skills.extend(
-            _read_skills_from_dir(get_customized_skills_dir(), "customized"),
-        )
+        # Add builtin skills first
+        for skill in _read_skills_from_dir(
+            get_builtin_skills_dir(), "builtin"
+        ):
+            skills[skill.name] = skill
 
-        return skills
+        # Add customized skills (overrides builtin with same name)
+        for skill in _read_skills_from_dir(
+            get_customized_skills_dir(), "customized"
+        ):
+            skills[skill.name] = skill
+
+        return list(skills.values())
 
     @staticmethod
     def list_available_skills() -> list[SkillInfo]:
