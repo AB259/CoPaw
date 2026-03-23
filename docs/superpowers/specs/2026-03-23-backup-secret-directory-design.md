@@ -34,6 +34,8 @@ The secret directory contents will be included within the same zip file as a nes
 
 ### Zip Structure
 
+**Note**: `.secret/` is at the **root level** of the zip archive, as a sibling to `config.json`.
+
 ```
 backup_{user_id}.zip
 ├── config.json
@@ -49,32 +51,61 @@ backup_{user_id}.zip
 
 **File**: `src/copaw/app/backup/worker.py`
 
+#### 0. Import Update
+
+Add `get_secret_dir` to the imports from `copaw.constant`:
+
+```python
+from ...constant import DEFAULT_WORKING_DIR, get_secret_dir
+```
+
 #### 1. `_compress_user()` - Add secret directory compression
 
 When compressing a user directory, also compress the corresponding secret directory contents into a `.secret/` folder within the zip.
 
 **Logic**:
-- Get secret directory via `get_secret_dir(user_id)`
+- Get secret directory via `get_secret_dir(user_id)` (from `copaw.constant`)
 - If secret directory exists, iterate and add files under `.secret/` prefix
-- Handle empty directories by writing directory entries
+- Handle empty directories by writing directory entries (use same pattern as existing empty directory handling at lines 256-261)
 
 #### 2. `_extract_zip()` - Handle `.secret/` extraction
 
-When extracting a backup zip, detect files under `.secret/` prefix and route them to the secret directory instead of the working directory.
+Update the method signature to accept `user_id` for deriving the secret directory.
+
+**Signature change**:
+```python
+async def _extract_zip(self, zip_path: Path, target_dir: Path, user_id: str) -> None
+```
 
 **Logic**:
-- Parse zip file entries
-- Entries starting with `.secret/` → extract to `secret_dir`
-- Other entries → extract to `user_dir` (existing behavior)
-- Remove `.secret/` prefix when extracting to maintain internal structure
+- Derive `secret_dir` via `get_secret_dir(user_id)`
+- Iterate zip file entries
+- Entries starting with `.secret/` → extract to `secret_dir` (remove `.secret/` prefix)
+- Other entries → extract to `target_dir` (existing behavior)
+- **Security**: Validate resolved extraction paths are under target directories to prevent path traversal (use `Path.resolve()` and check parent chain)
 
 #### 3. `_create_rollback_backup()` - Include secrets in rollback
 
 Ensure rollback backups also capture secret directory state for complete rollback capability.
 
-#### 4. Helper Addition
+**Logic**:
+- Get secret directory via `get_secret_dir(user_id)`
+- If secret directory exists, iterate and add files under `.secret/` prefix
+- Use same compression logic as `_compress_user`
 
-Add `_get_secret_dir(user_id)` helper method to resolve secret directory paths consistently.
+#### 4. Update `_extract_zip()` call sites
+
+Update all calls to `_extract_zip()` to pass the `user_id` parameter:
+
+**In `run_restore_task()` (line ~204)**:
+```python
+await self._extract_zip(zip_path, user_dir, user_id)
+```
+
+**In `_rollback_all()` (line ~323)**:
+```python
+await self._extract_zip(path, user_dir, user_id)
+```
 
 ### Edge Cases
 
@@ -88,10 +119,12 @@ Add `_get_secret_dir(user_id)` helper method to resolve secret directory paths c
 
 ### Security Considerations
 
-- Secret contents are backed up in the same encrypted zip (zip compression level 6)
+- Secret contents are backed up in the same zip file (compression level 6)
+- **Note**: Zip compression is NOT encryption. Files are stored compressed but unencrypted within the zip.
 - S3 transmission uses TLS encryption (handled by boto3)
 - S3 storage encryption should be enabled at bucket level (user responsibility)
 - No additional encryption layer added at application level
+- Consider adding application-level encryption for secrets in future (see Future Considerations)
 
 ## Backward Compatibility
 
