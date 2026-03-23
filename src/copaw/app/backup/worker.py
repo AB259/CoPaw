@@ -306,6 +306,7 @@ class BackupWorker:
                 zipfile.ZIP_DEFLATED,
                 compresslevel=6,
             ) as zf:
+                # Compress user directory contents
                 for file in user_dir.rglob("*"):
                     if file.is_file():
                         zf.write(file, file.relative_to(user_dir))
@@ -315,6 +316,30 @@ class BackupWorker:
                             str(file.relative_to(user_dir)) + "/",
                             "",
                         )
+
+                # Compress secret directory contents
+                secret_dir = get_secret_dir(user_id)
+                if secret_dir.exists():
+                    for file in secret_dir.rglob("*"):
+                        try:
+                            if file.is_file():
+                                zf.write(
+                                    file,
+                                    Path(".secret") / file.relative_to(secret_dir),
+                                )
+                            elif file.is_dir() and not any(file.iterdir()):
+                                # Add empty directory
+                                zf.writestr(
+                                    str(Path(".secret") / file.relative_to(secret_dir))
+                                    + "/",
+                                    "",
+                                )
+                        except PermissionError as e:
+                            logger.warning(
+                                f"Permission denied accessing secret file {file}: {e}"
+                            )
+                        except OSError as e:
+                            logger.warning(f"Error accessing secret file {file}: {e}")
             return str(zip_path)
 
         await asyncio.to_thread(_do_compress)
