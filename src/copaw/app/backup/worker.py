@@ -11,7 +11,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from ...constant import DEFAULT_WORKING_DIR
+from ...constant import DEFAULT_WORKING_DIR, get_secret_dir
 from .config import BackupEnvironmentConfig
 from .models import BackupTask, BackupTaskStatus
 from .s3_client import S3BackupClient
