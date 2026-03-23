@@ -38,6 +38,13 @@ from ...constant import (
     get_request_working_dir,
     get_request_user_id,
 )
+from ...tracing import (
+    TracingConfig,
+    init_trace_manager,
+    get_trace_manager,
+    close_trace_manager,
+)
+from ...tracing.models import TraceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +210,7 @@ class AgentRunner(Runner):
         agent = None
         chat = None
         session_state_loaded = False
+        trace_id = None  # For tracing lifecycle
         request_memory_manager = (
             None  # Per-request MemoryManager (for LRU cache)
         )
@@ -220,6 +228,20 @@ class AgentRunner(Runner):
             session_id = request.session_id
             user_id = request.user_id
             channel = getattr(request, "channel", DEFAULT_CHANNEL)
+
+            # Start trace if tracing is enabled
+            try:
+                trace_manager = get_trace_manager()
+                trace_id = await trace_manager.start_trace(
+                    user_id=user_id,
+                    session_id=session_id,
+                    channel=channel,
+                )
+            except RuntimeError:
+                # Tracing not initialized
+                pass
+            except Exception as e:
+                logger.warning("Failed to start trace: %s", e)
 
             # Debug: Log config path and providers.json path
             config_path = get_config_path()
@@ -341,6 +363,14 @@ class AgentRunner(Runner):
             logger.info(f"query_handler: {session_id} cancelled!")
             if agent is not None:
                 await agent.interrupt()
+            # End trace with cancelled status
+            if trace_id:
+                try:
+                    await get_trace_manager().end_trace(
+                        trace_id, status=TraceStatus.CANCELLED
+                    )
+                except Exception:
+                    pass
             raise RuntimeError("Task has been cancelled!") from exc
         except Exception as e:
             debug_dump_path = write_query_error_dump(
@@ -352,6 +382,16 @@ class AgentRunner(Runner):
                 f"\n(Details:  {debug_dump_path})" if debug_dump_path else ""
             )
             logger.exception(f"Error in query handler: {e}{path_hint}")
+            # End trace with error status
+            if trace_id:
+                try:
+                    await get_trace_manager().end_trace(
+                        trace_id,
+                        status=TraceStatus.ERROR,
+                        error=str(e),
+                    )
+                except Exception:
+                    pass
             if debug_dump_path:
                 setattr(e, "debug_dump_path", debug_dump_path)
                 if hasattr(e, "add_note"):
@@ -374,6 +414,15 @@ class AgentRunner(Runner):
 
                 if self._chat_manager is not None and chat is not None:
                     await self._chat_manager.update_chat(chat, user_id=user_id)
+
+                # End trace with completed status
+                if trace_id:
+                    try:
+                        await get_trace_manager().end_trace(
+                            trace_id, status=TraceStatus.COMPLETED
+                        )
+                    except Exception as trace_error:
+                        logger.warning("Failed to end trace: %s", trace_error)
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
@@ -402,6 +451,21 @@ class AgentRunner(Runner):
         # a single global instance. This provides better performance and
         # full user isolation.
 
+        # Initialize tracing manager if enabled
+        tracing_enabled = os.environ.get("COPAW_TRACING_ENABLED", "false").lower() == "true"
+        if tracing_enabled:
+            try:
+                tracing_config = TracingConfig(
+                    enabled=True,
+                    batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
+                    flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
+                    retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
+                )
+                await init_trace_manager(tracing_config)
+                logger.info("Tracing manager initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize tracing manager: %s", e)
+
     async def shutdown_handler(self, *args, **kwargs):
         """
         Shutdown handler.
@@ -425,3 +489,10 @@ class AgentRunner(Runner):
             await self.memory_manager.close()
         except Exception as e:
             logger.warning(f"MemoryManager stop failed: {e}")
+
+        # Close tracing manager
+        try:
+            await close_trace_manager()
+            logger.info("Tracing manager closed")
+        except Exception as e:
+            logger.warning(f"Tracing manager close failed: {e}")

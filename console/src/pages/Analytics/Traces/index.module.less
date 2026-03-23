@@ -1,0 +1,98 @@
+.tracesPage {
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+
+  h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+  }
+}
+
+.filters {
+  display: flex;
+  gap: 12px;
+}
+
+.drawerLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.drawerContent {
+  .errorSection {
+    margin-top: 24px;
+
+    h4 {
+      margin-bottom: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #ff4d4f;
+    }
+
+    .errorText {
+      background: #fff2f0;
+      border: 1px solid #ffccc7;
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 12px;
+      margin: 0;
+    }
+  }
+
+  .timelineSection {
+    margin-top: 24px;
+
+    h4 {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+  }
+
+  .timelineItem {
+    .timelineHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .timelineName {
+        font-weight: 500;
+      }
+
+      .timelineDuration {
+        color: #999;
+        font-size: 12px;
+      }
+    }
+
+    .timelineDetail {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #666;
+    }
+  }
+
+  .toolsSection {
+    margin-top: 24px;
+
+    h4 {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+  }
+}

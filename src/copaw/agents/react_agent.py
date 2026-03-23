@@ -71,17 +71,20 @@ class CoPawAgent(ReActAgent):
     - Memory management with auto-compaction
     - Bootstrap guidance for first-time setup
     - System command handling (/compact, /new, etc.)
+    - Optional tracing for analytics
     """
 
     def __init__(
         self,
         env_context: Optional[str] = None,
         enable_memory_manager: bool = True,
+        enable_tracing: bool = False,
         mcp_clients: Optional[List[Any]] = None,
         memory_manager: MemoryManager | None = None,
         max_iters: int = 50,
         max_input_length: int = 128 * 1024,  # 128K = 131072 tokens
         namesake_strategy: NamesakeStrategy = "skip",
+        trace_id: Optional[str] = None,
     ):
         """Initialize CoPawAgent.
 
@@ -89,6 +92,7 @@ class CoPawAgent(ReActAgent):
             env_context: Optional environment context to prepend to
                 system prompt
             enable_memory_manager: Whether to enable memory manager
+            enable_tracing: Whether to enable tracing for analytics
             mcp_clients: Optional list of MCP clients for tool
                 integration
             memory_manager: Optional memory manager instance
@@ -99,11 +103,14 @@ class CoPawAgent(ReActAgent):
             namesake_strategy: Strategy to handle namesake tool functions.
                 Options: "override", "skip", "raise", "rename"
                 (default: "skip")
+            trace_id: Optional trace ID for linking tracing events
         """
         self._env_context = env_context
         self._max_input_length = max_input_length
         self._mcp_clients = mcp_clients or []
         self._namesake_strategy = namesake_strategy
+        self._enable_tracing = enable_tracing
+        self._trace_id = trace_id
 
         # Memory compaction threshold: configurable ratio of max_input_length
         self._memory_compact_threshold = int(
@@ -318,6 +325,76 @@ class CoPawAgent(ReActAgent):
                 hook=memory_compact_hook.__call__,
             )
             logger.debug("Registered memory compaction hook")
+
+        # Tracing hook - emit tracing events during reasoning (if enabled)
+        if self._enable_tracing and self._trace_id:
+            self._register_tracing_hooks()
+
+    def _register_tracing_hooks(self) -> None:
+        """Register tracing hooks for the agent."""
+        try:
+            from .hooks import TracingHook, TracingHookRegistry
+
+            # Get user context from env_context
+            user_id = ""
+            session_id = ""
+            channel = ""
+            if self._env_context:
+                for line in self._env_context.split("\n"):
+                    if line.startswith("user_id:"):
+                        user_id = line.split(":", 1)[1].strip()
+                    elif line.startswith("session_id:"):
+                        session_id = line.split(":", 1)[1].strip()
+                    elif line.startswith("channel:"):
+                        channel = line.split(":", 1)[1].strip()
+
+            if user_id and session_id:
+                tracing_hook = TracingHook(
+                    trace_id=self._trace_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    channel=channel,
+                )
+                TracingHookRegistry.register(self._trace_id, tracing_hook)
+                logger.debug("Registered tracing hook for trace: %s", self._trace_id)
+        except ImportError:
+            logger.warning("Tracing hooks not available - tracing module not installed")
+        except Exception as e:
+            logger.warning("Failed to register tracing hook: %s", e)
+
+    def set_trace_context(
+        self,
+        trace_id: str,
+        user_id: str,
+        session_id: str,
+        channel: str,
+    ) -> None:
+        """Set tracing context for the agent.
+
+        Args:
+            trace_id: Trace identifier
+            user_id: User identifier
+            session_id: Session identifier
+            channel: Channel identifier
+        """
+        self._trace_id = trace_id
+        self._enable_tracing = True
+
+        try:
+            from .hooks import TracingHook, TracingHookRegistry
+
+            tracing_hook = TracingHook(
+                trace_id=trace_id,
+                user_id=user_id,
+                session_id=session_id,
+                channel=channel,
+            )
+            TracingHookRegistry.register(trace_id, tracing_hook)
+            logger.debug("Set tracing context: trace_id=%s", trace_id)
+        except ImportError:
+            logger.warning("Tracing module not available")
+        except Exception as e:
+            logger.warning("Failed to set tracing context: %s", e)
 
     def rebuild_sys_prompt(self) -> None:
         """Rebuild and replace the system prompt.

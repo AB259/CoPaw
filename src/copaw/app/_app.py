@@ -469,6 +469,10 @@ async def user_context_middleware(request, call_next):
         "X-CoPaw-User-Id"
     )
 
+    # Default to "default" user if no header provided (console access)
+    if not user_id:
+        user_id = "default"
+
     if user_id:
         # 设置请求上下文
         token = set_request_user_id(user_id)
