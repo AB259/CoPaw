@@ -201,7 +201,7 @@ class BackupWorker:
                 )
 
                 user_dir = DEFAULT_WORKING_DIR / user_id
-                await self._extract_zip(zip_path, user_dir)
+                await self._extract_zip(zip_path, user_dir, user_id)
 
             # Clean up rollback data after successful restore
             rollback_dir = DEFAULT_WORKING_DIR / ".rollback" / task.task_id
@@ -320,13 +320,56 @@ class BackupWorker:
         await asyncio.to_thread(_do_compress)
         return str(zip_path)
 
-    async def _extract_zip(self, zip_path: Path, target_dir: Path) -> None:
-        """Extract zip to target directory."""
+    async def _extract_zip(
+        self, zip_path: Path, target_dir: Path, user_id: str
+    ) -> None:
+        """Extract zip to target directory, routing .secret/ to secret directory.
+
+        Args:
+            zip_path: Path to the zip file to extract.
+            target_dir: Target directory for non-secret files.
+            user_id: User ID for determining secret directory.
+
+        Raises:
+            ValueError: If path traversal is detected in zip entries.
+        """
 
         def _do_extract():
             target_dir.mkdir(parents=True, exist_ok=True)
+            secret_dir = get_secret_dir(user_id)
+            secret_dir.mkdir(parents=True, exist_ok=True)
+
             with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(target_dir)
+                for member in zf.infolist():
+                    # Determine target directory based on prefix
+                    if member.filename.startswith(".secret/"):
+                        # Route to secret directory
+                        relative_path = member.filename[8:]  # Remove .secret/ prefix
+                        if not relative_path:  # Skip if it's just .secret/ directory
+                            continue
+                        extract_dir = secret_dir
+                        dest_path = secret_dir / relative_path
+                    else:
+                        # Route to target directory
+                        relative_path = member.filename
+                        extract_dir = target_dir
+                        dest_path = target_dir / relative_path
+
+                    # Validate path traversal
+                    resolved_dest = dest_path.resolve()
+                    resolved_extract = extract_dir.resolve()
+                    if not str(resolved_dest).startswith(str(resolved_extract)):
+                        raise ValueError(
+                            f"Path traversal detected in zip entry: {member.filename}"
+                        )
+
+                    # Extract the file/directory
+                    if member.is_dir():
+                        dest_path.mkdir(parents=True, exist_ok=True)
+                    else:
+                        dest_path.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(member) as source, open(dest_path, "wb") as target:
+                            target.write(source.read())
 
         await asyncio.to_thread(_do_extract)
 
@@ -345,7 +388,7 @@ class BackupWorker:
                     shutil.rmtree(user_dir)
 
                 # Restore from rollback
-                await self._extract_zip(path, user_dir)
+                await self._extract_zip(path, user_dir, user_id)
             except Exception as e:
                 # Continue rollback for other users
                 logger.error(f"Failed to rollback {rollback_path}: {e}")
