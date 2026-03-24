@@ -1,49 +1,76 @@
 ---
 name: batch_api
-description: "Use this skill when the user needs to make API calls to many endpoints in bulk - such as querying customer data for hundreds of customers, fetching product info for a product list, or any task requiring repeated API calls with different parameters. The skill handles batch execution, progress tracking, error recovery, and result storage without occupying model context. Trigger when user mentions 'batch', 'bulk', 'loop through', or has a list of items to query via API."
+description: "当用户需要对大量外部接口进行批量调用时使用此skill。例如：查询数百个客户的信息、获取产品列表数据、或任何需要重复调用API且参数不同的场景。该skill通过脚本自动处理批量执行、进度追踪、错误恢复，并将结果存储到独立任务目录中，不占用模型上下文。触发条件：用户提到'批量'、'循环'、'逐个查询'，或有一个列表需要通过API处理。"
 ---
 
-# Batch API Call Guide
+# 批量API调用指南
 
-## Overview
+## 概述
 
-This skill provides a script for executing bulk API requests efficiently. The script handles:
-- Reading input data from JSON/CSV files
-- Template-based URL and request body construction
-- Progress tracking with interrupt/resume support
-- Error handling and automatic retry
-- Result storage to files
+本skill提供了一个高效的批量API请求执行脚本，主要功能：
+- 从JSON/CSV文件读取输入数据
+- 基于模板构建URL和请求体
+- 进度追踪，支持中断恢复
+- 错误处理和自动重试
+- **强制独立任务目录，避免污染工作空间**
+- 结果存储到文件
 
-**When to use:**
-- Querying data for 10+ items via API (customers, products, orders, etc.)
-- User mentions "batch", "bulk", "loop through all"
-- Processing a list from a file with API calls
-- Need progress tracking for long-running API tasks
+**适用场景：**
+- 需要为10个以上项目调用API查询数据（客户、产品、订单等）
+- 用户提到"批量"、"循环处理"、"逐个查询"
+- 从文件读取列表并通过API处理
+- 长时间运行的API任务需要进度追踪
 
-## Quick Start
+## 工作目录结构
 
-### Step 1: Prepare Input File
+**每个批量任务必须放在独立目录中。**
 
-Create a JSON or CSV file with the items to process.
+目录结构：
+```
+batch_tasks/
+├── customer_query_20240115/     # 任务目录（任务名+日期命名）
+│   ├── config.json              # 配置文件（必需）
+│   ├── input.json               # 输入数据（必需）
+│   ├── results.json             # 输出结果（脚本生成）
+│   ├── results.json.progress.json  # 进度文件（脚本生成，完成后删除）
+│   └── results.json.errors.jsonl   # 错误日志（有错误时生成）
+├── product_query_20240116/
+│   ├── config.json
+│   ├── input.csv
+│   └── results.json
+└── ...
+```
 
-**JSON format (input.json):**
+## 快速开始
+
+### 第一步：创建任务目录
+
+```bash
+mkdir -p batch_tasks/customer_query_20240115
+```
+
+### 第二步：准备输入文件
+
+在任务目录中创建`input.json`或`input.csv`：
+
+**JSON格式：**
 ```json
 [
-  {"customer_id": "C001", "name": "Alice"},
-  {"customer_id": "C002", "name": "Bob"}
+  {"customer_id": "C001", "name": "张三"},
+  {"customer_id": "C002", "name": "李四"}
 ]
 ```
 
-**CSV format (input.csv):**
+**CSV格式：**
 ```csv
 customer_id,name
-C001,Alice
-C002,Bob
+C001,张三
+C002,李四
 ```
 
-### Step 2: Create Config File
+### 第三步：创建配置文件
 
-Create a config JSON file specifying the API endpoint and parameters:
+在任务目录中创建`config.json`：
 
 ```json
 {
@@ -57,40 +84,40 @@ Create a config JSON file specifying the API endpoint and parameters:
 }
 ```
 
-### Step 3: Run the Script
+### 第四步：执行脚本
 
 ```bash
-python scripts/batch_request.py --config config.json --input input.json --output results.json
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115
 ```
 
-## Configuration Reference
+## 配置参数说明
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `base_url` | string | required | API base URL |
-| `endpoint` | string | required | Endpoint path with `{field}` placeholders |
-| `method` | string | GET | HTTP method: GET, POST, PUT, DELETE, PATCH |
-| `headers` | object | {} | HTTP headers (supports `{field}` placeholders) |
-| `request_body` | object | null | Request body for POST/PUT/PATCH |
-| `url_params` | object | {} | URL query parameters |
-| `response_data_path` | string | "$" | JSONPath to extract data from response |
-| `id_field` | string | "id" | Field name for progress tracking |
-| `timeout` | number | 30 | Request timeout in seconds |
-| `retry_count` | number | 3 | Number of retries on failure |
-| `retry_delay` | number | 1 | Delay between retries in seconds |
-| `concurrency` | number | 1 | Concurrent requests (max: 10) |
-| `delay_between_requests` | number | 0 | Delay between requests in seconds |
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `base_url` | string | 必填 | API基础URL |
+| `endpoint` | string | 必填 | 端点路径，支持`{字段}`占位符 |
+| `method` | string | GET | HTTP方法：GET, POST, PUT, DELETE, PATCH |
+| `headers` | object | {} | HTTP请求头，支持`{字段}`占位符 |
+| `request_body` | object | null | POST/PUT/PATCH请求体 |
+| `url_params` | object | {} | URL查询参数 |
+| `response_data_path` | string | "$" | 从响应中提取数据的JSONPath |
+| `id_field` | string | "id" | 用于进度追踪的字段名 |
+| `timeout` | number | 30 | 请求超时时间（秒） |
+| `retry_count` | number | 3 | 失败重试次数 |
+| `retry_delay` | number | 1 | 重试间隔（秒） |
+| `concurrency` | number | 1 | 并发请求数（最大10） |
+| `delay_between_requests` | number | 0 | 请求间隔（秒） |
 
-## Template Placeholders
+## 模板占位符
 
-Use `{field_name}` to substitute values from input data:
+使用`{字段名}`从输入数据中替换值：
 
-**URL Path:**
+**URL路径：**
 ```
 /customers/{customer_id}/orders/{order_id}
 ```
 
-**Headers:**
+**请求头：**
 ```json
 {
   "Authorization": "Bearer {api_token}",
@@ -98,7 +125,7 @@ Use `{field_name}` to substitute values from input data:
 }
 ```
 
-**Request Body:**
+**请求体：**
 ```json
 {
   "query": "{name}",
@@ -106,7 +133,7 @@ Use `{field_name}` to substitute values from input data:
 }
 ```
 
-## Output Files
+## 输出文件
 
 ### results.json
 ```json
@@ -120,8 +147,8 @@ Use `{field_name}` to substitute values from input data:
   "duration_seconds": 900,
   "results": [
     {
-      "input": {"customer_id": "C001", "name": "Alice"},
-      "output": {"id": "C001", "email": "alice@example.com"},
+      "input": {"customer_id": "C001", "name": "张三"},
+      "output": {"id": "C001", "email": "zhangsan@example.com"},
       "status": "success"
     }
   ],
@@ -135,8 +162,8 @@ Use `{field_name}` to substitute values from input data:
 }
 ```
 
-### progress.json (auto-generated)
-Tracks progress for interrupt/resume:
+### progress.json（自动生成）
+追踪进度，用于中断恢复：
 ```json
 {
   "processed_ids": ["C001", "C002"],
@@ -145,28 +172,27 @@ Tracks progress for interrupt/resume:
 }
 ```
 
-## Progress Tracking
+## 中断恢复
 
-The script automatically tracks progress. If interrupted:
+脚本自动追踪进度。如果中断：
 
-1. Re-run with `--resume` flag
-2. Script detects progress file and continues from where it stopped
+1. 使用`--resume`参数重新执行
+2. 脚本检测进度文件并从中断处继续
 
 ```bash
-# Resume interrupted batch
-python scripts/batch_request.py --config config.json --input input.json --output results.json --resume
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115 --resume
 ```
 
-## Error Handling
+## 错误处理
 
-- **Automatic Retry**: Failed requests retry based on `retry_count`
-- **Error Logging**: Errors logged to `output.errors.jsonl`
-- **Continue on Error**: Processing continues after failures
-- **Final Summary**: All errors summarized in results.json
+- **自动重试**：失败的请求根据`retry_count`自动重试
+- **错误日志**：错误记录到`results.json.errors.jsonl`文件
+- **继续执行**：出错后继续处理后续项目
+- **汇总报告**：最终结果中包含所有错误信息
 
-## Advanced Usage
+## 高级用法
 
-### POST with Request Body
+### POST请求带请求体
 
 ```json
 {
@@ -181,7 +207,7 @@ python scripts/batch_request.py --config config.json --input input.json --output
 }
 ```
 
-### Concurrent Requests
+### 并发请求
 
 ```json
 {
@@ -190,78 +216,81 @@ python scripts/batch_request.py --config config.json --input input.json --output
 }
 ```
 
-### Custom Response Extraction
+### 自定义响应提取
 
-Use JSONPath in `response_data_path`:
+使用JSONPath从响应中提取特定数据：
 ```json
 {
   "response_data_path": "$.data.items"
 }
 ```
 
-## Workflow for Agent
+## Agent工作流程
 
-1. **Clarify requirements**: Confirm API endpoint, input data source, expected output
-2. **Prepare config**: Create config.json with endpoint details
-3. **Prepare input**: Create or identify input data file
-4. **Run script**: Execute batch_request.py
-5. **Check results**: Read results.json to summarize
-6. **Report to user**: Summarize success/failure counts and errors
+1. **明确需求**：确认API端点、输入数据来源、期望输出
+2. **创建任务目录**：`mkdir -p batch_tasks/任务名_日期`
+3. **准备配置**：在任务目录创建config.json
+4. **准备输入**：在任务目录创建input.json或input.csv
+5. **执行脚本**：使用`--workdir`参数执行
+6. **检查结果**：读取任务目录中的results.json汇总结果
+7. **向用户报告**：总结成功/失败数量和错误信息
 
-## Command Reference
+## 命令参考
 
 ```bash
-# Basic usage
-python scripts/batch_request.py --config CONFIG --input INPUT --output OUTPUT
+# 基本用法
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115
 
-# Resume interrupted task
-python scripts/batch_request.py -c config.json -i input.json -o results.json --resume
+# 恢复中断的任务
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115 --resume
 
-# Force overwrite existing output
-python scripts/batch_request.py -c config.json -i input.json -o results.json --force
+# 强制重新开始
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115 --force
 
-# Custom progress/errors file paths
-python scripts/batch_request.py -c config.json -i input.json -o results.json \
-  --progress my_progress.json --errors my_errors.jsonl
+# 自定义文件名（在workdir下，默认为config.json/input.json/results.json）
+python scripts/batch_request.py --workdir batch_tasks/task1 -c my_config.json -i my_input.csv
 
-# Show help
+# 查看帮助
 python scripts/batch_request.py --help
 ```
 
-## Example Scenarios
+## 示例场景
 
-### Scenario 1: Query Customer Details
+### 场景1：查询客户详情
 
-User: "Query the customer API for all 200 customers in customer_list.json"
+用户："查询customer_list.json中所有200个客户的API信息"
 
-Steps:
-1. Read customer_list.json to understand structure
-2. Create config.json with endpoint `/customers/{customer_id}`
-3. Run: `python scripts/batch_request.py -c config.json -i customer_list.json -o customer_details.json`
-4. Summarize results from customer_details.json
+步骤：
+1. 创建任务目录：`mkdir -p batch_tasks/customer_query_20240115`
+2. 将customer_list.json移动到任务目录并重命名为input.json
+3. 在任务目录创建config.json，端点设为`/customers/{customer_id}`
+4. 执行：`python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115`
+5. 从results.json汇总结果
 
-### Scenario 2: Bulk Product Lookup from CSV
+### 场景2：从CSV批量查询产品
 
-User: "Get product info for all product IDs in products.csv"
+用户："获取products.csv中所有产品ID的产品信息"
 
-Steps:
-1. Read products.csv header
-2. Create config.json with appropriate endpoint
-3. Run: `python scripts/batch_request.py -c config.json -i products.csv -o product_info.json`
-4. Report results
+步骤：
+1. 创建任务目录：`mkdir -p batch_tasks/product_query_20240116`
+2. 将products.csv移动到任务目录并重命名为input.csv
+3. 在任务目录创建config.json配置适当的端点
+4. 执行：`python scripts/batch_request.py --workdir batch_tasks/product_query_20240116`
+5. 报告结果
 
-### Scenario 3: Batch POST Requests
+### 场景3：批量POST请求
 
-User: "Update status for all orders in orders.json"
+用户："更新orders.json中所有订单的状态"
 
-Steps:
-1. Read orders.json structure
-2. Create config.json with POST method and request body template
-3. Run: `python scripts/batch_request.py -c config.json -i orders.json -o update_results.json --method POST`
-4. Report results
+步骤：
+1. 创建任务目录：`mkdir -p batch_tasks/order_update_20240117`
+2. 将orders.json移动到任务目录并重命名为input.json
+3. 在任务目录创建config.json，使用POST方法和请求体模板
+4. 执行：`python scripts/batch_request.py --workdir batch_tasks/order_update_20240117`
+5. 报告结果
 
-## Code Style Guidelines
+## 代码风格
 
-- Keep Python code minimal and concise
-- Avoid unnecessary comments and verbose variable names
-- Focus on the task at hand
+- Python代码保持简洁
+- 避免不必要的注释和冗长的变量名
+- 专注于当前任务

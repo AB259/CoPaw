@@ -1,17 +1,22 @@
-# Batch API Call Examples
+# 批量API调用示例
 
-## Example 1: Customer Information Query
+## 示例1：客户信息查询
 
-### Input File (customers.json)
+### 创建任务目录
+```bash
+mkdir -p batch_tasks/customer_query_20240115
+```
+
+### 输入文件 (batch_tasks/customer_query_20240115/input.json)
 ```json
 [
-  {"customer_id": "C001", "name": "Alice"},
-  {"customer_id": "C002", "name": "Bob"},
-  {"customer_id": "C003", "name": "Charlie"}
+  {"customer_id": "C001", "name": "张三"},
+  {"customer_id": "C002", "name": "李四"},
+  {"customer_id": "C003", "name": "王五"}
 ]
 ```
 
-### Config File (config.json)
+### 配置文件 (batch_tasks/customer_query_20240115/config.json)
 ```json
 {
   "base_url": "https://api.company.com",
@@ -26,12 +31,12 @@
 }
 ```
 
-### Execution
+### 执行命令
 ```bash
-python scripts/batch_request.py -c config.json -i customers.json -o results.json
+python scripts/batch_request.py --workdir batch_tasks/customer_query_20240115
 ```
 
-### Expected Output
+### 输出文件 (batch_tasks/customer_query_20240115/results.json)
 ```json
 {
   "status": "completed",
@@ -40,18 +45,18 @@ python scripts/batch_request.py -c config.json -i customers.json -o results.json
   "failed": 0,
   "results": [
     {
-      "input": {"customer_id": "C001", "name": "Alice"},
-      "output": {"id": "C001", "email": "alice@company.com", "phone": "+1-555-001"},
+      "input": {"customer_id": "C001", "name": "张三"},
+      "output": {"id": "C001", "email": "zhangsan@company.com", "phone": "138-0000-0001"},
       "status": "success"
     },
     {
-      "input": {"customer_id": "C002", "name": "Bob"},
-      "output": {"id": "C002", "email": "bob@company.com", "phone": "+1-555-002"},
+      "input": {"customer_id": "C002", "name": "李四"},
+      "output": {"id": "C002", "email": "lisi@company.com", "phone": "138-0000-0002"},
       "status": "success"
     },
     {
-      "input": {"customer_id": "C003", "name": "Charlie"},
-      "output": {"id": "C003", "email": "charlie@company.com", "phone": "+1-555-003"},
+      "input": {"customer_id": "C003", "name": "王五"},
+      "output": {"id": "C003", "email": "wangwu@company.com", "phone": "138-0000-0003"},
       "status": "success"
     }
   ]
@@ -60,18 +65,26 @@ python scripts/batch_request.py -c config.json -i customers.json -o results.json
 
 ---
 
-## Example 2: Product Search with POST
+## 示例2：产品搜索（POST请求）
 
-### Input File (products.json)
+### 任务目录结构
+```
+batch_tasks/product_search_20240116/
+├── config.json
+├── input.json
+└── results.json  (脚本生成)
+```
+
+### 输入文件 (input.json)
 ```json
 [
-  {"product_name": "iPhone 15", "category": "electronics"},
-  {"product_name": "MacBook Pro", "category": "electronics"},
-  {"product_name": "AirPods", "category": "electronics"}
+  {"product_name": "iPhone 15", "category": "电子产品"},
+  {"product_name": "MacBook Pro", "category": "电子产品"},
+  {"product_name": "AirPods", "category": "电子产品"}
 ]
 ```
 
-### Config File (config.json)
+### 配置文件 (config.json)
 ```json
 {
   "base_url": "https://search.api.com",
@@ -92,24 +105,32 @@ python scripts/batch_request.py -c config.json -i customers.json -o results.json
 }
 ```
 
-### Execution
+### 执行命令
 ```bash
-python scripts/batch_request.py -c config.json -i products.json -o search_results.json
+python scripts/batch_request.py --workdir batch_tasks/product_search_20240116
 ```
 
 ---
 
-## Example 3: Order Status Update
+## 示例3：订单状态更新（CSV输入）
 
-### Input File (orders.csv)
-```csv
-order_id,new_status,updated_by
-ORD-001,shipped,system
-ORD-002,delivered,system
-ORD-003,cancelled,admin
+### 任务目录结构
+```
+batch_tasks/order_update_20240117/
+├── config.json
+├── input.csv
+└── results.json
 ```
 
-### Config File (config.json)
+### 输入文件 (input.csv)
+```csv
+order_id,new_status,updated_by
+ORD-001,已发货,系统
+ORD-002,已签收,系统
+ORD-003,已取消,管理员
+```
+
+### 配置文件 (config.json)
 ```json
 {
   "base_url": "https://orders.api.com",
@@ -128,34 +149,34 @@ ORD-003,cancelled,admin
 }
 ```
 
-### Execution
+### 执行命令
 ```bash
-python scripts/batch_request.py -c config.json -i orders.csv -o update_results.json
+python scripts/batch_request.py --workdir batch_tasks/order_update_20240117
 ```
 
 ---
 
-## Example 4: Resume Interrupted Task
+## 示例4：中断恢复
 
-When a batch is interrupted (Ctrl+C or crash), resume from where it stopped:
+当批量任务被中断（Ctrl+C或崩溃）时，可以从中断处继续：
 
 ```bash
-# First run (interrupted)
-python scripts/batch_request.py -c config.json -i large_file.json -o results.json
-# Output: Progress: 150/500... (Ctrl+C)
-# Saved to results.json.progress.json
+# 第一次运行（被中断）
+python scripts/batch_request.py --workdir batch_tasks/large_task_20240118
+# 输出: 进度: 150/500 (150 成功, 0 失败) ... (Ctrl+C)
+# 进度保存到 batch_tasks/large_task_20240118/results.json.progress.json
 
-# Resume
-python scripts/batch_request.py -c config.json -i large_file.json -o results.json --resume
-# Output: Resuming from progress: 150 items already processed
-#         Processing 350 items...
+# 恢复执行
+python scripts/batch_request.py --workdir batch_tasks/large_task_20240118 --resume
+# 输出: 从进度恢复: 已处理 150 个项目
+#       正在处理 350 个项目（总数: 500，已完成: 150）
 ```
 
 ---
 
-## Example 5: Error Handling and Retry
+## 示例5：错误处理与重试
 
-### Config with Retry Settings
+### 配置重试参数 (config.json)
 ```json
 {
   "base_url": "https://unstable.api.com",
@@ -169,7 +190,7 @@ python scripts/batch_request.py -c config.json -i large_file.json -o results.jso
 }
 ```
 
-### Output with Errors
+### 带错误的输出结果 (results.json)
 ```json
 {
   "status": "completed",
@@ -191,25 +212,25 @@ python scripts/batch_request.py -c config.json -i large_file.json -o results.jso
 }
 ```
 
-Errors are also logged to `results.json.errors.jsonl` for further analysis.
+错误同时记录在`results.json.errors.jsonl`文件中。
 
 ---
 
-## Example 6: Complex Template Substitution
+## 示例6：复杂模板替换
 
-### Input File
+### 输入文件 (input.json)
 ```json
 [
   {
     "api_token": "token123",
     "org_id": "ORG001",
     "user_id": "USER001",
-    "query_text": "search term"
+    "query_text": "搜索关键词"
   }
 ]
 ```
 
-### Config File
+### 配置文件 (config.json)
 ```json
 {
   "base_url": "https://api.service.com",
@@ -230,4 +251,30 @@ Errors are also logged to `results.json.errors.jsonl` for further analysis.
 }
 ```
 
-All `{field}` placeholders are replaced with values from each input item.
+所有`{字段}`占位符都会被输入数据中对应的值替换。
+
+---
+
+## 完整任务目录示例
+
+```
+batch_tasks/
+├── customer_query_20240115/
+│   ├── config.json
+│   ├── input.json
+│   └── results.json
+├── product_search_20240116/
+│   ├── config.json
+│   ├── input.json
+│   ├── results.json
+│   └── results.json.errors.jsonl   # 有错误时生成
+├── order_update_20240117/
+│   ├── config.json
+│   ├── input.csv
+│   └── results.json
+└── large_task_20240118/
+    ├── config.json
+    ├── input.json
+    ├── results.json
+    └── results.json.progress.json   # 未完成任务存在
+```

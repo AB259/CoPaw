@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Batch API Request Executor.
+"""批量API请求执行器。
 
-Executes multiple API requests based on input data file and configuration.
-Supports progress tracking, error recovery, and result aggregation.
+根据输入数据文件和配置执行多个API请求。
+支持进度追踪、错误恢复和结果聚合。
 
-Usage:
+用法:
     python batch_request.py --config config.json --input input.json --output results.json
     python batch_request.py --config config.json --input input.json --output results.json --resume
 """
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Config:
-    """Configuration for batch requests."""
+    """批量请求配置。"""
     base_url: str
     endpoint: str
     method: str = "GET"
@@ -51,7 +51,7 @@ class Config:
 
 @dataclass
 class Progress:
-    """Progress tracking state."""
+    """进度追踪状态。"""
     processed_ids: List[str] = field(default_factory=list)
     last_index: int = 0
     timestamp: str = ""
@@ -73,14 +73,14 @@ class Progress:
 
 
 def load_config(config_path: Path) -> Config:
-    """Load configuration from JSON file."""
+    """从JSON文件加载配置。"""
     with open(config_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return Config(**data)
 
 
 def load_input(input_path: Path) -> List[Dict[str, Any]]:
-    """Load input data from JSON or CSV file."""
+    """从JSON或CSV文件加载输入数据。"""
     suffix = input_path.suffix.lower()
 
     if suffix == ".json":
@@ -105,7 +105,7 @@ def load_input(input_path: Path) -> List[Dict[str, Any]]:
 
 
 def substitute_template(template: str, data: Dict[str, Any]) -> str:
-    """Substitute {field} placeholders with data values."""
+    """替换{字段}占位符为数据值。"""
     def replacer(match):
         field_name = match.group(1)
         value = data.get(field_name, "")
@@ -115,7 +115,7 @@ def substitute_template(template: str, data: Dict[str, Any]) -> str:
 
 
 def substitute_dict(template: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively substitute placeholders in dict."""
+    """递归替换字典中的占位符。"""
     result = {}
     for key, value in template.items():
         if isinstance(value, str):
@@ -133,7 +133,7 @@ def substitute_dict(template: Dict[str, Any], data: Dict[str, Any]) -> Dict[str,
 
 
 def extract_jsonpath(data: Any, path: str) -> Any:
-    """Extract data using simple JSONPath ($ separated by dots)."""
+    """使用简单JSONPath提取数据（以$开头，点号分隔）。"""
     if path == "$":
         return data
 
@@ -156,23 +156,23 @@ async def make_request(
     config: Config,
     item: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Make a single API request with retry logic."""
-    # Build URL
+    """执行单个API请求，带重试逻辑。"""
+    # 构建URL
     endpoint = substitute_template(config.endpoint, item)
     url = f"{config.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
-    # Build headers
+    # 构建请求头
     headers = substitute_dict(config.headers, item) if config.headers else {}
 
-    # Build URL params
+    # 构建URL参数
     params = substitute_dict(config.url_params, item) if config.url_params else None
 
-    # Build request body
+    # 构建请求体
     body = None
     if config.request_body and config.method in ("POST", "PUT", "PATCH"):
         body = substitute_dict(config.request_body, item)
 
-    # Retry loop
+    # 重试循环
     last_error = None
     for attempt in range(config.retry_count):
         try:
@@ -224,13 +224,13 @@ async def process_batch(
     errors_path: Optional[Path],
     previous_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Process all items with progress tracking."""
+    """处理所有项目并进行进度追踪。"""
     results = previous_results.get("results", []) if previous_results else []
     errors = previous_results.get("errors", []) if previous_results else []
     success_count = previous_results.get("success", 0) if previous_results else 0
     failed_count = previous_results.get("failed", 0) if previous_results else 0
 
-    # Filter already processed items
+    # 过滤已处理的项目
     processed_set = set(progress.processed_ids)
     pending_items = [
         item for item in items
@@ -238,16 +238,16 @@ async def process_batch(
     ]
 
     if not pending_items:
-        logger.info("All items already processed")
+        logger.info("所有项目已处理完成")
         return {
             "status": "completed",
             "total": len(items),
             "success": success_count,
             "failed": failed_count,
-            "message": "All items already processed",
+            "message": "所有项目已处理完成",
         }
 
-    logger.info(f"Processing {len(pending_items)} items (total: {len(items)}, already done: {len(processed_set)})")
+    logger.info(f"正在处理 {len(pending_items)} 个项目（总数: {len(items)}，已完成: {len(processed_set)}）")
 
     start_time = datetime.now(timezone.utc)
 
@@ -263,7 +263,7 @@ async def process_batch(
 
                 return result
 
-        # Process in batches for progress updates
+        # 分批处理以更新进度
         batch_size = max(10, len(pending_items) // 10)
 
         for i in range(0, len(pending_items), batch_size):
@@ -288,15 +288,15 @@ async def process_batch(
             progress.last_index = i + len(batch)
             progress.timestamp = datetime.now(timezone.utc).isoformat()
 
-            # Save progress
+            # 保存进度
             with open(progress_path, "w", encoding="utf-8") as f:
                 json.dump(progress.to_dict(), f, ensure_ascii=False, indent=2)
 
-            logger.info(f"Progress: {len(progress.processed_ids)}/{len(items)} ({success_count} success, {failed_count} failed)")
+            logger.info(f"进度: {len(progress.processed_ids)}/{len(items)} ({success_count} 成功, {failed_count} 失败)")
 
     end_time = datetime.now(timezone.utc)
 
-    # Build final output
+    # 构建最终输出
     output = {
         "status": "completed",
         "total": len(items),
@@ -316,92 +316,99 @@ async def process_batch(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Execute batch API requests with progress tracking",
+        description="批量API请求执行器，支持进度追踪和中断恢复",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--config", "-c",
+        "--workdir", "-w",
         required=True,
-        help="Path to config JSON file",
+        help="任务目录路径。config/input/output在此目录下",
+    )
+    parser.add_argument(
+        "--config", "-c",
+        help="配置文件名（默认: config.json）",
     )
     parser.add_argument(
         "--input", "-i",
-        required=True,
-        help="Path to input JSON or CSV file",
+        help="输入文件名，支持JSON/CSV（默认: input.json）",
     )
     parser.add_argument(
         "--output", "-o",
-        required=True,
-        help="Path to output results JSON file",
+        help="输出文件名（默认: results.json）",
     )
     parser.add_argument(
         "--progress", "-p",
-        help="Path to progress tracking file (default: output + .progress.json)",
+        help="进度文件名（默认: results.json.progress.json）",
     )
     parser.add_argument(
         "--errors", "-e",
-        help="Path to errors JSONL file (default: output + .errors.jsonl)",
+        help="错误日志文件名（默认: results.json.errors.jsonl）",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume from previous progress if available",
+        help="从上次进度恢复执行",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing output and progress files",
+        help="强制覆盖已有输出和进度文件",
     )
 
     args = parser.parse_args()
 
-    config_path = Path(args.config)
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-    progress_path = Path(args.progress) if args.progress else Path(f"{args.output}.progress.json")
-    errors_path = Path(args.errors) if args.errors else Path(f"{args.output}.errors.jsonl")
+    # 创建任务目录
+    workdir = Path(args.workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
 
-    # Validate inputs
+    # 所有文件都在workdir下
+    config_path = workdir / (args.config or "config.json")
+    input_path = workdir / (args.input or "input.json")
+    output_path = workdir / (args.output or "results.json")
+    progress_path = workdir / (args.progress or "results.json.progress.json")
+    errors_path = workdir / (args.errors or "results.json.errors.jsonl")
+
+    # 验证输入
     if not config_path.exists():
-        print(f"Error: Config file not found: {config_path}", file=sys.stderr)
+        print(f"错误: 配置文件不存在: {config_path}", file=sys.stderr)
         sys.exit(1)
     if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+        print(f"错误: 输入文件不存在: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Check existing files (skip if resuming)
+    # 检查已有文件（恢复模式跳过）
     if output_path.exists() and not args.force and not args.resume:
-        print(f"Error: Output file exists: {output_path}. Use --force to overwrite or --resume to continue.", file=sys.stderr)
+        print(f"错误: 输出文件已存在: {output_path}。使用 --force 覆盖或 --resume 继续。", file=sys.stderr)
         sys.exit(1)
 
-    # Load config and input
+    # 加载配置和输入数据
     config = load_config(config_path)
     items = load_input(input_path)
 
     if not items:
-        print("Error: No items to process", file=sys.stderr)
+        print("错误: 没有要处理的项目", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loaded {len(items)} items from {input_path}")
-    print(f"Endpoint: {config.base_url}{config.endpoint}")
-    print(f"Method: {config.method}")
-    print(f"Concurrency: {config.concurrency}")
+    print(f"已加载 {len(items)} 个项目，来自 {input_path}")
+    print(f"端点: {config.base_url}{config.endpoint}")
+    print(f"方法: {config.method}")
+    print(f"并发数: {config.concurrency}")
 
-    # Load or initialize progress
+    # 加载或初始化进度
     progress = Progress()
     if args.resume and progress_path.exists():
         with open(progress_path, "r", encoding="utf-8") as f:
             progress = Progress.from_dict(json.load(f))
-        print(f"Resuming from progress: {len(progress.processed_ids)} items already processed")
+        print(f"从进度恢复: 已处理 {len(progress.processed_ids)} 个项目")
     elif progress_path.exists() and not args.force:
-        print(f"Progress file exists: {progress_path}. Use --resume to continue or --force to restart.")
+        print(f"进度文件已存在: {progress_path}。使用 --resume 继续或 --force 重新开始。", file=sys.stderr)
         sys.exit(1)
 
-    # Clear errors file if starting fresh
+    # 新开始时清除错误文件
     if errors_path.exists() and (not args.resume or args.force):
         errors_path.unlink()
 
-    # Load previous results if resuming
+    # 恢复模式时加载之前的结果
     previous_results = None
     if args.resume and output_path.exists():
         try:
@@ -410,7 +417,7 @@ def main():
         except (json.JSONDecodeError, KeyError):
             pass
 
-    # Run batch processing
+    # 执行批量处理
     try:
         result = asyncio.run(process_batch(
             config=config,
@@ -422,25 +429,25 @@ def main():
             previous_results=previous_results,
         ))
 
-        # Save final results
+        # 保存最终结果
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
-        # Clean up progress file on success
+        # 成功完成后清理进度文件
         if progress_path.exists():
             progress_path.unlink()
 
-        print(f"\nCompleted: {result['success']}/{result['total']} successful")
+        print(f"\n完成: {result['success']}/{result['total']} 成功")
         if result['failed'] > 0:
-            print(f"Failed: {result['failed']}")
-            print(f"Errors saved to: {errors_path}")
-        print(f"Results saved to: {output_path}")
+            print(f"失败: {result['failed']}")
+            print(f"错误保存至: {errors_path}")
+        print(f"结果保存至: {output_path}")
 
     except KeyboardInterrupt:
-        print("\nInterrupted. Progress saved to:", progress_path)
+        print("\n已中断。进度保存至:", progress_path)
         sys.exit(130)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
 
 
