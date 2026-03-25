@@ -180,30 +180,56 @@ class ZhaohuChannel(BaseChannel):
     ) -> "ZhaohuChannel":
         c = config if isinstance(config, dict) else config.model_dump()
 
-        def _get_str(key: str) -> str:
-            return (c.get(key) or "").strip()
+        def _get_env_str(key: str, default: str = "") -> str:                               
+            """Get string from env (priority) or config."""                                 
+            env_val = os.getenv(key, "")                                                    
+            if env_val:                                                                     
+                return env_val.strip()                                                      
+            return (c.get(key) or default).strip() 
+
+        def _get_env_bool(key: str, default: bool = False) -> bool:
+            """Get string from env (priority) or config."""
+            env_val = os.getenv(key, "")
+            if env_val:
+                return env_val.strip()
+            return (c.get(key) or default).strip()
+
+        def _get_env_float(key: str, default: float) -> float: 
+            """Get float from env (priority) or config."""  
+            env_val = os.getenv(key, "") 
+            if env_val:
+                try: 
+                    return float(env_val)
+                except ValueError: 
+                    pass
+            return float(c.get(key) or default)
+
+        def _get_env_list(key: str, default: Optional[list] = None) -> list: 
+            """Get list from env (comma-separated) or config.""" 
+            env_val = os.getenv(key, "")
+            if env_val: 
+                return [s.strip() for s in env_val.split(",") if s.strip()]
+            return c.get(key) or default or []
 
         return cls(
             process=process,
-            enabled=bool(c.get("enabled", False)),
-            push_url=_get_str("push_url"),
-            sys_id=_get_str("sys_id"),
-            robot_open_id=_get_str("robot_open_id"),
-            channel_code=_get_str("channel") or _DEFAULT_CHANNEL,
-            net=_get_str("net") or _DEFAULT_NET,
-            request_timeout=float(
-                c.get("request_timeout") or _DEFAULT_TIMEOUT,
-            ),
-            bot_prefix=_get_str("bot_prefix"),
-            user_query_url=_get_str("user_query_url"),
+            enabled=_get_env_bool("ZHAOHU_CHANNEL_ENABLED", False), 
+            push_url=_get_env_str("ZHAOHU_PUSH_URL"),
+            sys_id=_get_env_str("ZHAOHU_SYS_ID"), 
+            robot_open_id=_get_env_str("ZHAOHU_ROBOT_OPEN_ID"),
+            channel_code=_get_env_str("ZHAOHU_CHANNEL", _DEFAULT_CHANNEL),
+            net=_get_env_str("ZHAOHU_NET", _DEFAULT_NET),
+            request_timeout=_get_env_float("ZHAOHU_REQUEST_TIMEOUT", _DEFAULT_TIMEOUT),
+            bot_prefix=_get_env_str("ZHAOHU_BOT_PREFIX"),
+            user_query_url=_get_env_str("ZHAOHU_USER_QUERY_URL"),
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
             filter_tool_messages=filter_tool_messages,
             filter_thinking=filter_thinking,
-            dm_policy=c.get("dm_policy") or "open",
-            group_policy=c.get("group_policy") or "open",
-            allow_from=c.get("allow_from") or [],
-            deny_message=c.get("deny_message") or "",
+            dm_policy=_get_env_str("ZHAOHU_DM_POLICY", "open"),
+            group_policy=_get_env_str("ZHAOHU_GROUP_POLICY", "open"),
+            allow_from=_get_env_list("ZHAOHU_ALLOW_FROM"),
+            deny_message=_get_env_str("ZHAOHU_DENY_MESSAGE"),
         )
 
     def resolve_session_id(
