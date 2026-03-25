@@ -487,17 +487,20 @@ class CronManager:
         """Callback when a job is triggered by scheduler.
 
         Args:
-            user_id: User identifier
+            user_id: User identifier (job owner, for job storage)
             job_id: Job identifier
         """
         job = await self._get_repo_for_user(user_id).get_job(job_id)
         if not job:
             return
 
-        # Set request context for user isolation during execution
+        # Set request context using job.created_by for LLM config
+        # created_by defaults to user_id (job owner) for backward compatibility
+        config_user_id = job.created_by or user_id
+
         from ...constant import set_request_user_id, reset_request_user_id
 
-        token = set_request_user_id(user_id)
+        token = set_request_user_id(config_user_id)
         try:
             await self._execute_once(user_id, job)
         finally:
