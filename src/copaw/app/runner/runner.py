@@ -249,22 +249,9 @@ class AgentRunner(Runner):
             # Debug: Log config path and providers.json path
             config_path = get_config_path()
             providers_path = get_providers_json_path()
-            logger.info(
-                "Handle agent query:\n%s",
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "user_id": user_id,
-                        "channel": channel,
-                        "msgs_len": len(msgs) if msgs else 0,
-                        "config_path": str(config_path),
-                        "providers_path": str(providers_path),
-                        "working_dir": str(get_request_working_dir()),
-                        "msgs_str": str(msgs)[:300] + "...",
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
+            logger.debug(
+                "Handle agent query: session_id=%s, user_id=%s, channel=%s, msgs_len=%d, working_dir=%s",
+                session_id, user_id, channel, len(msgs) if msgs else 0, str(get_request_working_dir()),
             )
 
             env_context = build_env_context(
@@ -313,6 +300,8 @@ class AgentRunner(Runner):
                 memory_manager=memory_manager_to_use,
                 max_iters=max_iters,
                 max_input_length=max_input_length,
+                enable_tracing=trace_id is not None,
+                trace_id=trace_id,
             )
             await agent.register_mcp_clients()
             agent.set_console_output_enabled(enabled=False)
@@ -454,18 +443,41 @@ class AgentRunner(Runner):
         # a single global instance. This provides better performance and
         # full user isolation.
 
-        # Initialize tracing manager if enabled
-        tracing_enabled = os.environ.get("COPAW_TRACING_ENABLED", "false").lower() == "true"
+        # Initialize tracing manager if enabled (default: enabled)
+        tracing_enabled = os.environ.get("COPAW_TRACING_ENABLED", "true").lower() == "true"
         if tracing_enabled:
             try:
-                tracing_config = TracingConfig(
-                    enabled=True,
-                    batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
-                    flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
-                    retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
-                )
-                await init_trace_manager(tracing_config)
-                logger.info("Tracing manager initialized")
+                # Check if database is configured
+                db_host = os.environ.get("COPAW_TRACING_DB_HOST")
+                if db_host:
+                    from ...tracing.config import TDSQLConfig
+                    database_config = TDSQLConfig(
+                        host=db_host,
+                        port=int(os.environ.get("COPAW_TRACING_DB_PORT", "3306")),
+                        user=os.environ.get("COPAW_TRACING_DB_USER", "root"),
+                        password=os.environ.get("COPAW_TRACING_DB_PASSWORD", ""),
+                        database=os.environ.get("COPAW_TRACING_DB_NAME", "copaw_tracing"),
+                        min_connections=int(os.environ.get("COPAW_TRACING_DB_MIN_CONN", "2")),
+                        max_connections=int(os.environ.get("COPAW_TRACING_DB_MAX_CONN", "10")),
+                    )
+                    tracing_config = TracingConfig(
+                        enabled=True,
+                        batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
+                        flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
+                        retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
+                        database=database_config,
+                    )
+                    await init_trace_manager(tracing_config)
+                    logger.info("Tracing manager initialized (database storage: %s)", db_host)
+                else:
+                    tracing_config = TracingConfig(
+                        enabled=True,
+                        batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
+                        flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
+                        retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
+                    )
+                    await init_trace_manager(tracing_config)
+                    logger.info("Tracing manager initialized (in-memory storage)")
             except Exception as e:
                 logger.warning("Failed to initialize tracing manager: %s", e)
 

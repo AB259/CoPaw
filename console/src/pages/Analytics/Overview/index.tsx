@@ -7,7 +7,7 @@ import {
   Zap,
   Clock,
   Cpu,
-  Wrench,
+  BookOpen,
 } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -49,6 +49,7 @@ interface ToolUsage {
 interface SkillUsage {
   skill_name: string;
   count: number;
+  avg_duration_ms: number;
 }
 
 interface DailyStats {
@@ -80,7 +81,7 @@ export default function OverviewPage() {
       params.append("end_date", dateRange[1].format("YYYY-MM-DD"));
 
       const data = await request<OverviewStats>(
-        `/api/tracing/overview?${params.toString()}`
+        `/tracing/overview?${params.toString()}`
       );
       setStats(data);
     } catch (error) {
@@ -123,11 +124,11 @@ export default function OverviewPage() {
     },
   ];
 
-  const toolColumns: ColumnsType<ToolUsage> = [
+  const skillColumns: ColumnsType<SkillUsage> = [
     {
-      title: t("analytics.tool", "Tool"),
-      dataIndex: "tool_name",
-      key: "tool_name",
+      title: t("analytics.skill", "Skill"),
+      dataIndex: "skill_name",
+      key: "skill_name",
     },
     {
       title: t("analytics.calls", "Calls"),
@@ -140,12 +141,6 @@ export default function OverviewPage() {
       dataIndex: "avg_duration_ms",
       key: "avg_duration_ms",
       render: (v) => formatDuration(v),
-    },
-    {
-      title: t("analytics.errors", "Errors"),
-      dataIndex: "error_count",
-      key: "error_count",
-      render: (v) => (v > 0 ? <span style={{ color: "#ff4d4f" }}>{v}</span> : v),
     },
   ];
 
@@ -240,15 +235,15 @@ export default function OverviewPage() {
           <Card
             title={
               <span>
-                <Wrench size={16} style={{ marginRight: 8 }} />
-                {t("analytics.topTools", "Top Tools")}
+                <BookOpen size={16} style={{ marginRight: 8 }} />
+                {t("analytics.topSkills", "Top Skills")}
               </span>
             }
           >
             <Table
-              dataSource={stats.top_tools}
-              columns={toolColumns}
-              rowKey="tool_name"
+              dataSource={stats.top_skills}
+              columns={skillColumns}
+              rowKey="skill_name"
               size="small"
               pagination={false}
             />

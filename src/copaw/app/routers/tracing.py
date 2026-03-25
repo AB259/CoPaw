@@ -5,6 +5,7 @@ Provides REST API endpoints for tracing analytics.
 """
 from datetime import datetime, timedelta
 from typing import Optional
+import logging
 
 from fastapi import APIRouter, Query, HTTPException
 
@@ -18,6 +19,7 @@ from ...tracing.models import (
 )
 
 router = APIRouter(prefix="/tracing", tags=["tracing"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/overview", response_model=OverviewStats)

@@ -135,7 +135,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    return request(`/api/tracing/overview?${params.toString()}`);
+    return request(`/tracing/overview?${params.toString()}`);
   },
 
   getUsers: async (
@@ -147,7 +147,7 @@ export const tracingApi = {
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
     if (userId) params.append("user_id", userId);
-    return request(`/api/tracing/users?${params.toString()}`);
+    return request(`/tracing/users?${params.toString()}`);
   },
 
   getUserStats: async (userId: string, startDate?: string, endDate?: string): Promise<UserStats> => {
@@ -155,7 +155,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/api/tracing/users/${encodeURIComponent(userId)}${query}`);
+    return request(`/tracing/users/${encodeURIComponent(userId)}${query}`);
   },
 
   getTraces: async (
@@ -177,11 +177,11 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/api/tracing/traces?${params.toString()}`);
+    return request(`/tracing/traces?${params.toString()}`);
   },
 
   getTraceDetail: async (traceId: string): Promise<TraceDetail> => {
-    return request(`/api/tracing/traces/${traceId}`);
+    return request(`/tracing/traces/${traceId}`);
   },
 
   getModelUsage: async (startDate?: string, endDate?: string): Promise<{ models: ModelUsage[] }> => {
@@ -189,7 +189,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/api/tracing/models${query}`);
+    return request(`/tracing/models${query}`);
   },
 
   getToolUsage: async (startDate?: string, endDate?: string): Promise<{ tools: ToolUsage[] }> => {
@@ -197,6 +197,6 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/api/tracing/tools${query}`);
+    return request(`/tracing/tools${query}`);
   },
 };

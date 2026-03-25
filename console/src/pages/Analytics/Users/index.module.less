@@ -1,5 +1,9 @@
 .usersPage {
   padding: 24px;
+  height: calc(100vh - 128px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .header {
@@ -37,5 +41,16 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+}
+
+.tableCard {
+  flex: 1;
+  overflow: hidden;
+
+  :global(.ant-card-body) {
+    padding: 0;
+    height: 100%;
+    overflow: auto;
   }
 }

@@ -216,6 +216,9 @@ CREATE TABLE IF NOT EXISTS spans (
     start_time DATETIME(3) NOT NULL,
     end_time DATETIME(3),
     duration_ms INT,
+    user_id VARCHAR(128),
+    session_id VARCHAR(256),
+    channel VARCHAR(64),
     model_name VARCHAR(128),
     input_tokens INT,
     output_tokens INT,
@@ -229,6 +232,8 @@ CREATE TABLE IF NOT EXISTS spans (
     INDEX idx_trace_id (trace_id),
     INDEX idx_event_type (event_type),
     INDEX idx_tool_name (tool_name),
+    INDEX idx_skill_name (skill_name),
+    INDEX idx_user_id (user_id),
     INDEX idx_start_time (start_time),
     FOREIGN KEY (trace_id) REFERENCES traces(trace_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

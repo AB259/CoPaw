@@ -110,7 +110,7 @@ export default function TracesPage() {
         params.append("status", statusFilter);
       }
 
-      const data = await request<TracesResponse>(`/api/tracing/traces?${params.toString()}`);
+      const data = await request<TracesResponse>(`/tracing/traces?${params.toString()}`);
       setTraces(data.items || []);
       setTotal(data.total || 0);
     } catch (error) {
@@ -123,7 +123,7 @@ export default function TracesPage() {
   const fetchTraceDetail = async (traceId: string) => {
     setTraceLoading(true);
     try {
-      const data = await request<TraceDetail>(`/api/tracing/traces/${traceId}`);
+      const data = await request<TraceDetail>(`/tracing/traces/${traceId}`);
       setSelectedTrace(data);
     } catch (error) {
       console.error("Failed to fetch trace detail:", error);
@@ -186,21 +186,21 @@ export default function TracesPage() {
       title: t("analytics.userId", "User ID"),
       dataIndex: "user_id",
       key: "user_id",
-      width: 150,
+      width: 120,
       ellipsis: true,
     },
     {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 160,
+      width: 130,
       render: (v) => dayjs(v).format("MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
       dataIndex: "duration_ms",
       key: "duration_ms",
-      width: 100,
+      width: 80,
       render: (v) => formatDuration(v),
     },
     {
@@ -264,12 +264,13 @@ export default function TracesPage() {
         </div>
       </div>
 
-      <Card>
+      <Card className={styles.tableCard}>
         <Table
           dataSource={traces}
           columns={columns}
           rowKey="trace_id"
           loading={loading}
+          scroll={{ x: 850 }}
           pagination={{
             current: page,
             pageSize,
@@ -301,6 +302,12 @@ export default function TracesPage() {
         onClose={() => {
           setDrawerOpen(false);
           setSelectedTrace(null);
+        }}
+        styles={{
+          body: {
+            overflowX: 'hidden',
+            padding: '16px',
+          },
         }}
       >
         {traceLoading ? (

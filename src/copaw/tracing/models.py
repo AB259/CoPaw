@@ -155,6 +155,7 @@ class SkillUsage(BaseModel):
 
     skill_name: str
     count: int = 0
+    avg_duration_ms: int = 0
 
 
 class DailyStats(BaseModel):
@@ -230,6 +231,7 @@ class UserListItem(BaseModel):
     total_sessions: int = 0
     total_conversations: int = 0
     total_tokens: int = 0
+    total_skills: int = 0
     last_active: Optional[datetime] = None
 
 

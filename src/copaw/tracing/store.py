@@ -476,7 +476,8 @@ class TraceStore:
                 output_tokens = %s,
                 tool_output = %s,
                 error = %s,
-                metadata = %s
+                metadata = %s,
+                event_type = %s
             WHERE span_id = %s
         """
         params = (
@@ -486,6 +487,7 @@ class TraceStore:
             span.tool_output,
             span.error,
             json.dumps(span.metadata) if span.metadata else None,
+            span.event_type.value if hasattr(span.event_type, 'value') else span.event_type,
             span.span_id,
         )
         await self.db.execute(query, params)
@@ -544,10 +546,10 @@ class TraceStore:
         users_row = await self.db.fetch_one(users_query, (start_date, end_date))
         total_users = users_row["total_users"] if users_row else 0
 
-        # Get online users (active in last 5 minutes)
+        # Get online users (active in last 5 minutes, based on spans)
         online_query = """
             SELECT COUNT(DISTINCT user_id) as online_users
-            FROM traces
+            FROM spans
             WHERE start_time >= %s
         """
         online_threshold = datetime.now() - timedelta(minutes=5)
@@ -591,13 +593,14 @@ class TraceStore:
             for row in model_rows
         ]
 
-        # Get top tools
+        # Get top tools (by event_type = tool_call_end)
         tool_query = """
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
             FROM spans
             WHERE start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
               AND tool_name IS NOT NULL
             GROUP BY tool_name
             ORDER BY count DESC
@@ -614,11 +617,13 @@ class TraceStore:
             for row in tool_rows
         ]
 
-        # Get top skills
+        # Get top skills (by event_type = skill_invocation)
         skill_query = """
-            SELECT skill_name, COUNT(*) as count
+            SELECT skill_name, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration
             FROM spans
             WHERE start_time >= %s AND start_time <= %s
+              AND event_type = 'skill_invocation'
               AND skill_name IS NOT NULL
             GROUP BY skill_name
             ORDER BY count DESC
@@ -626,7 +631,11 @@ class TraceStore:
         """
         skill_rows = await self.db.fetch_all(skill_query, (start_date, end_date))
         top_skills = [
-            SkillUsage(skill_name=row["skill_name"], count=row["count"])
+            SkillUsage(
+                skill_name=row["skill_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+            )
             for row in skill_rows
         ]
 
@@ -665,17 +674,20 @@ class TraceStore:
         count_row = await self.db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
-        # Get users
+        # Get users with skill counts from spans
         offset = (page - 1) * page_size
         query = f"""
-            SELECT user_id,
+            SELECT t.user_id,
                    COUNT(*) as total_sessions,
-                   COUNT(DISTINCT session_id) as total_conversations,
-                   SUM(total_tokens) as total_tokens,
-                   MAX(start_time) as last_active
-            FROM traces
+                   COUNT(DISTINCT t.session_id) as total_conversations,
+                   SUM(t.total_tokens) as total_tokens,
+                   MAX(t.start_time) as last_active,
+                   (SELECT COUNT(*) FROM spans s
+                    WHERE s.trace_id IN (SELECT trace_id FROM traces WHERE user_id = t.user_id)
+                    AND s.event_type = 'skill_invocation') as total_skills
+            FROM traces t
             WHERE {where_sql}
-            GROUP BY user_id
+            GROUP BY t.user_id
             ORDER BY last_active DESC
             LIMIT %s OFFSET %s
         """
@@ -687,6 +699,7 @@ class TraceStore:
                 total_sessions=row["total_sessions"] or 0,
                 total_conversations=row["total_conversations"] or 0,
                 total_tokens=row["total_tokens"] or 0,
+                total_skills=row["total_skills"] or 0,
                 last_active=row["last_active"],
             )
             for row in rows
@@ -737,13 +750,15 @@ class TraceStore:
             for row in model_rows
         ]
 
-        # Get tool usage
+        # Get tool usage (by event_type = tool_call_end)
         tool_query = """
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
             FROM spans
-            WHERE user_id = %s AND start_time >= %s AND start_time <= %s AND tool_name IS NOT NULL
+            WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND tool_name IS NOT NULL
             GROUP BY tool_name
             ORDER BY count DESC
         """
@@ -758,6 +773,22 @@ class TraceStore:
             for row in tool_rows
         ]
 
+        # Get skill usage (by event_type = skill_invocation)
+        skill_query = """
+            SELECT skill_name, COUNT(*) as count
+            FROM spans
+            WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'skill_invocation'
+              AND skill_name IS NOT NULL
+            GROUP BY skill_name
+            ORDER BY count DESC
+        """
+        skill_rows = await self.db.fetch_all(skill_query, (user_id, start_date, end_date))
+        skills_used = [
+            SkillUsage(skill_name=row["skill_name"], count=row["count"])
+            for row in skill_rows
+        ]
+
         return UserStats(
             user_id=user_id,
             model_usage=model_usage,
@@ -768,7 +799,7 @@ class TraceStore:
             total_conversations=stats_row["total_conversations"] if stats_row else 0,
             avg_duration_ms=int(stats_row["avg_duration"] or 0) if stats_row else 0,
             tools_used=tools_used,
-            skills_used=[],
+            skills_used=skills_used,
         )
 
     async def _db_get_traces(
@@ -851,16 +882,19 @@ class TraceStore:
             if start_date <= t.start_time <= end_date
         ]
 
-        if not traces:
-            return OverviewStats()
+        # Don't return early - we still need to check spans for tools/skills
 
         # Count unique users
         users = set(t.user_id for t in traces)
+
+        # Count online users based on recent span activity (last 5 minutes)
         online_threshold = datetime.now() - timedelta(minutes=5)
-        online_users = sum(
-            1 for t in traces
-            if t.start_time >= online_threshold
-        )
+        online_users = set()
+        for trace_id, spans in self._spans.items():
+            for s in spans:
+                if s.start_time >= online_threshold and s.user_id:
+                    online_users.add(s.user_id)
+        online_users = len(online_users)
 
         # Token stats
         total_input = sum(t.total_input_tokens for t in traces)
@@ -881,11 +915,27 @@ class TraceStore:
             for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
         ]
 
-        # Tool usage
+        # Tool usage and skill usage (separate by event_type)
         tool_counts: dict[str, dict] = {}
-        for spans in self._spans.values():
+        skill_counts: dict[str, dict] = {}
+
+        for trace_id, spans in self._spans.items():
             for s in spans:
-                if s.tool_name and start_date <= s.start_time <= end_date:
+                if not (start_date <= s.start_time <= end_date):
+                    continue
+                # Check event_type to distinguish tool vs skill
+                event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
+
+                if event_type_str == EventType.SKILL_INVOCATION.value and s.skill_name:
+                    # Skill invocation
+                    if s.skill_name not in skill_counts:
+                        skill_counts[s.skill_name] = {"count": 0, "duration": 0, "errors": 0}
+                    skill_counts[s.skill_name]["count"] += 1
+                    skill_counts[s.skill_name]["duration"] += s.duration_ms or 0
+                    if s.error:
+                        skill_counts[s.skill_name]["errors"] += 1
+                elif event_type_str == EventType.TOOL_CALL_END.value and s.tool_name:
+                    # Tool call (only count TOOL_CALL_END)
                     if s.tool_name not in tool_counts:
                         tool_counts[s.tool_name] = {"count": 0, "duration": 0, "errors": 0}
                     tool_counts[s.tool_name]["count"] += 1
@@ -903,10 +953,17 @@ class TraceStore:
             for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])[:10]
         ]
 
+        top_skills = [
+            SkillUsage(
+                skill_name=name,
+                count=data["count"],
+                avg_duration_ms=data["duration"] // max(data["count"], 1),
+            )
+            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])[:10]
+        ]
+
         return OverviewStats(
-            online_users=len(set(
-                t.user_id for t in traces if t.start_time >= online_threshold
-            )),
+            online_users=online_users,
             total_users=len(users),
             model_distribution=model_distribution,
             total_tokens=total_input + total_output,
@@ -916,7 +973,7 @@ class TraceStore:
             total_conversations=len(set(t.session_id for t in traces)),
             avg_duration_ms=avg_duration,
             top_tools=top_tools,
-            top_skills=[],
+            top_skills=top_skills,
             daily_trend=[],
         )
 
@@ -938,6 +995,7 @@ class TraceStore:
                     "sessions": 0,
                     "conversations": set(),
                     "tokens": 0,
+                    "skills": 0,
                     "last_active": t.start_time,
                 }
             user_data[uid]["sessions"] += 1
@@ -945,6 +1003,15 @@ class TraceStore:
             user_data[uid]["tokens"] += t.total_input_tokens + t.total_output_tokens
             if t.start_time > user_data[uid]["last_active"]:
                 user_data[uid]["last_active"] = t.start_time
+
+        # Count skills per user from spans
+        for trace_id, spans in self._spans.items():
+            trace = self._traces.get(trace_id)
+            if trace and trace.user_id in user_data:
+                for s in spans:
+                    event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
+                    if event_type_str == EventType.SKILL_INVOCATION.value:
+                        user_data[trace.user_id]["skills"] += 1
 
         # Sort and paginate
         sorted_users = sorted(
@@ -960,6 +1027,7 @@ class TraceStore:
                 total_sessions=data["sessions"],
                 total_conversations=len(data["conversations"]),
                 total_tokens=data["tokens"],
+                total_skills=data["skills"],
                 last_active=data["last_active"],
             )
             for uid, data in sorted_users[offset:offset + page_size]
@@ -999,13 +1067,27 @@ class TraceStore:
             for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
         ]
 
-        # Tool usage
+        # Tool and skill usage (separate by event_type)
         tool_counts: dict[str, dict] = {}
+        skill_counts: dict[str, dict] = {}
         for trace_id, spans in self._spans.items():
             trace = self._traces.get(trace_id)
             if trace and trace.user_id == user_id:
                 for s in spans:
-                    if s.tool_name and start_date <= s.start_time <= end_date:
+                    if not (start_date <= s.start_time <= end_date):
+                        continue
+                    event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
+
+                    if event_type_str == EventType.SKILL_INVOCATION.value and s.skill_name:
+                        # Skill invocation
+                        if s.skill_name not in skill_counts:
+                            skill_counts[s.skill_name] = {"count": 0, "duration": 0, "errors": 0}
+                        skill_counts[s.skill_name]["count"] += 1
+                        skill_counts[s.skill_name]["duration"] += s.duration_ms or 0
+                        if s.error:
+                            skill_counts[s.skill_name]["errors"] += 1
+                    elif event_type_str == EventType.TOOL_CALL_END.value and s.tool_name:
+                        # Tool call (count once, use TOOL_CALL_END)
                         if s.tool_name not in tool_counts:
                             tool_counts[s.tool_name] = {"count": 0, "duration": 0, "errors": 0}
                         tool_counts[s.tool_name]["count"] += 1
@@ -1023,6 +1105,14 @@ class TraceStore:
             for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])
         ]
 
+        skills_used = [
+            SkillUsage(
+                skill_name=name,
+                count=data["count"],
+            )
+            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])
+        ]
+
         return UserStats(
             user_id=user_id,
             model_usage=model_usage,
@@ -1033,7 +1123,7 @@ class TraceStore:
             total_conversations=len(set(t.session_id for t in traces)),
             avg_duration_ms=avg_duration,
             tools_used=tools_used,
-            skills_used=[],
+            skills_used=skills_used,
         )
 
     def _memory_get_traces(

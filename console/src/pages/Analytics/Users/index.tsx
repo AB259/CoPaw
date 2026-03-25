@@ -12,6 +12,7 @@ interface UserListItem {
   total_sessions: number;
   total_conversations: number;
   total_tokens: number;
+  total_skills: number;
   last_active: string | null;
 }
 
@@ -79,7 +80,7 @@ export default function UsersPage() {
         params.append("user_id", searchQuery);
       }
 
-      const data = await request<UsersResponse>(`/api/tracing/users?${params.toString()}`);
+      const data = await request<UsersResponse>(`/tracing/users?${params.toString()}`);
       setUsers(data.items || []);
       setTotal(data.total || 0);
     } catch (error) {
@@ -92,7 +93,7 @@ export default function UsersPage() {
   const fetchUserStats = async (userId: string) => {
     setUserLoading(true);
     try {
-      const data = await request<UserStats>(`/api/tracing/users/${encodeURIComponent(userId)}`);
+      const data = await request<UserStats>(`/tracing/users/${encodeURIComponent(userId)}`);
       setSelectedUser(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
@@ -140,6 +141,12 @@ export default function UsersPage() {
       sorter: true,
     },
     {
+      title: t("analytics.skills", "Skills"),
+      dataIndex: "total_skills",
+      key: "total_skills",
+      sorter: true,
+    },
+    {
       title: t("analytics.tokens", "Tokens"),
       dataIndex: "total_tokens",
       key: "total_tokens",
@@ -171,12 +178,13 @@ export default function UsersPage() {
         />
       </div>
 
-      <Card>
+      <Card className={styles.tableCard}>
         <Table
           dataSource={users}
           columns={columns}
           rowKey="user_id"
           loading={loading}
+          scroll={{ x: 700 }}
           pagination={{
             current: page,
             pageSize,
@@ -257,6 +265,19 @@ export default function UsersPage() {
                   {selectedUser.tools_used.map((t) => (
                     <Tag key={t.tool_name} color={t.error_count > 0 ? "error" : "default"}>
                       {t.tool_name}: {t.count} calls
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedUser.skills_used.length > 0 && (
+              <div className={styles.section}>
+                <h4>{t("analytics.skillsUsed", "Skills Used")}</h4>
+                <div className={styles.tagList}>
+                  {selectedUser.skills_used.map((s) => (
+                    <Tag key={s.skill_name} color="blue">
+                      {s.skill_name}: {s.count} calls
                     </Tag>
                   ))}
                 </div>

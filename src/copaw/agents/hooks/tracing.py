@@ -39,6 +39,7 @@ class TracingHook:
         self._current_llm_span_id: Optional[str] = None
         self._current_tool_span_id: Optional[str] = None
         self._tool_spans: dict[str, str] = {}  # tool_call_id -> span_id
+        self._in_skill_context: bool = False  # Flag to skip tool tracing during skill execution
 
     async def on_llm_start(
         self,
@@ -73,11 +74,13 @@ class TracingHook:
     async def on_llm_end(
         self,
         output_tokens: int = 0,
+        input_tokens: int = 0,
     ) -> None:
         """Called when LLM finishes generating.
 
         Args:
             output_tokens: Output token count
+            input_tokens: Input token count (updated if provided)
         """
         if not self._current_llm_span_id:
             return
@@ -88,6 +91,7 @@ class TracingHook:
                 trace_id=self.trace_id,
                 span_id=self._current_llm_span_id,
                 output_tokens=output_tokens,
+                input_tokens=input_tokens,
             )
             self._current_llm_span_id = None
         except Exception as e:
@@ -107,8 +111,13 @@ class TracingHook:
             tool_call_id: Optional tool call ID for tracking
 
         Returns:
-            Span ID
+            Span ID (empty string if skipped)
         """
+        # Skip tool tracing when inside a skill execution
+        if self._in_skill_context:
+            logger.debug("Skipping tool '%s' tracing (inside skill context)", tool_name)
+            return ""
+
         try:
             manager = get_trace_manager()
             span_id = await manager.emit_tool_call_start(
@@ -166,27 +175,67 @@ class TracingHook:
     async def on_skill_start(
         self,
         skill_name: str,
+        skill_input: Optional[dict[str, Any]] = None,
     ) -> str:
         """Called when a skill starts executing.
 
         Args:
             skill_name: Skill name
+            skill_input: Skill input parameters
 
         Returns:
             Span ID
         """
+        # Set skill context flag to skip internal tool tracing
+        self._in_skill_context = True
+
         try:
             manager = get_trace_manager()
-            return await manager.emit_skill_invocation(
+            from ...tracing.models import EventType
+            span_id = await manager.emit_span(
                 trace_id=self.trace_id,
-                skill_name=skill_name,
+                event_type=EventType.SKILL_INVOCATION,
+                name=f"skill_{skill_name}",
                 user_id=self.user_id,
                 session_id=self.session_id,
                 channel=self.channel,
+                skill_name=skill_name,
+                tool_input=skill_input,  # Reuse tool_input for skill input
             )
+            self._current_tool_span_id = span_id  # Reuse for skill tracking
+            return span_id
         except Exception as e:
             logger.warning("Failed to emit skill event: %s", e)
             return ""
+
+    async def on_skill_end(
+        self,
+        skill_output: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Called when a skill finishes executing.
+
+        Args:
+            skill_output: Skill output
+            error: Optional error message
+        """
+        # Clear skill context flag
+        self._in_skill_context = False
+
+        if not self._current_tool_span_id:
+            return
+
+        try:
+            manager = get_trace_manager()
+            await manager.update_span(
+                span_id=self._current_tool_span_id,
+                trace_id=self.trace_id,
+                tool_output=skill_output,  # Reuse tool_output for skill output
+                error=error,
+            )
+            self._current_tool_span_id = None
+        except Exception as e:
+            logger.warning("Failed to emit skill end event: %s", e)
 
     async def __call__(
         self,
@@ -228,6 +277,7 @@ class TracingHookRegistry:
             hook: Tracing hook instance
         """
         cls._hooks[trace_id] = hook
+        logger.debug("TracingHookRegistry registered: trace_id=%s", trace_id)
 
     @classmethod
     def unregister(cls, trace_id: str) -> None:
