@@ -16,6 +16,8 @@ router = APIRouter(prefix="/backup", tags=["backup"])
 
 class CreateBackupRequest(BaseModel):
     target_user_id: Optional[str] = None
+    instance_id: Optional[str] = None  # Required for multi-instance deployment
+    backup_hour: Optional[int] = None  # 0-23, defaults to current hour if not specified
 
 
 class CreateBackupResponse(BaseModel):
@@ -24,10 +26,15 @@ class CreateBackupResponse(BaseModel):
     task_type: str
     message: str
     created_at: str
+    instance_id: str
+    backup_date: str
+    backup_hour: int
 
 
 class CreateRestoreRequest(BaseModel):
-    date: str
+    date: str  # YYYY-MM-DD
+    hour: Optional[int] = None  # 0-23, required if multiple hourly backups exist
+    instance_id: Optional[str] = None  # Required for multi-instance deployment
     user_ids: Optional[list[str]] = None
 
 
@@ -38,6 +45,9 @@ class CreateRestoreResponse(BaseModel):
     message: str
     target_users: list[str]
     created_at: str
+    instance_id: str
+    backup_date: str
+    backup_hour: int
 
 
 class TaskListResponse(BaseModel):
@@ -55,7 +65,9 @@ class DeleteTaskResponse(BaseModel):
 
 
 class ListBackupsResponse(BaseModel):
+    instances: list[str]  # Available instance IDs
     dates: list[str]
+    hours: list[int]  # Available hours
     backups: dict
 
 
@@ -68,19 +80,29 @@ def get_backup_service() -> BackupService:
     "/upload",
     response_model=CreateBackupResponse,
     summary="创建备份任务",
-    description="创建备份任务，上传用户数据到 S3。如果不指定 user_id，则备份所有用户。",
+    description="创建备份任务，上传用户数据到 S3。支持按实例和小时粒度备份。",
 )
 async def create_backup(request: CreateBackupRequest) -> CreateBackupResponse:
     service = get_backup_service()
     task = await service.create_backup_task(
         target_user_id=request.target_user_id,
+        instance_id=request.instance_id,
+        backup_hour=request.backup_hour,
     )
+
+    # Get actual backup date/hour from task
+    backup_date = task.backup_date or ""
+    backup_hour = task.backup_hour if task.backup_hour is not None else 0
+
     return CreateBackupResponse(
         task_id=task.task_id,
         status=task.status.value,
         task_type=task.task_type.value,
         message="Backup task created successfully",
         created_at=task.created_at.isoformat(),
+        instance_id=task.instance_id or "",
+        backup_date=backup_date,
+        backup_hour=backup_hour,
     )
 
 
@@ -88,7 +110,7 @@ async def create_backup(request: CreateBackupRequest) -> CreateBackupResponse:
     "/download",
     response_model=CreateRestoreResponse,
     summary="创建恢复任务",
-    description="从 S3 下载备份并恢复到用户目录。支持按日期和用户列表筛选。",
+    description="从 S3 下载备份并恢复到用户目录。支持按实例、日期、小时和用户列表筛选。",
 )
 async def create_restore(
     request: CreateRestoreRequest,
@@ -96,8 +118,18 @@ async def create_restore(
     service = get_backup_service()
 
     # Preview target users
-    backups = service.list_available_backups(date=request.date)
-    available_users = list(backups["backups"].get(request.date, {}).keys())
+    backups = service.list_available_backups(
+        instance_id=request.instance_id,
+        date=request.date,
+        hour=request.hour,
+    )
+    available_users = list(
+        backups["backups"]
+        .get(request.instance_id or "default", {})
+        .get(request.date, {})
+        .get(request.hour if request.hour is not None else 0, {})
+        .keys(),
+    )
 
     if request.user_ids:
         target_users = [u for u in request.user_ids if u in available_users]
@@ -106,8 +138,11 @@ async def create_restore(
 
     task = await service.create_restore_task(
         date=request.date,
+        hour=request.hour,
+        instance_id=request.instance_id,
         user_ids=target_users if request.user_ids else None,
     )
+
     return CreateRestoreResponse(
         task_id=task.task_id,
         status=task.status.value,
@@ -115,6 +150,9 @@ async def create_restore(
         message=f"Restore task created for {request.date}",
         target_users=target_users,
         created_at=task.created_at.isoformat(),
+        instance_id=task.instance_id or "",
+        backup_date=task.backup_date or "",
+        backup_hour=task.backup_hour if task.backup_hour is not None else 0,
     )
 
 
@@ -181,15 +219,28 @@ async def delete_task(task_id: str) -> DeleteTaskResponse:
     "/list",
     response_model=ListBackupsResponse,
     summary="列出可用备份",
-    description="列出 S3 上可用的备份列表，支持按用户和日期筛选。",
+    description="列出 S3 上可用的备份列表，支持按实例、日期、小时和用户筛选。",
 )
 async def list_backups(
-    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    instance_id: Optional[str] = Query(None, description="Filter by instance ID"),
     date: Optional[str] = Query(
         None,
         description="Filter by date (YYYY-MM-DD)",
     ),
+    hour: Optional[int] = Query(
+        None,
+        description="Filter by hour (0-23)",
+    ),
+    user_id: Optional[str] = Query(
+        None,
+        description="Filter by user ID",
+    ),
 ) -> ListBackupsResponse:
     service = get_backup_service()
-    result = service.list_available_backups(user_id=user_id, date=date)
+    result = service.list_available_backups(
+        instance_id=instance_id,
+        date=date,
+        hour=hour,
+        user_id=user_id,
+    )
     return ListBackupsResponse(**result)

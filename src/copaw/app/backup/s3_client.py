@@ -13,33 +13,45 @@ from .config import BackupEnvironmentConfig
 
 
 class S3BackupClient:
-    """S3 client wrapper for backup operations."""
+    """S3 client wrapper for backup operations.
+
+    Storage path structure: {prefix}/{instance_id}/{YYYY-MM-DD}/{HH}/{user_id}.zip
+    Example: cmbswe/instance-01/2026-03-25/14/12345678.zip
+    """
 
     def __init__(self, config: BackupEnvironmentConfig):
         self.config = config
-        client_kwargs = {
-            "aws_access_key_id": config.aws_access_key_id,
-            "aws_secret_access_key": config.aws_secret_access_key,
-            "region_name": config.s3_region,
-        }
-        if config.endpoint_url:
-            client_kwargs["endpoint_url"] = config.endpoint_url
-        self._s3 = boto3.client("s3", **client_kwargs)
+        self._s3 = boto3.client(
+            "s3",
+            aws_access_key_id=config.aws_access_key_id,
+            aws_secret_access_key=config.aws_secret_access_key,
+            region_name=config.s3_region,
+            endpoint_url=onfig.endpoint_url
+        )
         self.bucket = config.s3_bucket
         self.prefix = config.s3_prefix
 
-    def upload(self, local_path: Path, date: str, user_id: str) -> str:
+    def upload(
+        self,
+        local_path: Path,
+        instance_id: str,
+        date: str,
+        hour: int,
+        user_id: str,
+    ) -> str:
         """Upload a file to S3.
 
         Args:
             local_path: Local file path to upload
+            instance_id: Instance identifier
             date: Date folder (YYYY-MM-DD)
+            hour: Hour of day (0-23)
             user_id: User identifier
 
         Returns:
             Full S3 key
         """
-        s3_key = f"{self.prefix}/{date}/{user_id}.zip"
+        s3_key = f"{self.prefix}/{instance_id}/{date}/{hour:02d}/{user_id}.zip"
         self._s3.upload_file(str(local_path), self.bucket, s3_key)
         return s3_key
 
@@ -55,23 +67,45 @@ class S3BackupClient:
 
     def list_backups(
         self,
-        user_id: Optional[str] = None,
+        instance_id: Optional[str] = None,
         date: Optional[str] = None,
+        hour: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> dict:
         """List available backups in S3.
 
         Args:
-            user_id: Filter by user ID
+            instance_id: Filter by instance ID
             date: Filter by date (YYYY-MM-DD)
+            hour: Filter by hour (0-23)
+            user_id: Filter by user ID
 
         Returns:
-            Dict with dates list and backups grouped by date
+            Dict with instances, dates, hours lists and backups grouped by instance/date/hour
+            Structure:
+            {
+                "instances": ["instance-01", "instance-02"],
+                "dates": ["2026-03-25", "2026-03-24"],
+                "hours": [14, 13, 12],
+                "backups": {
+                    "instance-01": {
+                        "2026-03-25": {
+                            "14": {
+                                "user123": {"s3_key": "...", "size": 1234, "last_modified": "..."},
+                            }
+                        }
+                    }
+                }
+            }
         """
+        # Build prefix for listing
         prefix = f"{self.prefix}/"
-        if date:
-            prefix = f"{self.prefix}/{date}/"
+        prefix = self.build_prefix_for_listing(date, hour, instance_id, prefix)
 
         backups = {}
+        instances_set = set()
+        dates_set = set()
+        hours_set = set()
         continuation_token = None
 
         while True:
@@ -84,21 +118,31 @@ class S3BackupClient:
             if "Contents" in response:
                 for obj in response["Contents"]:
                     key = obj["Key"]
-                    # Parse key: cmbswe/{date}/{user_id}.zip
+                    # Parse key: {prefix}/{instance_id}/{date}/{hour}/{user_id}.zip
                     parts = key.replace(f"{self.prefix}/", "").split("/")
-                    if len(parts) != 2 or not parts[1].endswith(".zip"):
+                    if len(parts) != 4 or not parts[3].endswith(".zip"):
                         continue
 
-                    backup_date = parts[0]
-                    backup_user_id = parts[1].replace(".zip", "")
+                    backup_instance = parts[0]
+                    backup_date = parts[1]
+                    try:
+                        backup_hour = int(parts[2])
+                    except ValueError:
+                        continue
+                    backup_user_id = parts[3].replace(".zip", "")
 
-                    if user_id and backup_user_id != user_id:
+                    # Apply filters
+                    if apply_filters(instance_id, backup_instance,date, backup_date, hour, backup_hour, user_id, backup_user_id):
                         continue
 
-                    if backup_date not in backups:
-                        backups[backup_date] = {}
+                    # Track unique values
+                    instances_set.add(backup_instance)
+                    dates_set.add(backup_date)
+                    hours_set.add(backup_hour)
 
-                    backups[backup_date][backup_user_id] = {
+                    self.build_nested_structure(backup_date, backup_hour, backup_instance, backups)
+
+                    backups[backup_instance][backup_date][backup_hour][backup_user_id] = {
                         "s3_key": key,
                         "size": obj["Size"],
                         "last_modified": obj["LastModified"].isoformat(),
@@ -108,32 +152,84 @@ class S3BackupClient:
                 break
             continuation_token = response.get("NextContinuationToken")
 
-        dates = sorted(backups.keys(), reverse=True)
-        return {"dates": dates, "backups": backups}
+        # Sort results
+        instances = sorted(instances_set, reverse=True)
+        dates = sorted(dates_set, reverse=True)
+        hours = sorted(hours_set, reverse=True)
 
-    def get_backup_key(self, date: str, user_id: str) -> str:
+        return {
+            "instances": instances,
+            "dates": dates,
+            "hours": hours,
+            "backups": backups,
+        }
+
+    def apply_filters(self, instance_id, backup_instance,date, backup_date, hour, backup_hour, user_id, backup_user_id):
+        if (instance_id and backup_instance != instance_id) \
+            or (date and backup_date != date) \
+            or (hour is not None and backup_hour != hour) \
+            or (user_id and backup_user_id != user_id):
+            return True
+        else:
+            return False
+
+    def build_prefix_for_listing(self, date, hour, instance_id, prefix):
+        if instance_id:
+            prefix = f"{self.prefix}/{instance_id}/"
+            if date:
+                prefix = f"{self.prefix}/{instance_id}/{date}/"
+                if hour is not None:
+                    prefix = f"{self.prefix}/{instance_id}/{date}/{hour:02d}/"
+        return prefix
+
+    def build_nested_structure(self, backup_date, backup_hour, backup_instance, backups):
+        # Build nested structure
+        if backup_instance not in backups:
+            backups[backup_instance] = {}
+        if backup_date not in backups[backup_instance]:
+            backups[backup_instance][backup_date] = {}
+        if backup_hour not in backups[backup_instance][backup_date]:
+            backups[backup_instance][backup_date][backup_hour] = {}
+
+    def get_backup_key(
+        self,
+        instance_id: str,
+        date: str,
+        hour: int,
+        user_id: str,
+    ) -> str:
         """Get full S3 key for a backup.
 
         Args:
+            instance_id: Instance identifier
             date: Date folder (YYYY-MM-DD)
+            hour: Hour of day (0-23)
             user_id: User identifier
 
         Returns:
             Full S3 key including prefix
         """
-        return f"{self.prefix}/{date}/{user_id}.zip"
+        return f"{self.prefix}/{instance_id}/{date}/{hour:02d}/{user_id}.zip"
 
-    def backup_exists(self, date: str, user_id: str) -> bool:
+    def backup_exists(
+        self,
+        instance_id: str,
+        date: str,
+        hour: int,
+        user_id: str,
+    ) -> bool:
         """Check if a backup exists in S3.
 
         Args:
+            instance_id: Instance identifier
             date: Date folder (YYYY-MM-DD)
+            hour: Hour of day (0-23)
             user_id: User identifier
 
         Returns:
             True if backup exists, False otherwise
         """
-        key = self.get_backup_key(date, user_id)
+        key = self.get_backup_key(instance_id, date, hour, user_id)
         try:
             self._s3.head_object(Bucket=self.bucket, Key=key)
             return True

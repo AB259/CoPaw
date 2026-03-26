@@ -59,7 +59,11 @@ class BackupWorker:
 
             s3_keys = []
             local_paths = []
-            date_str = datetime.now().strftime("%Y-%m-%d")
+
+            # Use task's backup_date and backup_hour
+            date_str = task.backup_date or datetime.now().strftime("%Y-%m-%d")
+            hour = task.backup_hour if task.backup_hour is not None else datetime.now().hour
+            instance_id = task.instance_id or "default"
 
             for i, user_id in enumerate(user_ids):
                 # Update progress (1-indexed)
@@ -97,7 +101,9 @@ class BackupWorker:
                 s3_key = await asyncio.to_thread(
                     self.s3_client.upload,
                     zip_path,
+                    instance_id,
                     date_str,
+                    hour,
                     user_id,
                 )
                 s3_keys.append(s3_key)
@@ -142,14 +148,29 @@ class BackupWorker:
         rollback_paths = []
 
         try:
+            instance_id = task.instance_id or "default"
+            backup_date = task.backup_date
+            backup_hour = task.backup_hour
+
+            if not backup_date:
+                raise ValueError("backup_date is required for restore task")
+
             # Get target users
             if task.target_user_ids:
                 user_ids = task.target_user_ids
             else:
-                # List all backups for the date
-                backups = self.s3_client.list_backups(date=task.backup_date)
+                # List all backups for the date/hour/instance
+                backups = self.s3_client.list_backups(
+                    instance_id=instance_id,
+                    date=backup_date,
+                    hour=backup_hour,
+                )
                 user_ids = list(
-                    backups["backups"].get(task.backup_date, {}).keys(),
+                    backups["backups"]
+                    .get(instance_id, {})
+                    .get(backup_date, {})
+                    .get(backup_hour if backup_hour is not None else 0, {})
+                    .keys(),
                 )
 
             # Check for empty user list to avoid division by zero
@@ -186,8 +207,32 @@ class BackupWorker:
                 task.progress_percent = int(((i + 1) / len(user_ids)) * 50)
                 self.task_store.save(task)
 
+                # Get the backup hour (use task's hour or find latest available)
+                hour_to_restore = backup_hour
+                if hour_to_restore is None:
+                    # Find the latest hour with backup for this user
+                    backups = self.s3_client.list_backups(
+                        instance_id=instance_id,
+                        date=backup_date,
+                    )
+                    hours = list(
+                        backups["backups"]
+                        .get(instance_id, {})
+                        .get(backup_date, {})
+                        .keys()
+                    )
+                    if hours:
+                        hour_to_restore = max(hours)
+                    else:
+                        logger.warning(
+                            f"No backup found for {instance_id}/{backup_date}/{user_id}"
+                        )
+                        continue
+
                 s3_key = self.s3_client.get_backup_key(
-                    task.backup_date,
+                    instance_id,
+                    backup_date,
+                    hour_to_restore,
                     user_id,
                 )
                 zip_path = (
