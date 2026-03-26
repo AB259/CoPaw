@@ -56,7 +56,11 @@ def cron_group() -> None:
     help="User ID for multi-user isolation. Defaults to 'default'.",
 )
 @click.pass_context
-def list_jobs(ctx: click.Context, base_url: Optional[str], user_id: Optional[str]) -> None:
+def list_jobs(
+    ctx: click.Context,
+    base_url: Optional[str],
+    user_id: Optional[str],
+) -> None:
     """List all cron jobs. Output is JSON from GET /cron/jobs."""
     base_url = _base_url(ctx, base_url)
     headers = _user_headers(user_id)
@@ -79,7 +83,12 @@ def list_jobs(ctx: click.Context, base_url: Optional[str], user_id: Optional[str
     help="User ID for multi-user isolation. Defaults to 'default'.",
 )
 @click.pass_context
-def get_job(ctx: click.Context, job_id: str, base_url: Optional[str], user_id: Optional[str]) -> None:
+def get_job(
+    ctx: click.Context,
+    job_id: str,
+    base_url: Optional[str],
+    user_id: Optional[str],
+) -> None:
     """Fetch a cron job by ID. Returns JSON from GET /cron/jobs/<id>."""
     base_url = _base_url(ctx, base_url)
     headers = _user_headers(user_id)
@@ -264,8 +273,8 @@ def _build_spec_from_cli(
 )
 @click.option(
     "--timezone",
-    default="UTC",
-    help="Timezone for the cron schedule (e.g. UTC, America/New_York).",
+    default="Asia/Shanghai",
+    help="Timezone for the cron schedule (e.g. Asia/Shanghai, UTC, America/New_York).",
 )
 @click.option(
     "--enabled/--no-enabled",

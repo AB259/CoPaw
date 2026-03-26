@@ -38,6 +38,13 @@ from ...constant import (
     get_request_working_dir,
     get_request_user_id,
 )
+from ...tracing import (
+    TracingConfig,
+    init_trace_manager,
+    get_trace_manager,
+    close_trace_manager,
+)
+from ...tracing.models import TraceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +60,10 @@ class AgentRunner(Runner):
         self._mcp_manager = None  # MCP client manager for hot-reload
         self.memory_manager: MemoryManager | None = None
         # Per-user MemoryManager cache for performance optimization
-        self._memory_manager_cache: OrderedDict[str, MemoryManager] = OrderedDict()
+        self._memory_manager_cache: OrderedDict[
+            str,
+            MemoryManager,
+        ] = OrderedDict()
         self._mm_cache_lock = asyncio.Lock()
         self._mm_cache_max_size = COPAW_MM_CACHE_MAX_SIZE
 
@@ -118,16 +128,27 @@ class AgentRunner(Runner):
             )
             await mm.start()
             self._memory_manager_cache[user_id] = mm
-            logger.info("Created and cached MemoryManager for user: %s", user_id)
+            logger.info(
+                "Created and cached MemoryManager for user: %s",
+                user_id,
+            )
 
             # Evict oldest if over limit
             while len(self._memory_manager_cache) > self._mm_cache_max_size:
-                oldest_user, oldest_mm = self._memory_manager_cache.popitem(last=False)
+                oldest_user, oldest_mm = self._memory_manager_cache.popitem(
+                    last=False,
+                )
                 try:
                     await oldest_mm.close()
-                    logger.info("Evicted MemoryManager from cache for user: %s", oldest_user)
+                    logger.info(
+                        "Evicted MemoryManager from cache for user: %s",
+                        oldest_user,
+                    )
                 except Exception as e:
-                    logger.warning("Failed to close evicted MemoryManager: %s", e)
+                    logger.warning(
+                        "Failed to close evicted MemoryManager: %s",
+                        e,
+                    )
 
             return mm
 
@@ -147,7 +168,9 @@ class AgentRunner(Runner):
 
         # Set request context for user-specific directory routing
         # 优先使用 request 中的 user_id，否则使用当前请求上下文中的 user_id（支持 cron 任务）
-        user_id = (request.user_id if request else None) or get_request_user_id()
+        user_id = (
+            request.user_id if request else None
+        ) or get_request_user_id()
         user_token = set_request_user_id(user_id)
 
         # Auto-initialize user directory if this is a new user.
@@ -162,7 +185,10 @@ class AgentRunner(Runner):
                     language=config.agents.language,
                 )
                 if initialized:
-                    logger.info("Auto-initialized directory for user: %s (via query_handler)", user_id)
+                    logger.info(
+                        "Auto-initialized directory for user: %s (via query_handler)",
+                        user_id,
+                    )
             except Exception as e:
                 logger.warning(
                     "Auto-initialization failed for user %s: %s",
@@ -187,7 +213,10 @@ class AgentRunner(Runner):
         agent = None
         chat = None
         session_state_loaded = False
-        request_memory_manager = None  # Per-request MemoryManager (for LRU cache)
+        trace_id = None  # For tracing lifecycle
+        request_memory_manager = (
+            None  # Per-request MemoryManager (for LRU cache)
+        )
         # Note: We no longer override the shared MemoryManager's working_path.
         # Instead, we use per-user cached MemoryManager instances for better performance.
         if self.memory_manager is not None:
@@ -203,32 +232,35 @@ class AgentRunner(Runner):
             user_id = request.user_id
             channel = getattr(request, "channel", DEFAULT_CHANNEL)
 
+            # Start trace if tracing is enabled
+            try:
+                trace_manager = get_trace_manager()
+                trace_id = await trace_manager.start_trace(
+                    user_id=user_id,
+                    session_id=session_id,
+                    channel=channel,
+                )
+            except RuntimeError:
+                # Tracing not initialized
+                pass
+            except Exception as e:
+                logger.warning("Failed to start trace: %s", e)
+
             # Debug: Log config path and providers.json path
             config_path = get_config_path()
             providers_path = get_providers_json_path()
-            logger.info(
-                "Handle agent query:\n%s",
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "user_id": user_id,
-                        "channel": channel,
-                        "msgs_len": len(msgs) if msgs else 0,
-                        "config_path": str(config_path),
-                        "providers_path": str(providers_path),
-                        "working_dir": str(get_request_working_dir()),
-                        "msgs_str": str(msgs)[:300] + "...",
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
+            logger.debug(
+                "Handle agent query: session_id=%s, user_id=%s, channel=%s, msgs_len=%d, working_dir=%s",
+                session_id, user_id, channel, len(msgs) if msgs else 0, str(get_request_working_dir()),
             )
 
             env_context = build_env_context(
                 session_id=session_id,
                 user_id=user_id,
                 channel=channel,
-                working_dir=str(get_request_working_dir()),  # Use request-scoped
+                working_dir=str(
+                    get_request_working_dir(),
+                ),  # Use request-scoped
             )
 
             # Get MCP clients from manager (hot-reloadable)
@@ -268,6 +300,8 @@ class AgentRunner(Runner):
                 memory_manager=memory_manager_to_use,
                 max_iters=max_iters,
                 max_input_length=max_input_length,
+                enable_tracing=trace_id is not None,
+                trace_id=trace_id,
             )
             await agent.register_mcp_clients()
             agent.set_console_output_enabled(enabled=False)
@@ -321,6 +355,14 @@ class AgentRunner(Runner):
             logger.info(f"query_handler: {session_id} cancelled!")
             if agent is not None:
                 await agent.interrupt()
+            # End trace with cancelled status
+            if trace_id:
+                try:
+                    await get_trace_manager().end_trace(
+                        trace_id, status=TraceStatus.CANCELLED
+                    )
+                except Exception:
+                    pass
             raise RuntimeError("Task has been cancelled!") from exc
         except Exception as e:
             debug_dump_path = write_query_error_dump(
@@ -332,6 +374,16 @@ class AgentRunner(Runner):
                 f"\n(Details:  {debug_dump_path})" if debug_dump_path else ""
             )
             logger.exception(f"Error in query handler: {e}{path_hint}")
+            # End trace with error status
+            if trace_id:
+                try:
+                    await get_trace_manager().end_trace(
+                        trace_id,
+                        status=TraceStatus.ERROR,
+                        error=str(e),
+                    )
+                except Exception:
+                    pass
             if debug_dump_path:
                 setattr(e, "debug_dump_path", debug_dump_path)
                 if hasattr(e, "add_note"):
@@ -354,6 +406,15 @@ class AgentRunner(Runner):
 
                 if self._chat_manager is not None and chat is not None:
                     await self._chat_manager.update_chat(chat, user_id=user_id)
+
+                # End trace with completed status
+                if trace_id:
+                    try:
+                        await get_trace_manager().end_trace(
+                            trace_id, status=TraceStatus.COMPLETED
+                        )
+                    except Exception as trace_error:
+                        logger.warning("Failed to end trace: %s", trace_error)
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
@@ -382,6 +443,44 @@ class AgentRunner(Runner):
         # a single global instance. This provides better performance and
         # full user isolation.
 
+        # Initialize tracing manager if enabled (default: enabled)
+        tracing_enabled = os.environ.get("COPAW_TRACING_ENABLED", "true").lower() == "true"
+        if tracing_enabled:
+            try:
+                # Check if database is configured
+                db_host = os.environ.get("COPAW_TRACING_DB_HOST")
+                if db_host:
+                    from ...tracing.config import TDSQLConfig
+                    database_config = TDSQLConfig(
+                        host=db_host,
+                        port=int(os.environ.get("COPAW_TRACING_DB_PORT", "3306")),
+                        user=os.environ.get("COPAW_TRACING_DB_USER", "root"),
+                        password=os.environ.get("COPAW_TRACING_DB_PASSWORD", ""),
+                        database=os.environ.get("COPAW_TRACING_DB_NAME", "copaw_tracing"),
+                        min_connections=int(os.environ.get("COPAW_TRACING_DB_MIN_CONN", "2")),
+                        max_connections=int(os.environ.get("COPAW_TRACING_DB_MAX_CONN", "10")),
+                    )
+                    tracing_config = TracingConfig(
+                        enabled=True,
+                        batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
+                        flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
+                        retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
+                        database=database_config,
+                    )
+                    await init_trace_manager(tracing_config)
+                    logger.info("Tracing manager initialized (database storage: %s)", db_host)
+                else:
+                    tracing_config = TracingConfig(
+                        enabled=True,
+                        batch_size=int(os.environ.get("COPAW_TRACING_BATCH_SIZE", "100")),
+                        flush_interval=int(os.environ.get("COPAW_TRACING_FLUSH_INTERVAL", "5")),
+                        retention_days=int(os.environ.get("COPAW_TRACING_RETENTION_DAYS", "30")),
+                    )
+                    await init_trace_manager(tracing_config)
+                    logger.info("Tracing manager initialized (in-memory storage)")
+            except Exception as e:
+                logger.warning("Failed to initialize tracing manager: %s", e)
+
     async def shutdown_handler(self, *args, **kwargs):
         """
         Shutdown handler.
@@ -393,7 +492,11 @@ class AgentRunner(Runner):
                     await mm.close()
                     logger.info("Closed MemoryManager for user: %s", user_id)
                 except Exception as e:
-                    logger.warning("Failed to close MemoryManager for user %s: %s", user_id, e)
+                    logger.warning(
+                        "Failed to close MemoryManager for user %s: %s",
+                        user_id,
+                        e,
+                    )
             self._memory_manager_cache.clear()
 
         # Also close the legacy shared memory_manager if exists
@@ -401,3 +504,10 @@ class AgentRunner(Runner):
             await self.memory_manager.close()
         except Exception as e:
             logger.warning(f"MemoryManager stop failed: {e}")
+
+        # Close tracing manager
+        try:
+            await close_trace_manager()
+            logger.info("Tracing manager closed")
+        except Exception as e:
+            logger.warning(f"Tracing manager close failed: {e}")

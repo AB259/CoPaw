@@ -6,6 +6,10 @@ import sys
 import time
 
 import click
+from dotenv import load_dotenv
+
+# Load .env file from current directory or project root
+load_dotenv()
 
 # On Windows, force UTF-8 for stdout/stderr so cron and other commands
 # can handle Chinese and other non-ASCII (Linux is UTF-8 by default).
@@ -121,7 +125,12 @@ def log_init_timings() -> None:
     help="User-specific subdirectory for multi-user isolation.",
 )
 @click.pass_context
-def cli(ctx: click.Context, host: str | None, port: int | None, user_id: str | None) -> None:
+def cli(
+    ctx: click.Context,
+    host: str | None,
+    port: int | None,
+    user_id: str | None,
+) -> None:
     """CoPaw CLI."""
     # Set runtime user directory
     from ..constant import set_current_user

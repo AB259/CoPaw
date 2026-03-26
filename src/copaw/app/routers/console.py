@@ -13,9 +13,9 @@ async def get_push_messages(
     user_id: str = Header(default="default", alias="x-user-id"),
 ):
     """
-    Return pending push messages. With user_id only: returns recent messages
-    for that user (not consumed). With user_id and session_id: returns messages
-    for that user's session (consumed).
+    Return pending push messages. All read operations consume messages.
+    With user_id only: returns and removes recent messages for that user.
+    With user_id and session_id: returns and removes messages for that user's session.
     """
     from ..console_push_store import take, get_recent
 

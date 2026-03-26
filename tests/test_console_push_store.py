@@ -10,6 +10,7 @@ from unittest.mock import patch
 async def cleanup_store():
     """Clean up store after each test."""
     from copaw.app.console_push_store import _store, _lock
+
     async with _lock:
         _store.clear()
     yield
@@ -21,6 +22,7 @@ async def cleanup_store():
 async def test_append_with_user_id():
     """测试带 user_id 的消息存储"""
     from copaw.app.console_push_store import append, take
+
     await append("alice", "session_1", "Hello from Alice")
     messages = await take("alice", "session_1")
     assert len(messages) == 1
@@ -31,6 +33,7 @@ async def test_append_with_user_id():
 async def test_user_isolation():
     """测试用户隔离 - alice 看不到 bob 的消息"""
     from copaw.app.console_push_store import append, take
+
     await append("alice", "session_1", "Alice's message")
     await append("bob", "session_1", "Bob's message")
 
@@ -47,6 +50,7 @@ async def test_user_isolation():
 async def test_take_all_for_user():
     """测试 take_all 返回用户所有消息"""
     from copaw.app.console_push_store import append, take_all
+
     await append("alice", "session_1", "Message 1")
     await append("alice", "session_2", "Message 2")
     await append("bob", "session_1", "Bob's message")
@@ -59,18 +63,20 @@ async def test_take_all_for_user():
 
 
 @pytest.mark.asyncio
-async def test_get_recent_non_consuming():
-    """测试 get_recent 不消费消息"""
+async def test_get_recent_consumes_messages():
+    """测试 get_recent 消费消息 - 返回后消息被删除"""
     from copaw.app.console_push_store import append, get_recent
+
     await append("alice", "session_1", "Recent message")
 
-    # First call - should return message but not consume
+    # First call - should return and consume message
     messages1 = await get_recent("alice", max_age_seconds=60)
     assert len(messages1) == 1
+    assert messages1[0]["text"] == "Recent message"
 
-    # Second call - should still return the same message
+    # Second call - should return empty (message already consumed)
     messages2 = await get_recent("alice", max_age_seconds=60)
-    assert len(messages2) == 1
+    assert len(messages2) == 0
 
 
 @pytest.mark.asyncio
@@ -79,10 +85,37 @@ async def test_get_recent_expires_old_messages():
     from copaw.app.console_push_store import append, get_recent
 
     now = time.time()
-    with patch('time.time', return_value=now):
+    with patch("time.time", return_value=now):
         await append("alice", "session_1", "Old message")
 
     # Simulate time passing (70 seconds later)
-    with patch('time.time', return_value=now + 70):
+    with patch("time.time", return_value=now + 70):
         messages = await get_recent("alice", max_age_seconds=60)
         assert len(messages) == 0  # Message expired
+
+
+@pytest.mark.asyncio
+async def test_message_consumed_once_across_methods():
+    """测试消息在任何方法中只消费一次"""
+    from copaw.app.console_push_store import append, get_recent, take
+
+    await append("alice", "session_1", "Message 1")
+
+    # Consume via get_recent
+    messages1 = await get_recent("alice", max_age_seconds=60)
+    assert len(messages1) == 1
+
+    # Should not appear in take
+    messages2 = await take("alice", "session_1")
+    assert len(messages2) == 0
+
+    # Add another message
+    await append("alice", "session_1", "Message 2")
+
+    # Consume via take
+    messages3 = await take("alice", "session_1")
+    assert len(messages3) == 1
+
+    # Should not appear in get_recent
+    messages4 = await get_recent("alice", max_age_seconds=60)
+    assert len(messages4) == 0

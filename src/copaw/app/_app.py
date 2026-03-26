@@ -76,11 +76,14 @@ async def lifespan(
     mcp_manager = MCPClientManager()
     if hasattr(config, "mcp"):
         try:
-            await mcp_manager.init_from_config(config.mcp)
+            # Shield MCP init from cancellation to avoid anyio scope errors
+            await asyncio.shield(mcp_manager.init_from_config(config.mcp))
             logger.debug("MCP client manager initialized")
-        except BaseException as e:
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
+        except asyncio.CancelledError:
+            logger.warning("MCP initialization was cancelled")
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
             logger.exception("Failed to initialize MCP manager")
     runner.set_mcp_manager(mcp_manager)
 
@@ -407,27 +410,27 @@ async def lifespan(
         if cfg_w is not None:
             try:
                 await cfg_w.stop()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         if mcp_w is not None:
             try:
                 await mcp_w.stop()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         if cron_mgr is not None:
             try:
                 await cron_mgr.stop()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         if ch_mgr is not None:
             try:
                 await ch_mgr.stop_all()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         if mcp_mgr is not None:
             try:
                 await mcp_mgr.close_all()
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 pass
         await runner.stop()
 
@@ -465,7 +468,13 @@ async def user_context_middleware(request, call_next):
     from ..config import load_config
 
     # 从 Header 获取 user_id
-    user_id = request.headers.get("X-User-ID") or request.headers.get("X-CoPaw-User-Id")
+    user_id = request.headers.get("X-User-ID") or request.headers.get(
+        "X-CoPaw-User-Id",
+    )
+
+    # Default to "default" user if no header provided (console access)
+    if not user_id:
+        user_id = "default"
 
     if user_id:
         # 设置请求上下文
@@ -481,7 +490,10 @@ async def user_context_middleware(request, call_next):
                     language=config.agents.language,
                 )
                 if initialized:
-                    logger.info("Auto-initialized directory for user: %s (via HTTP middleware)", user_id)
+                    logger.info(
+                        "Auto-initialized directory for user: %s (via HTTP middleware)",
+                        user_id,
+                    )
             except Exception as e:
                 logger.warning(
                     "Auto-initialization failed for user %s: %s",
@@ -564,6 +576,7 @@ app.include_router(
 # Voice channel: Twilio-facing endpoints at root level (not under /api/).
 # POST /voice/incoming, WS /voice/ws, POST /voice/status-callback
 app.include_router(voice_router, tags=["voice"])
+
 
 # User-specific static files: /static/{user_id}/{path}
 # This route dynamically resolves the user directory per-request.

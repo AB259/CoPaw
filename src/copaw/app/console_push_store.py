@@ -30,13 +30,15 @@ async def append(user_id: str | None, session_id: str, text: str) -> None:
         if uid not in _store:
             _store[uid] = []
 
-        _store[uid].append({
-            "id": str(uuid.uuid4()),
-            "text": text,
-            "ts": time.time(),
-            "session_id": session_id,
-            "user_id": uid,
-        })
+        _store[uid].append(
+            {
+                "id": str(uuid.uuid4()),
+                "text": text,
+                "ts": time.time(),
+                "session_id": session_id,
+                "user_id": uid,
+            },
+        )
 
         # Keep only _MAX_MESSAGES per user
         if len(_store[uid]) > _MAX_MESSAGES:
@@ -53,8 +55,17 @@ async def take(user_id: str | None, session_id: str) -> List[Dict[str, Any]]:
 
     async with _lock:
         user_messages = _store.get(uid, [])
-        out = [m for m in user_messages if m.get("session_id") == session_id]
-        _store[uid] = [m for m in user_messages if m.get("session_id") != session_id]
+        out = []
+        remaining = []
+        for m in user_messages:
+            if m.get("session_id") == session_id:
+                out.append(m)
+            else:
+                remaining.append(m)
+        if remaining:
+            _store[uid] = remaining
+        else:
+            _store.pop(uid, None)
         return _strip_ts(out)
 
 
@@ -63,8 +74,7 @@ async def take_all(user_id: str | None = None) -> List[Dict[str, Any]]:
     uid = user_id or "default"
 
     async with _lock:
-        out = _store.get(uid, [])
-        _store[uid] = []
+        out = _store.pop(uid, [])
         return _strip_ts(out)
 
 
@@ -72,21 +82,19 @@ async def get_recent(
     user_id: str | None = None,
     max_age_seconds: int = _MAX_AGE_SECONDS,
 ) -> List[Dict[str, Any]]:
-    """Return recent messages (not consumed) for the user."""
+    """Return and remove recent messages for the user.
+
+    Messages returned are immediately removed from storage and will not
+    be available for subsequent calls.
+    """
     uid = user_id or "default"
     now = time.time()
     cutoff = now - max_age_seconds
 
     async with _lock:
-        # Clean up expired messages for this user
-        user_messages = _store.get(uid, [])
-        valid = [m for m in user_messages if m["ts"] >= cutoff]
-        expired = [m for m in user_messages if m["ts"] < cutoff]
-
-        if expired:
-            _store[uid] = valid
-
-        return _strip_ts(valid)
+        user_messages = _store.pop(uid, [])
+        to_return = [m for m in user_messages if m["ts"] >= cutoff]
+        return _strip_ts(to_return)
 
 
 def _strip_ts(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
