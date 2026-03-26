@@ -222,6 +222,9 @@ class TraceManager:
         if not self.enabled:
             return
 
+        # Flush pending spans before ending trace
+        await self._flush_spans()
+
         trace = self._active_traces.pop(trace_id, None) or await self.store.get_trace(trace_id)
         if trace is None:
             logger.warning("Trace not found: %s", trace_id)
@@ -305,11 +308,9 @@ class TraceManager:
             tool_input=sanitize_dict(tool_input) if self.config.sanitize_output else tool_input,
         )
 
-        # Add to pending cache for update before flush
-        self._pending_spans[span_id] = span
-
-        # Add to queue for batch write
+        # Add to pending cache and queue atomically
         async with self._span_queue_lock:
+            self._pending_spans[span_id] = span
             self._span_queue.append(span)
 
         return span_id
@@ -323,6 +324,7 @@ class TraceManager:
         tool_output: Optional[str] = None,
         error: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        span: Optional[Span] = None,
     ) -> None:
         """Update an existing span.
 
@@ -334,20 +336,23 @@ class TraceManager:
             tool_output: Optional tool output (will be sanitized)
             error: Optional error message
             metadata: Optional metadata
+            span: Optional span object (to avoid re-fetching)
         """
         if not self.enabled:
             return
 
-        # First, check pending cache (spans not yet flushed)
-        span = self._pending_spans.get(span_id)
-
-        # If not in cache, check store
+        # Use provided span or find it
         if span is None:
-            spans = await self.store.get_spans(trace_id)
-            for s in spans:
-                if s.span_id == span_id:
-                    span = s
-                    break
+            # First, check pending cache (spans not yet flushed)
+            span = self._pending_spans.get(span_id)
+
+            # If not in cache, check store
+            if span is None:
+                spans = await self.store.get_spans(trace_id)
+                for s in spans:
+                    if s.span_id == span_id:
+                        span = s
+                        break
 
         if span is None:
             logger.warning("Span not found for update: %s", span_id)
@@ -504,12 +509,13 @@ class TraceManager:
         # Update event_type to TOOL_CALL_END for proper statistics
         span.event_type = EventType.TOOL_CALL_END
 
-        # Update other fields
+        # Update other fields, passing the span object to avoid re-fetching
         await self.update_span(
             span_id=span_id,
             trace_id=trace_id,
             tool_output=tool_output,
             error=error,
+            span=span,
         )
 
     async def emit_skill_invocation(
@@ -605,13 +611,13 @@ class TraceManager:
                 return
             spans = self._span_queue.copy()
             self._span_queue.clear()
+            # Clear pending cache atomically with queue clear
+            for span in spans:
+                self._pending_spans.pop(span.span_id, None)
 
         if spans:
             try:
                 await self.store.batch_create_spans(spans)
-                # Clear pending cache after flush (spans are now in store)
-                for span in spans:
-                    self._pending_spans.pop(span.span_id, None)
             except Exception as e:
                 logger.error("Failed to flush spans: %s", e)
 
