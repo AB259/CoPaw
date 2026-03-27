@@ -19,7 +19,7 @@ interface TraceListItem {
   total_tokens: number;
   model_name: string | null;
   status: string;
-  tools_count: number;
+  skills_count: number;
 }
 
 interface TraceDetail {
@@ -218,9 +218,9 @@ export default function TracesPage() {
       render: (v) => formatTokens(v),
     },
     {
-      title: t("analytics.tools", "Tools"),
-      dataIndex: "tools_count",
-      key: "tools_count",
+      title: t("analytics.skills", "Skills"),
+      dataIndex: "skills_count",
+      key: "skills_count",
       width: 80,
     },
     {

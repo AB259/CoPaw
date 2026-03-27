@@ -218,4 +218,4 @@ class TraceListItem(BaseModel):
     total_tokens: int = 0
     model_name: Optional[str] = None
     status: str
-    tools_count: int = 0
+    skills_count: int = 0

@@ -849,7 +849,7 @@ class TraceStore:
         query = f"""
             SELECT trace_id, user_id, session_id, channel, start_time,
                    duration_ms, total_tokens, model_name, status,
-                   JSON_LENGTH(tools_used) as tools_count
+                   JSON_LENGTH(skills_used) as skills_count
             FROM swe_tracing_traces
             WHERE {where_sql}
             ORDER BY start_time DESC
@@ -868,7 +868,7 @@ class TraceStore:
                 total_tokens=row["total_tokens"] or 0,
                 model_name=row["model_name"],
                 status=row["status"],
-                tools_count=row["tools_count"] or 0,
+                skills_count=row["skills_count"] or 0,
             )
             for row in rows
         ]
@@ -1172,7 +1172,7 @@ class TraceStore:
                 total_tokens=t.total_input_tokens + t.total_output_tokens,
                 model_name=t.model_name,
                 status=t.status.value if isinstance(t.status, TraceStatus) else t.status,
-                tools_count=len(t.tools_used),
+                skills_count=len(t.skills_used),
             )
             for t in traces[offset:offset + page_size]
         ]
