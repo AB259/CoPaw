@@ -10,6 +10,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ...constant import DEFAULT_WORKING_DIR, get_secret_dir
 from .config import BackupEnvironmentConfig
@@ -18,6 +19,9 @@ from .s3_client import S3BackupClient
 from .task_store import TaskStore
 
 logger = logging.getLogger(__name__)
+
+# Beijing timezone for consistent time handling
+BJ_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class BackupWorker:
@@ -35,7 +39,7 @@ class BackupWorker:
     ) -> None:
         """Execute a backup task."""
         task.status = BackupTaskStatus.RUNNING
-        task.started_at = datetime.now()
+        task.started_at = datetime.now(BJ_TZ)
         self.task_store.save(task)
 
         try:
@@ -49,7 +53,7 @@ class BackupWorker:
                 task.status = BackupTaskStatus.COMPLETED
                 task.current_step = "completed"
                 task.progress_percent = 100
-                task.completed_at = datetime.now()
+                task.completed_at = datetime.now(BJ_TZ)
                 self.task_store.save(task)
                 return
 
@@ -61,8 +65,8 @@ class BackupWorker:
             local_paths = []
 
             # Use task's backup_date and backup_hour
-            date_str = task.backup_date or datetime.now().strftime("%Y-%m-%d")
-            hour = task.backup_hour if task.backup_hour is not None else datetime.now().hour
+            date_str = task.backup_date or datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+            hour = task.backup_hour if task.backup_hour is not None else datetime.now(BJ_TZ).hour
             instance_id = task.instance_id or "default"
 
             for i, user_id in enumerate(user_ids):
@@ -91,7 +95,7 @@ class BackupWorker:
                 task.status = BackupTaskStatus.COMPLETED
                 task.current_step = "completed"
                 task.progress_percent = 100
-                task.completed_at = datetime.now()
+                task.completed_at = datetime.now(BJ_TZ)
                 self.task_store.save(task)
                 return
 
@@ -126,7 +130,7 @@ class BackupWorker:
             task.error_message = str(e)
             task.current_step = "failed"
         finally:
-            task.completed_at = datetime.now()
+            task.completed_at = datetime.now(BJ_TZ)
             self.task_store.save(task)
             # Cleanup temp files
             for path in task.local_zip_paths:
@@ -142,7 +146,7 @@ class BackupWorker:
     ) -> None:
         """Execute a restore task."""
         task.status = BackupTaskStatus.RUNNING
-        task.started_at = datetime.now()
+        task.started_at = datetime.now(BJ_TZ)
         self.task_store.save(task)
 
         rollback_paths = []
@@ -178,7 +182,7 @@ class BackupWorker:
                 task.status = BackupTaskStatus.COMPLETED
                 task.current_step = "completed"
                 task.progress_percent = 100
-                task.completed_at = datetime.now()
+                task.completed_at = datetime.now(BJ_TZ)
                 self.task_store.save(task)
                 return
 
@@ -271,7 +275,7 @@ class BackupWorker:
 
             task.status = BackupTaskStatus.ROLLED_BACK
         finally:
-            task.completed_at = datetime.now()
+            task.completed_at = datetime.now(BJ_TZ)
             self.task_store.save(task)
 
     def _get_all_user_ids(self) -> list[str]:

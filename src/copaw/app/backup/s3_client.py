@@ -26,7 +26,7 @@ class S3BackupClient:
             aws_access_key_id=config.aws_access_key_id,
             aws_secret_access_key=config.aws_secret_access_key,
             region_name=config.s3_region,
-            endpoint_url=onfig.endpoint_url
+            endpoint_url=config.endpoint_url
         )
         self.bucket = config.s3_bucket
         self.prefix = config.s3_prefix
@@ -51,7 +51,7 @@ class S3BackupClient:
         Returns:
             Full S3 key
         """
-        s3_key = f"{self.prefix}/{instance_id}/{date}/{hour:02d}/{user_id}.zip"
+        s3_key = f"{self.prefix}/{instance_id}/{date}/{str(hour).zfill(2)}/{user_id}.zip"
         self._s3.upload_file(str(local_path), self.bucket, s3_key)
         return s3_key
 
@@ -132,7 +132,7 @@ class S3BackupClient:
                     backup_user_id = parts[3].replace(".zip", "")
 
                     # Apply filters
-                    if apply_filters(instance_id, backup_instance,date, backup_date, hour, backup_hour, user_id, backup_user_id):
+                    if self.apply_filters(instance_id, backup_instance, date, backup_date, hour, backup_hour, user_id, backup_user_id):
                         continue
 
                     # Track unique values
@@ -140,7 +140,7 @@ class S3BackupClient:
                     dates_set.add(backup_date)
                     hours_set.add(backup_hour)
 
-                    self.build_nested_structure(backup_date, backup_hour, backup_instance, backups)
+                    self.build_nested_structure(backup_instance, backup_date, backup_hour, backups)
 
                     backups[backup_instance][backup_date][backup_hour][backup_user_id] = {
                         "s3_key": key,
@@ -164,7 +164,7 @@ class S3BackupClient:
             "backups": backups,
         }
 
-    def apply_filters(self, instance_id, backup_instance,date, backup_date, hour, backup_hour, user_id, backup_user_id):
+    def apply_filters(self, instance_id, backup_instance, date, backup_date, hour, backup_hour, user_id, backup_user_id):
         if (instance_id and backup_instance != instance_id) \
             or (date and backup_date != date) \
             or (hour is not None and backup_hour != hour) \
@@ -179,7 +179,7 @@ class S3BackupClient:
             if date:
                 prefix = f"{self.prefix}/{instance_id}/{date}/"
                 if hour is not None:
-                    prefix = f"{self.prefix}/{instance_id}/{date}/{hour:02d}/"
+                    prefix = f"{self.prefix}/{instance_id}/{date}/{str(hour).zfill(2)}/"
         return prefix
 
     def build_nested_structure(self, backup_date, backup_hour, backup_instance, backups):
@@ -209,7 +209,7 @@ class S3BackupClient:
         Returns:
             Full S3 key including prefix
         """
-        return f"{self.prefix}/{instance_id}/{date}/{hour:02d}/{user_id}.zip"
+        return f"{self.prefix}/{instance_id}/{date}/{str(hour).zfill(2)}/{user_id}.zip"
 
     def backup_exists(
         self,

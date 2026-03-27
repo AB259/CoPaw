@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -66,8 +67,8 @@ class BackupService:
                     detail="Another backup task is already running",
                 )
 
-        # Set backup date and hour
-        now = datetime.now()
+        # Set backup date and hour (Beijing time)
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
         backup_date = now.strftime("%Y-%m-%d")
         if backup_hour is None:
             backup_hour = now.hour
@@ -76,7 +77,7 @@ class BackupService:
             task_id=str(uuid.uuid4()),
             task_type=BackupTaskType.BACKUP,
             status=BackupTaskStatus.PENDING,
-            created_at=datetime.now(),
+            created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
             target_user_id=target_user_id,
             instance_id=instance_id,
             backup_date=backup_date,
@@ -115,7 +116,7 @@ class BackupService:
             task_id=str(uuid.uuid4()),
             task_type=BackupTaskType.RESTORE,
             status=BackupTaskStatus.PENDING,
-            created_at=datetime.now(),
+            created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
             backup_date=date,
             backup_hour=hour,
             instance_id=instance_id,
