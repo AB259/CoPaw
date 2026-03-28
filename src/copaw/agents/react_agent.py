@@ -26,16 +26,18 @@ from .skills_manager import (
     get_working_skills_dir,
     list_available_skills,
 )
-from .tools import (
-    browser_use,
-    desktop_screenshot,
-    edit_file,
-    execute_shell_command,
-    get_current_time,
-    read_file,
-    send_file_to_user,
-    write_file,
-    create_memory_search_tool,
+from .tools.browser_control import browser_use
+from .tools.desktop_screenshot import desktop_screenshot
+from .tools.file_io import edit_file, read_file, write_file
+from .tools.get_current_time import get_current_time
+from .tools.memory_search import create_memory_search_tool
+from .tools.send_file import send_file_to_user
+from .tools.shell import execute_shell_command
+from .tools.subagent import agent, set_parent_agent
+from .tools.subagent_management import (
+    cancel_agent,
+    get_agent_status,
+    list_agents,
 )
 from .utils import process_file_and_media_blocks_in_message
 from ..agents.memory import MemoryManager
@@ -158,6 +160,9 @@ class CoPawAgent(ReActAgent):
         # Register hooks
         self._register_hooks()
 
+        # Set as parent agent for sub-agents
+        set_parent_agent(self)
+
     def _create_toolkit(
         self,
         namesake_strategy: NamesakeStrategy = "skip",
@@ -205,6 +210,23 @@ class CoPawAgent(ReActAgent):
         )
         toolkit.register_tool_function(
             get_current_time,
+            namesake_strategy=namesake_strategy,
+        )
+        # Register sub-agent tools
+        toolkit.register_tool_function(
+            agent,
+            namesake_strategy=namesake_strategy,
+        )
+        toolkit.register_tool_function(
+            list_agents,
+            namesake_strategy=namesake_strategy,
+        )
+        toolkit.register_tool_function(
+            get_agent_status,
+            namesake_strategy=namesake_strategy,
+        )
+        toolkit.register_tool_function(
+            cancel_agent,
             namesake_strategy=namesake_strategy,
         )
 

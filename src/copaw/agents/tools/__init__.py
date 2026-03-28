@@ -22,6 +22,12 @@ from .desktop_screenshot import desktop_screenshot
 from .memory_search import create_memory_search_tool
 from .get_current_time import get_current_time
 from .move_file_to_static import move_file_to_static
+from .subagent import agent, set_parent_agent
+from .subagent_management import (
+    list_agents,
+    get_agent_status,
+    cancel_agent,
+)
 
 __all__ = [
     "execute_python_code",
@@ -40,4 +46,9 @@ __all__ = [
     "create_memory_search_tool",
     "get_current_time",
     "move_file_to_static",
+    "agent",
+    "set_parent_agent",
+    "list_agents",
+    "get_agent_status",
+    "cancel_agent",
 ]
