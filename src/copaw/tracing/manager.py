@@ -259,6 +259,7 @@ class TraceManager:
         skill_name: Optional[str] = None,
         tool_input: Optional[dict[str, Any]] = None,
         start_time: Optional[datetime] = None,
+        mcp_server: Optional[str] = None,
     ) -> str:
         """Emit a new span event.
 
@@ -276,6 +277,7 @@ class TraceManager:
             skill_name: Optional skill name
             tool_input: Optional tool input (will be sanitized)
             start_time: Optional start time
+            mcp_server: Optional MCP server name if this is an MCP tool
 
         Returns:
             Span ID
@@ -306,6 +308,7 @@ class TraceManager:
             tool_name=tool_name,
             skill_name=skill_name,
             tool_input=sanitize_dict(tool_input) if self.config.sanitize_output else tool_input,
+            mcp_server=mcp_server,
         )
 
         # Add to pending cache and queue atomically
@@ -341,28 +344,74 @@ class TraceManager:
         if not self.enabled:
             return
 
-        # Use provided span or find it
-        if span is None:
-            # First, check pending cache (spans not yet flushed)
-            span = self._pending_spans.get(span_id)
-
-            # If not in cache, check store
-            if span is None:
-                spans = await self.store.get_spans(trace_id)
-                for s in spans:
-                    if s.span_id == span_id:
-                        span = s
-                        break
-
+        span = await self._find_span(span_id, trace_id, span)
         if span is None:
             logger.warning("Span not found for update: %s", span_id)
             return
 
-        # Update span
+        self._update_span_fields(
+            span, output_tokens, input_tokens, tool_output, error, metadata
+        )
+        self._update_trace_totals(trace_id, span, output_tokens)
+
+        # Persist if not in pending cache
+        if span_id not in self._pending_spans:
+            await self.store.update_span(span)
+
+    async def _find_span(
+        self,
+        span_id: str,
+        trace_id: str,
+        span: Optional[Span],
+    ) -> Optional[Span]:
+        """Find span from cache or store.
+
+        Args:
+            span_id: Span identifier
+            trace_id: Trace identifier
+            span: Optional pre-provided span
+
+        Returns:
+            Span or None
+        """
+        if span is not None:
+            return span
+
+        # Check pending cache first
+        span = self._pending_spans.get(span_id)
+        if span is not None:
+            return span
+
+        # Check store
+        spans = await self.store.get_spans(trace_id)
+        for s in spans:
+            if s.span_id == span_id:
+                return s
+
+        return None
+
+    def _update_span_fields(
+        self,
+        span: Span,
+        output_tokens: Optional[int],
+        input_tokens: Optional[int],
+        tool_output: Optional[str],
+        error: Optional[str],
+        metadata: Optional[dict[str, Any]],
+    ) -> None:
+        """Update span fields.
+
+        Args:
+            span: Span to update
+            output_tokens: Output token count
+            input_tokens: Input token count
+            tool_output: Tool output
+            error: Error message
+            metadata: Metadata
+        """
         span.end_time = datetime.now()
         span.duration_ms = int((span.end_time - span.start_time).total_seconds() * 1000)
         span.output_tokens = output_tokens
-        # Update input_tokens if provided (for LLM calls where we only know after the fact)
         if input_tokens is not None and input_tokens > 0:
             span.input_tokens = input_tokens
         span.tool_output = (
@@ -372,23 +421,33 @@ class TraceManager:
         span.error = error
         span.metadata = metadata
 
-        # Update trace totals
-        trace = self._active_traces.get(trace_id)
-        if trace:
-            if output_tokens:
-                trace.total_output_tokens += output_tokens
-            if span.input_tokens:
-                trace.total_input_tokens += span.input_tokens
-            if span.model_name:
-                trace.model_name = span.model_name
-            if span.tool_name and span.tool_name not in trace.tools_used:
-                trace.tools_used.append(span.tool_name)
-            if span.skill_name and span.skill_name not in trace.skills_used:
-                trace.skills_used.append(span.skill_name)
+    def _update_trace_totals(
+        self,
+        trace_id: str,
+        span: Span,
+        output_tokens: Optional[int],
+    ) -> None:
+        """Update trace statistics from span.
 
-        # Only update store if span is not in pending cache (already flushed)
-        if span_id not in self._pending_spans:
-            await self.store.update_span(span)
+        Args:
+            trace_id: Trace identifier
+            span: Completed span
+            output_tokens: Output token count from this span
+        """
+        trace = self._active_traces.get(trace_id)
+        if not trace:
+            return
+
+        if output_tokens:
+            trace.total_output_tokens += output_tokens
+        if span.input_tokens:
+            trace.total_input_tokens += span.input_tokens
+        if span.model_name:
+            trace.model_name = span.model_name
+        if span.tool_name and span.tool_name not in trace.tools_used:
+            trace.tools_used.append(span.tool_name)
+        if span.skill_name and span.skill_name not in trace.skills_used:
+            trace.skills_used.append(span.skill_name)
 
     async def emit_llm_input(
         self,
@@ -453,6 +512,7 @@ class TraceManager:
         user_id: str,
         session_id: str,
         channel: str,
+        mcp_server: Optional[str] = None,
     ) -> str:
         """Emit tool call start event.
 
@@ -463,6 +523,7 @@ class TraceManager:
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
+            mcp_server: Optional MCP server name if this is an MCP tool
 
         Returns:
             Span ID
@@ -476,6 +537,7 @@ class TraceManager:
             channel=channel,
             tool_name=tool_name,
             tool_input=tool_input,
+            mcp_server=mcp_server,
         )
 
     async def emit_tool_call_end(

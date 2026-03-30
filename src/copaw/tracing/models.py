@@ -56,6 +56,10 @@ class Span(BaseModel):
     output_tokens: Optional[int] = Field(default=None, description="Output token count")
     tool_name: Optional[str] = Field(default=None, description="Tool name for tool events")
     skill_name: Optional[str] = Field(default=None, description="Skill name for skill events")
+    mcp_server: Optional[str] = Field(
+        default=None,
+        description="MCP server name if this tool is from MCP",
+    )
     tool_input: Optional[dict[str, Any]] = Field(
         default=None,
         description="Tool input (sanitized)",
@@ -129,6 +133,27 @@ class SkillUsage(BaseModel):
     avg_duration_ms: int = 0
 
 
+class MCPToolUsage(BaseModel):
+    """MCP tool usage statistics."""
+
+    tool_name: str
+    mcp_server: str
+    count: int = 0
+    avg_duration_ms: int = 0
+    error_count: int = 0
+
+
+class MCPServerUsage(BaseModel):
+    """MCP server usage statistics."""
+
+    server_name: str
+    tool_count: int = 0
+    total_calls: int = 0
+    avg_duration_ms: int = 0
+    error_count: int = 0
+    tools: list[MCPToolUsage] = Field(default_factory=list)
+
+
 class DailyStats(BaseModel):
     """Daily statistics."""
 
@@ -157,6 +182,8 @@ class OverviewStats(BaseModel):
     avg_duration_ms: int = 0
     top_tools: list[ToolUsage] = Field(default_factory=list)
     top_skills: list[SkillUsage] = Field(default_factory=list)
+    top_mcp_tools: list[MCPToolUsage] = Field(default_factory=list)
+    mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
 
 
@@ -248,5 +275,6 @@ class SessionStats(BaseModel):
     avg_duration_ms: int = 0
     tools_used: list[ToolUsage] = Field(default_factory=list)
     skills_used: list[SkillUsage] = Field(default_factory=list)
+    mcp_tools_used: list[MCPToolUsage] = Field(default_factory=list)
     first_active: Optional[datetime] = None
     last_active: Optional[datetime] = None
