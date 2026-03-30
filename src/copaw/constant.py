@@ -38,6 +38,12 @@ _request_secret_dir: contextvars.ContextVar[
     Path | None
 ] = contextvars.ContextVar("request_secret_dir", default=None)
 
+# Request-scoped cookies for browser automation
+_request_cookies: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
+    "request_cookies",
+    default=None,
+)
+
 
 def get_working_dir(user_id: str | None = None) -> Path:
     """获取工作目录，支持用户隔离。
@@ -154,6 +160,32 @@ def get_request_secret_dir() -> Path:
     """
     sd = _request_secret_dir.get()
     return sd if sd is not None else _runtime_secret_dir
+
+
+def set_request_cookies(cookies: list[dict] | None) -> contextvars.Token:
+    """设置请求级 cookies，返回 token 用于恢复。
+
+    Args:
+        cookies: Cookie 列表，格式符合 Playwright add_cookies 要求
+
+    Returns:
+        contextvars.Token 用于恢复之前的值
+    """
+    return _request_cookies.set(cookies)
+
+
+def get_request_cookies() -> list[dict] | None:
+    """获取当前请求的 cookies。"""
+    return _request_cookies.get()
+
+
+def reset_request_cookies(token: contextvars.Token) -> None:
+    """恢复之前的 cookies 上下文。
+
+    Args:
+        token: set_request_cookies 返回的 token
+    """
+    _request_cookies.reset(token)
 
 
 # ============================================================================

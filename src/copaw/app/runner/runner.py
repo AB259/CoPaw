@@ -37,6 +37,8 @@ from ...constant import (
     reset_request_user_id,
     get_request_working_dir,
     get_request_user_id,
+    set_request_cookies,
+    reset_request_cookies,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,10 @@ class AgentRunner(Runner):
         user_id = (request.user_id if request else None) or get_request_user_id()
         user_token = set_request_user_id(user_id)
 
+        # Set request cookies for browser automation
+        cookies = getattr(request, "cookies", None) if request else None
+        cookie_token = set_request_cookies(cookies)
+
         # Auto-initialize user directory if this is a new user.
         # Channel requests bypass HTTP middleware, so initialization
         # happens here. HTTP requests already initialized in middleware.
@@ -183,6 +189,7 @@ class AgentRunner(Runner):
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
+                reset_request_cookies(cookie_token)
 
         agent = None
         chat = None
@@ -357,6 +364,7 @@ class AgentRunner(Runner):
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
+                reset_request_cookies(cookie_token)
 
     async def init_handler(self, *args, **kwargs):
         """

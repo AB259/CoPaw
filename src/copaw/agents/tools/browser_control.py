@@ -30,7 +30,7 @@ from ...config import (
     is_running_in_container,
 )
 
-from ...constant import get_request_user_id
+from ...constant import get_request_user_id, get_request_cookies
 
 from .browser_snapshot import build_role_snapshot_from_aria
 
@@ -380,7 +380,116 @@ def _sync_browser_launch(headless: bool):
 
     context = browser.new_context()
     _attach_context_listeners(context)
+
+    # Set cookies from request context
+    cookies = get_request_cookies()
+    if cookies:
+        playwright_cookies = _parse_cookies_for_playwright(cookies)
+        context.add_cookies(playwright_cookies)
+        logger.info("预设 %d 个 cookies 到浏览器上下文 (sync)", len(playwright_cookies))
+
     return pw, browser, context
+
+
+def _parse_cookies_for_playwright(
+    cookies: list[dict],
+) -> list[dict]:
+    """Parse compact cookie format to Playwright format.
+
+    Input format (compact, per-domain):
+    [
+        {
+            "domain": ".example.com",
+            "path": "/",
+            "value": "token=abc123; user_id=user1; session_id=xyz",
+            "secure": true,
+            "httpOnly": false
+        }
+    ]
+
+    Output format (Playwright):
+    [
+        {"name": "token", "value": "abc123", "domain": ".example.com", "path": "/", ...},
+        {"name": "user_id", "value": "user1", "domain": ".example.com", "path": "/", ...},
+        ...
+    ]
+    """
+    result = []
+    for cookie_group in cookies:
+        domain = cookie_group.get("domain", "")
+        path = cookie_group.get("path", "/")
+        secure = cookie_group.get("secure", False)
+        http_only = cookie_group.get("httpOnly", False)
+        same_site = cookie_group.get("sameSite", "Lax")
+        expires = cookie_group.get("expires")
+
+        value_str = cookie_group.get("value", "")
+        if not value_str:
+            continue
+
+        # Parse "name1=value1; name2=value2; ..." format
+        for part in value_str.split(";"):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+
+            # Split only on first '=' to handle values containing '='
+            eq_idx = part.index("=")
+            name = part[:eq_idx].strip()
+            val = part[eq_idx + 1 :].strip()
+
+            if not name:
+                continue
+
+            cookie = {
+                "name": name,
+                "value": val,
+                "domain": domain,
+                "path": path,
+                "secure": secure,
+                "httpOnly": http_only,
+                "sameSite": same_site,
+            }
+            if expires is not None:
+                cookie["expires"] = expires
+            result.append(cookie)
+
+    return result
+
+
+def _set_cookies_to_context_async(context: Any) -> None:
+    """Set cookies from request context to browser context (async version).
+
+    This function should be called after creating a new browser context
+    in async Playwright mode.
+    """
+    cookies = get_request_cookies()
+    if cookies:
+        playwright_cookies = _parse_cookies_for_playwright(cookies)
+        # Use the sync method since we may be in a sync context
+        # The async version will be handled separately
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in async context, schedule the cookie setting
+                asyncio.create_task(context.add_cookies(playwright_cookies))
+            else:
+                # Not in async context, use sync fallback
+                context.add_cookies(playwright_cookies)
+        except RuntimeError:
+            # No event loop, use sync method
+            context.add_cookies(playwright_cookies)
+        logger.info("预设 %d 个 cookies 到浏览器上下文", len(playwright_cookies))
+
+
+async def _async_set_cookies_to_context(context: Any) -> None:
+    """Set cookies from request context to browser context (async version)."""
+    cookies = get_request_cookies()
+    if cookies:
+        playwright_cookies = _parse_cookies_for_playwright(cookies)
+        await context.add_cookies(playwright_cookies)
+        logger.info("预设 %d 个 cookies 到浏览器上下文 (async)", len(playwright_cookies))
 
 
 def _sync_browser_close_user(user_state: UserBrowserState) -> None:
@@ -928,6 +1037,8 @@ async def _ensure_browser_for_user(
             user_state.playwright = pw
             user_state.browser = pw_browser
             user_state.context = context
+            # Set cookies from request context
+            await _async_set_cookies_to_context(context)
         user_state._last_browser_error = None
         _touch_activity_user(user_id)
         _start_idle_watchdog_user(user_id)
@@ -1029,6 +1140,8 @@ async def _action_start_user(
             user_state.playwright = pw
             user_state.browser = pw_browser
             user_state.context = context
+            # Set cookies from request context
+            await _async_set_cookies_to_context(context)
         _touch_activity_user(user_id)
         _start_idle_watchdog_user(user_id)
         msg = (
