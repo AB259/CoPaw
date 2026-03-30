@@ -812,6 +812,8 @@ class TestEmptyResults:
         assert stats.total_tokens == 0
         assert stats.top_tools == []
         assert stats.top_skills == []
+        assert stats.top_mcp_tools == []
+        assert stats.mcp_servers == []
 
     def test_empty_session_stats(self, store):
         stats = asyncio.run(store.get_session_stats("non-existent"))
@@ -827,3 +829,152 @@ class TestEmptyResults:
     def test_empty_trace_detail(self, store):
         detail = asyncio.run(store.get_trace_detail("non-existent"))
         assert detail is None
+
+
+class TestMCPToolStatistics:
+    """Tests for MCP tool usage statistics."""
+
+    @pytest.fixture
+    def store(self):
+        config = TracingConfig(enabled=True)
+        store = TraceStore(config, db=None)
+        asyncio.run(store.initialize())
+        return store
+
+    def test_mcp_tools_separated_from_regular_tools(self, store):
+        """MCP tools should be tracked separately from regular tools."""
+        trace = Trace(
+            trace_id="trace-001",
+            user_id="user-001",
+            session_id="session-001",
+            channel="console",
+            start_time=datetime.now(),
+            status=TraceStatus.COMPLETED,
+        )
+        asyncio.run(store.create_trace(trace))
+
+        # Regular tool
+        regular_span = Span(
+            span_id="span-regular",
+            trace_id="trace-001",
+            name="regular_tool",
+            event_type=EventType.TOOL_CALL_END,
+            start_time=datetime.now(),
+            user_id="user-001",
+            session_id="session-001",
+            channel="console",
+            tool_name="regular_tool",
+            duration_ms=100,
+            mcp_server=None,  # Not from MCP
+        )
+        asyncio.run(store.create_span(regular_span))
+
+        # MCP tool
+        mcp_span = Span(
+            span_id="span-mcp",
+            trace_id="trace-001",
+            name="mcp_tool",
+            event_type=EventType.TOOL_CALL_END,
+            start_time=datetime.now(),
+            user_id="user-001",
+            session_id="session-001",
+            channel="console",
+            tool_name="filesystem_read",
+            duration_ms=200,
+            mcp_server="filesystem",  # From MCP
+        )
+        asyncio.run(store.create_span(mcp_span))
+
+        stats = asyncio.run(store.get_overview_stats())
+
+        # Regular tool in top_tools, not in MCP tools
+        assert len(stats.top_tools) == 1
+        assert stats.top_tools[0].tool_name == "regular_tool"
+
+        # MCP tool in top_mcp_tools
+        assert len(stats.top_mcp_tools) == 1
+        assert stats.top_mcp_tools[0].tool_name == "filesystem_read"
+        assert stats.top_mcp_tools[0].mcp_server == "filesystem"
+
+    def test_mcp_server_grouping(self, store):
+        """MCP tools should be grouped by server."""
+        trace = Trace(
+            trace_id="trace-001",
+            user_id="user-001",
+            session_id="session-001",
+            channel="console",
+            start_time=datetime.now(),
+            status=TraceStatus.COMPLETED,
+        )
+        asyncio.run(store.create_trace(trace))
+
+        # Create tools from two MCP servers
+        spans = [
+            Span(
+                span_id=f"span-{i}",
+                trace_id="trace-001",
+                name=f"tool_{i}",
+                event_type=EventType.TOOL_CALL_END,
+                start_time=datetime.now(),
+                user_id="user-001",
+                session_id="session-001",
+                channel="console",
+                tool_name=f"tool_{i}",
+                duration_ms=100 * (i + 1),
+                mcp_server="server_a" if i < 2 else "server_b",
+            )
+            for i in range(4)
+        ]
+        asyncio.run(store.batch_create_spans(spans))
+
+        stats = asyncio.run(store.get_overview_stats())
+
+        # Should have 2 servers
+        assert len(stats.mcp_servers) == 2
+
+        # Server A has 2 tools, Server B has 2 tools
+        server_names = {s.server_name for s in stats.mcp_servers}
+        assert server_names == {"server_a", "server_b"}
+
+        for server in stats.mcp_servers:
+            assert server.tool_count == 2
+            assert server.total_calls == 2
+
+    def test_mcp_tools_with_errors(self, store):
+        """MCP tools should track error counts."""
+        trace = Trace(
+            trace_id="trace-001",
+            user_id="user-001",
+            session_id="session-001",
+            channel="console",
+            start_time=datetime.now(),
+            status=TraceStatus.COMPLETED,
+        )
+        asyncio.run(store.create_trace(trace))
+
+        # Create successful and failed MCP tool calls
+        for i in range(3):
+            span = Span(
+                span_id=f"span-{i}",
+                trace_id="trace-001",
+                name=f"tool_{i}",
+                event_type=EventType.TOOL_CALL_END,
+                start_time=datetime.now(),
+                user_id="user-001",
+                session_id="session-001",
+                channel="console",
+                tool_name="mcp_tool",
+                duration_ms=100,
+                mcp_server="test_server",
+                error="Failed" if i == 2 else None,
+            )
+            asyncio.run(store.create_span(span))
+
+        stats = asyncio.run(store.get_overview_stats())
+
+        assert len(stats.top_mcp_tools) == 1
+        assert stats.top_mcp_tools[0].count == 3
+        assert stats.top_mcp_tools[0].error_count == 1
+
+        assert len(stats.mcp_servers) == 1
+        assert stats.mcp_servers[0].error_count == 1

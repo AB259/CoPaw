@@ -110,6 +110,7 @@ class CoPawAgent(ReActAgent):
         self._env_context = env_context
         self._max_input_length = max_input_length
         self._mcp_clients = mcp_clients or []
+        self._mcp_tool_to_server: dict[str, str] = {}  # tool_name -> mcp_server_name
         self._namesake_strategy = namesake_strategy
         self._enable_tracing = enable_tracing
         self._trace_id = trace_id
@@ -466,6 +467,11 @@ class CoPawAgent(ReActAgent):
         for i, client in enumerate(self._mcp_clients):
             client_name = getattr(client, "name", repr(client))
             try:
+                # Record tool-to-server mapping before registration
+                tools = await client.list_tools()
+                for tool in tools:
+                    self._mcp_tool_to_server[tool.name] = client_name
+
                 await self.toolkit.register_mcp_client(
                     client,
                     namesake_strategy=namesake_strategy,
@@ -482,6 +488,11 @@ class CoPawAgent(ReActAgent):
                 if recovered_client is not None:
                     self._mcp_clients[i] = recovered_client
                     try:
+                        # Record tool-to-server mapping before registration
+                        tools = await recovered_client.list_tools()
+                        for tool in tools:
+                            self._mcp_tool_to_server[tool.name] = client_name
+
                         await self.toolkit.register_mcp_client(
                             recovered_client,
                             namesake_strategy=namesake_strategy,
@@ -628,6 +639,105 @@ class CoPawAgent(ReActAgent):
         except Exception:  # pylint: disable=broad-except
             return None
 
+    def _get_model_name(self) -> str:
+        """Get model name from model config.
+
+        Returns:
+            Model name string
+        """
+        if not hasattr(self, 'model') or not self.model:
+            return "unknown"
+
+        # Try model_name attribute (used by agentscope models)
+        model_name = getattr(self.model, 'model_name', None)
+        if model_name:
+            return model_name
+
+        # Try _model attribute (wrapped model)
+        inner_model = getattr(self.model, '_model', None)
+        if inner_model:
+            model_name = getattr(inner_model, 'model_name', None)
+            if model_name:
+                return model_name
+
+        # Fallback to model_id
+        return getattr(self.model, 'model_id', 'unknown') or "unknown"
+
+    def _extract_token_usage(
+        self,
+        result: Msg,
+    ) -> tuple[int, int]:
+        """Extract token usage from LLM response.
+
+        Args:
+            result: LLM response message
+
+        Returns:
+            Tuple of (input_tokens, output_tokens)
+        """
+        usage = self._get_usage_from_result(result)
+        return self._parse_usage_tokens(usage)
+
+    def _get_usage_from_result(self, result: Msg) -> Any:
+        """Get usage object from result.
+
+        Args:
+            result: LLM response message
+
+        Returns:
+            Usage object or None
+        """
+        # 1. Check metadata.usage
+        if result.metadata:
+            usage = result.metadata.get('usage', {})
+            if usage:
+                return usage
+
+        # 2. Check result.usage directly
+        if hasattr(result, 'usage') and result.usage:
+            return result.usage
+
+        # 3. Try model's _last_usage
+        if not hasattr(self, 'model') or not self.model:
+            return None
+
+        model = self.model
+        if hasattr(model, '_last_usage') and model._last_usage:
+            return model._last_usage
+
+        return None
+
+    def _parse_usage_tokens(self, usage: Any) -> tuple[int, int]:
+        """Parse token counts from usage object.
+
+        Args:
+            usage: Usage object
+
+        Returns:
+            Tuple of (input_tokens, output_tokens)
+        """
+        if not usage:
+            return 0, 0
+
+        # ChatUsage object
+        if hasattr(usage, 'input_tokens'):
+            return usage.input_tokens or 0, usage.output_tokens or 0
+
+        # Dict format
+        if isinstance(usage, dict):
+            output_tokens = (
+                usage.get('completion_tokens', 0) or
+                usage.get('output_tokens', 0) or
+                usage.get('total_tokens', 0)
+            )
+            input_tokens = (
+                usage.get('prompt_tokens', 0) or
+                usage.get('input_tokens', 0)
+            )
+            return input_tokens, output_tokens
+
+        return 0, 0
+
     async def _reasoning(
         self,
         tool_choice: Literal["auto", "none", "required"] | None = None,
@@ -644,94 +754,219 @@ class CoPawAgent(ReActAgent):
         # Emit LLM start event if tracing is enabled
         llm_span_id = None
         if self._enable_tracing and self._trace_id:
-            try:
-                from .hooks import TracingHookRegistry
-
-                hook = TracingHookRegistry.get(self._trace_id)
-                if hook:
-                    # Get model name from model config
-                    # The model may be wrapped, try to get the inner model's name
-                    model_name = "unknown"
-                    if hasattr(self, 'model') and self.model:
-                        # Try model_name attribute (used by agentscope models)
-                        model_name = getattr(self.model, 'model_name', None)
-                        if not model_name:
-                            # Try _model attribute (wrapped model)
-                            inner_model = getattr(self.model, '_model', None)
-                            if inner_model:
-                                model_name = getattr(inner_model, 'model_name', None)
-                        if not model_name:
-                            # Fallback to model_id
-                            model_name = getattr(self.model, 'model_id', 'unknown')
-
-                    llm_span_id = await hook.on_llm_start(
-                        model_name=model_name or "unknown",
-                        input_tokens=0,  # Will be updated after response
-                    )
-            except Exception as e:
-                logger.debug("Failed to emit LLM start event: %s", e)
+            llm_span_id = await self._emit_llm_start()
 
         # Call parent reasoning
         result = await super()._reasoning(tool_choice=tool_choice)
 
         # Emit LLM end event if tracing is enabled
-        if llm_span_id and self._enable_tracing and self._trace_id:
-            try:
-                from .hooks import TracingHookRegistry
-
-                hook = TracingHookRegistry.get(self._trace_id)
-                if hook:
-                    # Try to get token usage from result metadata
-                    output_tokens = 0
-                    input_tokens = 0
-
-                    # Try multiple ways to get usage info
-                    usage = None
-
-                    # 1. Check metadata.usage
-                    if result.metadata:
-                        usage = result.metadata.get('usage', {})
-
-                    # 2. Check result.usage directly (some models set this)
-                    if not usage and hasattr(result, 'usage'):
-                        usage = result.usage
-
-                    # 3. Try to get from model's _last_usage (OpenAIChatModelCompat stores this)
-                    if not usage and hasattr(self, 'model') and self.model:
-                        model = self.model
-                        if hasattr(model, '_last_usage') and model._last_usage:
-                            usage = model._last_usage
-
-                    # 4. Try to get usage as ChatUsage object
-                    if usage and hasattr(usage, 'input_tokens'):
-                        input_tokens = usage.input_tokens or 0
-                        output_tokens = usage.output_tokens or 0
-                        logger.debug("Token usage from ChatUsage: input=%d, output=%d",
-                                   input_tokens, output_tokens)
-                    elif usage and isinstance(usage, dict):
-                        # Try different key names for tokens
-                        output_tokens = (
-                            usage.get('completion_tokens', 0) or
-                            usage.get('output_tokens', 0) or
-                            usage.get('total_tokens', 0)
-                        )
-                        input_tokens = (
-                            usage.get('prompt_tokens', 0) or
-                            usage.get('input_tokens', 0)
-                        )
-                        logger.debug("Token usage from dict: input=%d, output=%d",
-                                   input_tokens, output_tokens)
-
-                    logger.debug("Final token usage: input=%d, output=%d", input_tokens, output_tokens)
-
-                    await hook.on_llm_end(
-                        output_tokens=output_tokens,
-                        input_tokens=input_tokens,
-                    )
-            except Exception as e:
-                logger.debug("Failed to emit LLM end event: %s", e)
+        if llm_span_id:
+            await self._emit_llm_end(result)
 
         return result
+
+    async def _emit_llm_start(self) -> str | None:
+        """Emit LLM start tracing event.
+
+        Returns:
+            Span ID or None
+        """
+        try:
+            from .hooks import TracingHookRegistry
+
+            hook = TracingHookRegistry.get(self._trace_id)
+            if not hook:
+                return None
+
+            model_name = self._get_model_name()
+            return await hook.on_llm_start(
+                model_name=model_name,
+                input_tokens=0,
+            )
+        except Exception as e:
+            logger.debug("Failed to emit LLM start event: %s", e)
+        return None
+
+    async def _emit_llm_end(self, result: Msg) -> None:
+        """Emit LLM end tracing event.
+
+        Args:
+            result: LLM response message
+        """
+        try:
+            from .hooks import TracingHookRegistry
+
+            hook = TracingHookRegistry.get(self._trace_id)
+            if not hook:
+                return
+
+            input_tokens, output_tokens = self._extract_token_usage(result)
+            logger.debug("Token usage: input=%d, output=%d",
+                       input_tokens, output_tokens)
+            await hook.on_llm_end(
+                output_tokens=output_tokens,
+                input_tokens=input_tokens,
+            )
+        except Exception as e:
+            logger.debug("Failed to emit LLM end event: %s", e)
+
+    def _detect_skill_call(
+        self,
+        tool_name: str,
+        tool_input: dict,
+    ) -> tuple[bool, str | None]:
+        """Detect if a tool call is actually a skill invocation.
+
+        Args:
+            tool_name: Tool name
+            tool_input: Tool input arguments
+
+        Returns:
+            Tuple of (is_skill, skill_name)
+        """
+        registered_skills = getattr(self, '_registered_skills', set())
+
+        # 1. Direct skill call
+        if tool_name in registered_skills:
+            return True, tool_name
+
+        # 2. Shell command executing a skill
+        if tool_name != "execute_shell_command":
+            return False, None
+
+        command = tool_input.get("command", "")
+        if not command:
+            return False, None
+
+        import re
+        match = re.match(r'^copaw\s+(\w+)', command)
+        if not match:
+            return False, None
+
+        potential_skill = match.group(1)
+        if potential_skill in registered_skills:
+            return True, potential_skill
+
+        return False, None
+
+    async def _emit_tool_start(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        tool_call_id: str | None,
+        is_skill: bool,
+        skill_name: str | None,
+    ) -> str | None:
+        """Emit tool/skill start tracing event.
+
+        Args:
+            tool_name: Tool name
+            tool_input: Tool input arguments
+            tool_call_id: Tool call ID
+            is_skill: Whether this is a skill invocation
+            skill_name: Skill name if is_skill
+
+        Returns:
+            Span ID or None
+        """
+        try:
+            from .hooks import TracingHookRegistry
+
+            hook = TracingHookRegistry.get(self._trace_id)
+            if not hook:
+                return None
+
+            if is_skill and skill_name:
+                return await hook.on_skill_start(
+                    skill_name=skill_name,
+                    skill_input=tool_input,
+                )
+
+            mcp_server = self._mcp_tool_to_server.get(tool_name)
+            return await hook.on_tool_start(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_call_id=tool_call_id,
+                mcp_server=mcp_server,
+            )
+        except Exception as e:
+            logger.debug("Failed to emit tool/skill start event: %s", e)
+        return None
+
+    async def _emit_tool_end(
+        self,
+        span_id: str | None,
+        result: dict | None,
+        error: str | None,
+        tool_call_id: str | None,
+        is_skill: bool,
+    ) -> None:
+        """Emit tool/skill end tracing event.
+
+        Args:
+            span_id: Span ID from start event
+            result: Tool execution result
+            error: Error message if failed
+            tool_call_id: Tool call ID
+            is_skill: Whether this is a skill invocation
+        """
+        if span_id is None:
+            return
+
+        try:
+            from .hooks import TracingHookRegistry
+
+            hook = TracingHookRegistry.get(self._trace_id)
+            if not hook:
+                return
+
+            output, err_msg = self._prepare_tool_output(result, error)
+
+            if is_skill:
+                await hook.on_skill_end(skill_output=output, error=err_msg)
+            else:
+                await hook.on_tool_end(
+                    tool_output=output,
+                    tool_call_id=tool_call_id,
+                    error=err_msg,
+                )
+        except Exception as e:
+            logger.debug("Failed to emit tool/skill end event: %s", e)
+
+    def _prepare_tool_output(
+        self,
+        result: dict | None,
+        error: str | None,
+    ) -> tuple[str, str | None]:
+        """Prepare tool output for tracing.
+
+        Args:
+            result: Tool execution result
+            error: Error message if failed
+
+        Returns:
+            Tuple of (output, error_message)
+        """
+        if error:
+            return error[:500], error[:200]
+        return self._truncate_result(result), None
+
+    def _truncate_result(self, result: dict | None) -> str:
+        """Truncate tool result for storage.
+
+        Args:
+            result: Tool execution result
+
+        Returns:
+            Truncated string representation
+        """
+        if result is None:
+            return ""
+        try:
+            import json
+            return json.dumps(result, ensure_ascii=False, default=str)[:500]
+        except Exception:
+            return str(result)[:500]
 
     async def _acting(self, tool_call: dict) -> dict | None:
         """Override tool execution to add tracing.
@@ -742,56 +977,20 @@ class CoPawAgent(ReActAgent):
         Returns:
             Tool execution result
         """
-        # If tracing is not enabled, just call parent
         if not self._enable_tracing or not self._trace_id:
             return await super()._acting(tool_call)
 
         tool_name: str = tool_call.get("name", "")
         tool_input: dict = tool_call.get("input", {}) or {}
+        tool_call_id = tool_call.get("id")
 
-        # Check if this is a skill
-        # 1. Direct skill call (tool_name matches registered skill)
-        # 2. Shell command executing a skill (copaw <skill_name> ...)
-        is_skill = False
-        detected_skill_name = None
-        registered_skills = getattr(self, '_registered_skills', set())
+        # Detect if this is a skill call
+        is_skill, skill_name = self._detect_skill_call(tool_name, tool_input)
 
-        if tool_name in registered_skills:
-            is_skill = True
-            detected_skill_name = tool_name
-        elif tool_name == "execute_shell_command":
-            # Check if the command is calling a copaw skill
-            command = tool_input.get("command", "")
-            if command:
-                # Parse command to detect skill: copaw <skill_name> ...
-                import re
-                match = re.match(r'^copaw\s+(\w+)', command)
-                if match:
-                    potential_skill = match.group(1)
-                    if potential_skill in registered_skills:
-                        is_skill = True
-                        detected_skill_name = potential_skill
-
-        # Get tracing hook
-        span_id = None
-        try:
-            from .hooks import TracingHookRegistry
-
-            hook = TracingHookRegistry.get(self._trace_id)
-            if hook:
-                if is_skill and detected_skill_name:
-                    span_id = await hook.on_skill_start(
-                        skill_name=detected_skill_name,
-                        skill_input=tool_input,
-                    )
-                else:
-                    span_id = await hook.on_tool_start(
-                        tool_name=tool_name,
-                        tool_input=tool_input,
-                        tool_call_id=tool_call.get("id"),
-                    )
-        except Exception as e:
-            logger.debug("Failed to emit tool/skill start event: %s", e)
+        # Emit start event
+        span_id = await self._emit_tool_start(
+            tool_name, tool_input, tool_call_id, is_skill, skill_name
+        )
 
         # Execute tool
         result = None
@@ -801,56 +1000,11 @@ class CoPawAgent(ReActAgent):
             return result
         except Exception as exc:
             error = str(exc)
-            # Record error in tracing
-            if span_id is not None:
-                try:
-                    from .hooks import TracingHookRegistry
-
-                    hook = TracingHookRegistry.get(self._trace_id)
-                    if hook:
-                        if is_skill:
-                            await hook.on_skill_end(
-                                skill_output=error[:500],
-                                error=error[:200],
-                            )
-                        else:
-                            await hook.on_tool_end(
-                                tool_output=error[:500],
-                                tool_call_id=tool_call.get("id"),
-                                error=error[:200],
-                            )
-                except Exception:
-                    pass
             raise
         finally:
-            # Record success in tracing
-            if span_id is not None and error is None:
-                try:
-                    from .hooks import TracingHookRegistry
-
-                    hook = TracingHookRegistry.get(self._trace_id)
-                    if hook:
-                        # Truncate result for storage
-                        result_str = ""
-                        if result is not None:
-                            try:
-                                import json
-                                result_str = json.dumps(
-                                    result, ensure_ascii=False, default=str
-                                )[:500]
-                            except Exception:
-                                result_str = str(result)[:500]
-                        if is_skill:
-                            await hook.on_skill_end(
-                                skill_output=result_str,
-                            )
-                        else:
-                            await hook.on_tool_end(
-                                tool_output=result_str,
-                                tool_call_id=tool_call.get("id"),
-                            )
-                except Exception as e:
-                    logger.debug("Failed to emit tool/skill end event: %s", e)
+            await self._emit_tool_end(
+                span_id, result, error, tool_call_id, is_skill
+            )
 
     async def reply(
         self,

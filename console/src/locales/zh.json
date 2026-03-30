@@ -547,6 +547,10 @@
     "selectSession": "选择会话查看详情",
     "noTraces": "暂无对话记录",
     "traceTimeline": "对话时间线",
-    "close": "关闭"
+    "close": "关闭",
+    "mcpToolCalls": "MCP工具调用",
+    "mcpServer": "MCP服务器",
+    "tool": "工具",
+    "topSkills": "常用技能"
   }
 }

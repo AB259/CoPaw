@@ -13,6 +13,8 @@ from .database import TDSQLConnection
 from .models import (
     DailyStats,
     EventType,
+    MCPToolUsage,
+    MCPServerUsage,
     ModelUsage,
     OverviewStats,
     SessionListItem,
@@ -498,9 +500,9 @@ class TraceStore:
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, parent_span_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
-                model_name, input_tokens, output_tokens, tool_name, skill_name,
+                model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
                 tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
@@ -519,6 +521,7 @@ class TraceStore:
             span.output_tokens,
             span.tool_name,
             span.skill_name,
+            span.mcp_server,
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
             span.error,
@@ -563,9 +566,9 @@ class TraceStore:
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, parent_span_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
-                model_name, input_tokens, output_tokens, tool_name, skill_name,
+                model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
                 tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
         for span in spans:
@@ -586,6 +589,7 @@ class TraceStore:
                 span.output_tokens,
                 span.tool_name,
                 span.skill_name,
+                span.mcp_server,
                 json.dumps(span.tool_input) if span.tool_input else None,
                 span.tool_output,
                 span.error,
@@ -593,33 +597,301 @@ class TraceStore:
             ))
         await self.db.execute_many(query, params_list)
 
+    # Helper methods for statistics
+
+    def _collect_span_stats(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> tuple[dict, dict, dict]:
+        """Collect tool, skill, and MCP stats from spans.
+
+        Args:
+            start_date: Start date filter
+            end_date: End date filter
+            user_id: Optional user filter
+            session_id: Optional session filter
+
+        Returns:
+            Tuple of (tool_counts, skill_counts, mcp_tool_counts)
+        """
+        tool_counts: dict[str, dict] = {}
+        skill_counts: dict[str, dict] = {}
+        mcp_tool_counts: dict[str, dict] = {}
+
+        for trace_id, spans in self._spans.items():
+            trace = self._traces.get(trace_id)
+            if trace:
+                # Apply user filter
+                if user_id and trace.user_id != user_id:
+                    continue
+                # Apply session filter
+                if session_id and trace.session_id != session_id:
+                    continue
+
+            for s in spans:
+                if not (start_date <= s.start_time <= end_date):
+                    continue
+
+                self._update_span_counts(
+                    s, tool_counts, skill_counts, mcp_tool_counts
+                )
+
+        return tool_counts, skill_counts, mcp_tool_counts
+
+    def _update_span_counts(
+        self,
+        span: Span,
+        tool_counts: dict,
+        skill_counts: dict,
+        mcp_tool_counts: dict,
+    ) -> None:
+        """Update count dictionaries based on span type.
+
+        Args:
+            span: Span to process
+            tool_counts: Tool count dictionary
+            skill_counts: Skill count dictionary
+            mcp_tool_counts: MCP tool count dictionary
+        """
+        event_type_str = span.event_type.value if hasattr(span.event_type, 'value') else str(span.event_type)
+
+        if event_type_str == EventType.SKILL_INVOCATION.value and span.skill_name:
+            self._increment_count(skill_counts, span.skill_name, span)
+        elif event_type_str == EventType.TOOL_CALL_END.value and span.tool_name:
+            if span.mcp_server:
+                key = f"{span.mcp_server}:{span.tool_name}"
+                if key not in mcp_tool_counts:
+                    mcp_tool_counts[key] = {
+                        "tool_name": span.tool_name,
+                        "mcp_server": span.mcp_server,
+                        "count": 0,
+                        "duration": 0,
+                        "errors": 0,
+                    }
+                self._increment_count(mcp_tool_counts[key], "dummy", span)
+            else:
+                self._increment_count(tool_counts, span.tool_name, span)
+
+    def _increment_count(
+        self,
+        counts: dict,
+        key: str,
+        span: Span,
+    ) -> None:
+        """Increment count for a key in counts dict.
+
+        Args:
+            counts: Count dictionary
+            key: Key to increment
+            span: Span with duration and error info
+        """
+        if key not in counts:
+            counts[key] = {"count": 0, "duration": 0, "errors": 0}
+        counts[key]["count"] += 1
+        counts[key]["duration"] += span.duration_ms or 0
+        if span.error:
+            counts[key]["errors"] += 1
+
+    def _build_top_tools(self, tool_counts: dict, limit: int = 10) -> list[ToolUsage]:
+        """Build ToolUsage list from counts.
+
+        Args:
+            tool_counts: Tool count dictionary
+            limit: Maximum items to return
+
+        Returns:
+            List of ToolUsage
+        """
+        return [
+            ToolUsage(
+                tool_name=name,
+                count=data["count"],
+                avg_duration_ms=data["duration"] // max(data["count"], 1),
+                error_count=data["errors"],
+            )
+            for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])[:limit]
+        ]
+
+    def _build_top_skills(self, skill_counts: dict, limit: int = 10) -> list[SkillUsage]:
+        """Build SkillUsage list from counts.
+
+        Args:
+            skill_counts: Skill count dictionary
+            limit: Maximum items to return
+
+        Returns:
+            List of SkillUsage
+        """
+        return [
+            SkillUsage(
+                skill_name=name,
+                count=data["count"],
+                avg_duration_ms=data["duration"] // max(data["count"], 1),
+            )
+            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])[:limit]
+        ]
+
+    def _build_mcp_stats(
+        self,
+        mcp_tool_counts: dict,
+        limit: int = 10,
+    ) -> tuple[list[MCPToolUsage], list[MCPServerUsage]]:
+        """Build MCP tool and server stats from counts.
+
+        Args:
+            mcp_tool_counts: MCP tool count dictionary
+            limit: Maximum items to return
+
+        Returns:
+            Tuple of (top_mcp_tools, mcp_servers)
+        """
+        # Top MCP tools
+        top_mcp_tools = [
+            MCPToolUsage(
+                tool_name=data["tool_name"],
+                mcp_server=data["mcp_server"],
+                count=data["count"],
+                avg_duration_ms=data["duration"] // max(data["count"], 1),
+                error_count=data["errors"],
+            )
+            for key, data in sorted(mcp_tool_counts.items(), key=lambda x: -x[1]["count"])[:limit]
+        ]
+
+        # Group by server
+        server_data: dict[str, dict] = {}
+        for key, data in mcp_tool_counts.items():
+            server = data["mcp_server"]
+            if server not in server_data:
+                server_data[server] = {
+                    "total_calls": 0,
+                    "duration": 0,
+                    "errors": 0,
+                    "tools": [],
+                }
+            server_data[server]["total_calls"] += data["count"]
+            server_data[server]["duration"] += data["duration"]
+            server_data[server]["errors"] += data["errors"]
+            server_data[server]["tools"].append(data)
+
+        mcp_servers = [
+            MCPServerUsage(
+                server_name=server,
+                tool_count=len(data["tools"]),
+                total_calls=data["total_calls"],
+                avg_duration_ms=data["duration"] // max(data["total_calls"], 1),
+                error_count=data["errors"],
+                tools=[
+                    MCPToolUsage(
+                        tool_name=t["tool_name"],
+                        mcp_server=t["mcp_server"],
+                        count=t["count"],
+                        avg_duration_ms=t["duration"] // max(t["count"], 1),
+                        error_count=t["errors"],
+                    )
+                    for t in sorted(data["tools"], key=lambda x: -x["count"])
+                ],
+            )
+            for server, data in sorted(server_data.items(), key=lambda x: -x[1]["total_calls"])
+        ]
+
+        return top_mcp_tools, mcp_servers
+
+    def _build_model_distribution(self, traces: list) -> list[ModelUsage]:
+        """Build model distribution from traces.
+
+        Args:
+            traces: List of traces
+
+        Returns:
+            List of ModelUsage
+        """
+        model_counts: dict[str, dict] = {}
+        for t in traces:
+            if t.model_name:
+                if t.model_name not in model_counts:
+                    model_counts[t.model_name] = {
+                        "count": 0,
+                        "tokens": 0,
+                        "input": 0,
+                        "output": 0,
+                    }
+                model_counts[t.model_name]["count"] += 1
+                model_counts[t.model_name]["tokens"] += t.total_input_tokens + t.total_output_tokens
+                model_counts[t.model_name]["input"] += t.total_input_tokens
+                model_counts[t.model_name]["output"] += t.total_output_tokens
+
+        return [
+            ModelUsage(
+                model_name=name,
+                count=data["count"],
+                total_tokens=data["tokens"],
+                input_tokens=data["input"],
+                output_tokens=data["output"],
+            )
+            for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
+        ]
+
     async def _db_get_overview_stats(
         self,
         start_date: datetime,
         end_date: datetime,
     ) -> OverviewStats:
         """Get overview stats from database."""
-        # Get total users and active users
-        users_query = """
+        # Basic stats
+        total_users = await self._db_get_total_users(start_date, end_date)
+        online_users = await self._db_get_online_users()
+        token_row = await self._db_get_token_stats(start_date, end_date)
+
+        # Distribution stats
+        model_distribution = await self._db_get_model_distribution(start_date, end_date)
+        top_tools = await self._db_get_top_tools(start_date, end_date)
+        top_skills = await self._db_get_top_skills(start_date, end_date)
+        top_mcp_tools, mcp_servers = await self._db_get_mcp_stats(start_date, end_date)
+
+        return OverviewStats(
+            online_users=online_users,
+            total_users=total_users,
+            model_distribution=model_distribution,
+            total_tokens=token_row["total_tokens"] or 0 if token_row else 0,
+            input_tokens=token_row["input_tokens"] or 0 if token_row else 0,
+            output_tokens=token_row["output_tokens"] or 0 if token_row else 0,
+            total_sessions=token_row["total_sessions"] or 0 if token_row else 0,
+            total_conversations=token_row["total_sessions"] or 0 if token_row else 0,
+            avg_duration_ms=int(token_row["avg_duration"] or 0) if token_row and token_row["avg_duration"] else 0,
+            top_tools=top_tools,
+            top_skills=top_skills,
+            top_mcp_tools=top_mcp_tools,
+            mcp_servers=mcp_servers,
+            daily_trend=[],
+        )
+
+    async def _db_get_total_users(self, start_date: datetime, end_date: datetime) -> int:
+        """Get total users count."""
+        query = """
             SELECT COUNT(DISTINCT user_id) as total_users
             FROM swe_tracing_traces
             WHERE start_time >= %s AND start_time <= %s
         """
-        users_row = await self.db.fetch_one(users_query, (start_date, end_date))
-        total_users = users_row["total_users"] if users_row else 0
+        row = await self.db.fetch_one(query, (start_date, end_date))
+        return row["total_users"] if row else 0
 
-        # Get online users (active in last 5 minutes, based on spans)
-        online_query = """
+    async def _db_get_online_users(self) -> int:
+        """Get online users count (active in last 5 minutes)."""
+        query = """
             SELECT COUNT(DISTINCT user_id) as online_users
             FROM swe_tracing_spans
             WHERE start_time >= %s
         """
         online_threshold = datetime.now() - timedelta(minutes=5)
-        online_row = await self.db.fetch_one(online_query, (online_threshold,))
-        online_users = online_row["online_users"] if online_row else 0
+        row = await self.db.fetch_one(query, (online_threshold,))
+        return row["online_users"] if row else 0
 
-        # Get token stats
-        token_query = """
+    async def _db_get_token_stats(self, start_date: datetime, end_date: datetime) -> Optional[dict]:
+        """Get token statistics."""
+        query = """
             SELECT
                 SUM(total_input_tokens) as input_tokens,
                 SUM(total_output_tokens) as output_tokens,
@@ -629,10 +901,11 @@ class TraceStore:
             FROM swe_tracing_traces
             WHERE start_time >= %s AND start_time <= %s
         """
-        token_row = await self.db.fetch_one(token_query, (start_date, end_date))
+        return await self.db.fetch_one(query, (start_date, end_date))
 
-        # Get model distribution
-        model_query = """
+    async def _db_get_model_distribution(self, start_date: datetime, end_date: datetime) -> list[ModelUsage]:
+        """Get model distribution."""
+        query = """
             SELECT model_name, COUNT(*) as count,
                    SUM(total_input_tokens) as input_tokens,
                    SUM(total_output_tokens) as output_tokens,
@@ -643,8 +916,8 @@ class TraceStore:
             ORDER BY count DESC
             LIMIT 10
         """
-        model_rows = await self.db.fetch_all(model_query, (start_date, end_date))
-        model_distribution = [
+        rows = await self.db.fetch_all(query, (start_date, end_date))
+        return [
             ModelUsage(
                 model_name=row["model_name"],
                 count=row["count"] or 0,
@@ -652,11 +925,12 @@ class TraceStore:
                 input_tokens=row["input_tokens"] or 0,
                 output_tokens=row["output_tokens"] or 0,
             )
-            for row in model_rows
+            for row in rows
         ]
 
-        # Get top tools (by event_type = tool_call_end)
-        tool_query = """
+    async def _db_get_top_tools(self, start_date: datetime, end_date: datetime) -> list[ToolUsage]:
+        """Get top tools (non-MCP)."""
+        query = """
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
@@ -664,23 +938,25 @@ class TraceStore:
             WHERE start_time >= %s AND start_time <= %s
               AND event_type = 'tool_call_end'
               AND tool_name IS NOT NULL
+              AND mcp_server IS NULL
             GROUP BY tool_name
             ORDER BY count DESC
             LIMIT 10
         """
-        tool_rows = await self.db.fetch_all(tool_query, (start_date, end_date))
-        top_tools = [
+        rows = await self.db.fetch_all(query, (start_date, end_date))
+        return [
             ToolUsage(
                 tool_name=row["tool_name"],
                 count=row["count"] or 0,
                 avg_duration_ms=int(row["avg_duration"] or 0),
                 error_count=row["error_count"] or 0,
             )
-            for row in tool_rows
+            for row in rows
         ]
 
-        # Get top skills (by event_type = skill_invocation)
-        skill_query = """
+    async def _db_get_top_skills(self, start_date: datetime, end_date: datetime) -> list[SkillUsage]:
+        """Get top skills."""
+        query = """
             SELECT skill_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration
             FROM swe_tracing_spans
@@ -691,30 +967,113 @@ class TraceStore:
             ORDER BY count DESC
             LIMIT 10
         """
-        skill_rows = await self.db.fetch_all(skill_query, (start_date, end_date))
-        top_skills = [
+        rows = await self.db.fetch_all(query, (start_date, end_date))
+        return [
             SkillUsage(
                 skill_name=row["skill_name"],
                 count=row["count"] or 0,
                 avg_duration_ms=int(row["avg_duration"] or 0),
             )
-            for row in skill_rows
+            for row in rows
         ]
 
-        return OverviewStats(
-            online_users=online_users or 0,
-            total_users=total_users or 0,
-            model_distribution=model_distribution,
-            total_tokens=token_row["total_tokens"] or 0 if token_row else 0,
-            input_tokens=token_row["input_tokens"] or 0 if token_row else 0,
-            output_tokens=token_row["output_tokens"] or 0 if token_row else 0,
-            total_sessions=token_row["total_sessions"] or 0 if token_row else 0,
-            total_conversations=token_row["total_sessions"] or 0 if token_row else 0,
-            avg_duration_ms=int(token_row["avg_duration"] or 0) if token_row and token_row["avg_duration"] else 0,
-            top_tools=top_tools,
-            top_skills=top_skills,
-            daily_trend=[],
-        )
+    async def _db_get_mcp_stats(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> tuple[list[MCPToolUsage], list[MCPServerUsage]]:
+        """Get MCP tools and server statistics."""
+        # Get top MCP tools
+        mcp_tool_query = """
+            SELECT tool_name, mcp_server, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND mcp_server IS NOT NULL
+            GROUP BY tool_name, mcp_server
+            ORDER BY count DESC
+            LIMIT 10
+        """
+        mcp_tool_rows = await self.db.fetch_all(mcp_tool_query, (start_date, end_date))
+        top_mcp_tools = [
+            MCPToolUsage(
+                tool_name=row["tool_name"],
+                mcp_server=row["mcp_server"],
+                count=row["count"] or 0,
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in mcp_tool_rows
+        ]
+
+        # Get MCP server statistics
+        mcp_servers = await self._db_get_mcp_servers(start_date, end_date)
+
+        return top_mcp_tools, mcp_servers
+
+    async def _db_get_mcp_servers(self, start_date: datetime, end_date: datetime) -> list[MCPServerUsage]:
+        """Get MCP server statistics with tools."""
+        query = """
+            SELECT mcp_server,
+                   COUNT(DISTINCT tool_name) as tool_count,
+                   COUNT(*) as total_calls,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND mcp_server IS NOT NULL
+            GROUP BY mcp_server
+            ORDER BY total_calls DESC
+        """
+        server_rows = await self.db.fetch_all(query, (start_date, end_date))
+
+        mcp_servers = []
+        for server_row in server_rows:
+            server_name = server_row["mcp_server"]
+            tools = await self._db_get_server_tools(start_date, end_date, server_name)
+            mcp_servers.append(MCPServerUsage(
+                server_name=server_name,
+                tool_count=server_row["tool_count"] or 0,
+                total_calls=server_row["total_calls"] or 0,
+                avg_duration_ms=int(server_row["avg_duration"] or 0),
+                error_count=server_row["error_count"] or 0,
+                tools=tools,
+            ))
+
+        return mcp_servers
+
+    async def _db_get_server_tools(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+        server_name: str,
+    ) -> list[MCPToolUsage]:
+        """Get tools for a specific MCP server."""
+        query = """
+            SELECT tool_name, mcp_server, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND mcp_server = %s
+            GROUP BY tool_name, mcp_server
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (start_date, end_date, server_name))
+        return [
+            MCPToolUsage(
+                tool_name=r["tool_name"],
+                mcp_server=r["mcp_server"],
+                count=r["count"] or 0,
+                avg_duration_ms=int(r["avg_duration"] or 0),
+                error_count=r["error_count"] or 0,
+            )
+            for r in rows
+        ]
 
     async def _db_get_users(
         self,
@@ -944,19 +1303,9 @@ class TraceStore:
             if start_date <= t.start_time <= end_date
         ]
 
-        # Don't return early - we still need to check spans for tools/skills
-
-        # Count unique users
+        # Count unique users and online users
         users = set(t.user_id for t in traces)
-
-        # Count online users based on recent span activity (last 5 minutes)
-        online_threshold = datetime.now() - timedelta(minutes=5)
-        online_users = set()
-        for trace_id, spans in self._spans.items():
-            for s in spans:
-                if s.start_time >= online_threshold and s.user_id:
-                    online_users.add(s.user_id)
-        online_users = len(online_users)
+        online_users = self._count_online_users()
 
         # Token stats
         total_input = sum(t.total_input_tokens for t in traces)
@@ -964,65 +1313,17 @@ class TraceStore:
         avg_duration = sum(t.duration_ms or 0 for t in traces) // max(len(traces), 1)
 
         # Model distribution
-        model_counts: dict[str, dict] = {}
-        for t in traces:
-            if t.model_name:
-                if t.model_name not in model_counts:
-                    model_counts[t.model_name] = {"count": 0, "tokens": 0}
-                model_counts[t.model_name]["count"] += 1
-                model_counts[t.model_name]["tokens"] += t.total_input_tokens + t.total_output_tokens
+        model_distribution = self._build_model_distribution(traces)
 
-        model_distribution = [
-            ModelUsage(model_name=name, count=data["count"], total_tokens=data["tokens"])
-            for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
-        ]
+        # Collect span stats
+        tool_counts, skill_counts, mcp_tool_counts = self._collect_span_stats(
+            start_date, end_date
+        )
 
-        # Tool usage and skill usage (separate by event_type)
-        tool_counts: dict[str, dict] = {}
-        skill_counts: dict[str, dict] = {}
-
-        for trace_id, spans in self._spans.items():
-            for s in spans:
-                if not (start_date <= s.start_time <= end_date):
-                    continue
-                # Check event_type to distinguish tool vs skill
-                event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
-
-                if event_type_str == EventType.SKILL_INVOCATION.value and s.skill_name:
-                    # Skill invocation
-                    if s.skill_name not in skill_counts:
-                        skill_counts[s.skill_name] = {"count": 0, "duration": 0, "errors": 0}
-                    skill_counts[s.skill_name]["count"] += 1
-                    skill_counts[s.skill_name]["duration"] += s.duration_ms or 0
-                    if s.error:
-                        skill_counts[s.skill_name]["errors"] += 1
-                elif event_type_str == EventType.TOOL_CALL_END.value and s.tool_name:
-                    # Tool call (only count TOOL_CALL_END)
-                    if s.tool_name not in tool_counts:
-                        tool_counts[s.tool_name] = {"count": 0, "duration": 0, "errors": 0}
-                    tool_counts[s.tool_name]["count"] += 1
-                    tool_counts[s.tool_name]["duration"] += s.duration_ms or 0
-                    if s.error:
-                        tool_counts[s.tool_name]["errors"] += 1
-
-        top_tools = [
-            ToolUsage(
-                tool_name=name,
-                count=data["count"],
-                avg_duration_ms=data["duration"] // max(data["count"], 1),
-                error_count=data["errors"],
-            )
-            for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])[:10]
-        ]
-
-        top_skills = [
-            SkillUsage(
-                skill_name=name,
-                count=data["count"],
-                avg_duration_ms=data["duration"] // max(data["count"], 1),
-            )
-            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])[:10]
-        ]
+        # Build result lists
+        top_tools = self._build_top_tools(tool_counts)
+        top_skills = self._build_top_skills(skill_counts)
+        top_mcp_tools, mcp_servers = self._build_mcp_stats(mcp_tool_counts)
 
         return OverviewStats(
             online_users=online_users,
@@ -1036,8 +1337,24 @@ class TraceStore:
             avg_duration_ms=avg_duration,
             top_tools=top_tools,
             top_skills=top_skills,
+            top_mcp_tools=top_mcp_tools,
+            mcp_servers=mcp_servers,
             daily_trend=[],
         )
+
+    def _count_online_users(self) -> int:
+        """Count users active in last 5 minutes.
+
+        Returns:
+            Number of online users
+        """
+        online_threshold = datetime.now() - timedelta(minutes=5)
+        online_users = set()
+        for trace_id, spans in self._spans.items():
+            for s in spans:
+                if s.start_time >= online_threshold and s.user_id:
+                    online_users.add(s.user_id)
+        return len(online_users)
 
     def _memory_get_users(
         self,
@@ -1116,64 +1433,15 @@ class TraceStore:
         avg_duration = sum(t.duration_ms or 0 for t in traces) // max(len(traces), 1)
 
         # Model usage
-        model_counts: dict[str, dict] = {}
-        for t in traces:
-            if t.model_name:
-                if t.model_name not in model_counts:
-                    model_counts[t.model_name] = {"count": 0, "tokens": 0}
-                model_counts[t.model_name]["count"] += 1
-                model_counts[t.model_name]["tokens"] += t.total_input_tokens + t.total_output_tokens
+        model_usage = self._build_model_distribution(traces)
 
-        model_usage = [
-            ModelUsage(model_name=name, count=data["count"], total_tokens=data["tokens"])
-            for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
-        ]
+        # Collect span stats for this user
+        tool_counts, skill_counts, _ = self._collect_span_stats(
+            start_date, end_date, user_id=user_id
+        )
 
-        # Tool and skill usage (separate by event_type)
-        tool_counts: dict[str, dict] = {}
-        skill_counts: dict[str, dict] = {}
-        for trace_id, spans in self._spans.items():
-            trace = self._traces.get(trace_id)
-            if trace and trace.user_id == user_id:
-                for s in spans:
-                    if not (start_date <= s.start_time <= end_date):
-                        continue
-                    event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
-
-                    if event_type_str == EventType.SKILL_INVOCATION.value and s.skill_name:
-                        # Skill invocation
-                        if s.skill_name not in skill_counts:
-                            skill_counts[s.skill_name] = {"count": 0, "duration": 0, "errors": 0}
-                        skill_counts[s.skill_name]["count"] += 1
-                        skill_counts[s.skill_name]["duration"] += s.duration_ms or 0
-                        if s.error:
-                            skill_counts[s.skill_name]["errors"] += 1
-                    elif event_type_str == EventType.TOOL_CALL_END.value and s.tool_name:
-                        # Tool call (count once, use TOOL_CALL_END)
-                        if s.tool_name not in tool_counts:
-                            tool_counts[s.tool_name] = {"count": 0, "duration": 0, "errors": 0}
-                        tool_counts[s.tool_name]["count"] += 1
-                        tool_counts[s.tool_name]["duration"] += s.duration_ms or 0
-                        if s.error:
-                            tool_counts[s.tool_name]["errors"] += 1
-
-        tools_used = [
-            ToolUsage(
-                tool_name=name,
-                count=data["count"],
-                avg_duration_ms=data["duration"] // max(data["count"], 1),
-                error_count=data["errors"],
-            )
-            for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])
-        ]
-
-        skills_used = [
-            SkillUsage(
-                skill_name=name,
-                count=data["count"],
-            )
-            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])
-        ]
+        tools_used = self._build_top_tools(tool_counts)
+        skills_used = self._build_top_skills(skill_counts)
 
         return UserStats(
             user_id=user_id,
@@ -1642,6 +1910,7 @@ class TraceStore:
             output_tokens=row["output_tokens"],
             tool_name=row["tool_name"],
             skill_name=row["skill_name"],
+            mcp_server=row.get("mcp_server"),
             tool_input=json.loads(row["tool_input"]) if row["tool_input"] else None,
             tool_output=row["tool_output"],
             error=row["error"],

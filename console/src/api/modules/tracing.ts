@@ -13,6 +13,8 @@ export interface OverviewStats {
   avg_duration_ms: number;
   top_tools: ToolUsage[];
   top_skills: SkillUsage[];
+  top_mcp_tools: MCPToolUsage[];
+  mcp_servers: MCPServerUsage[];
   daily_trend: DailyStats[];
 }
 
@@ -34,6 +36,23 @@ export interface ToolUsage {
 export interface SkillUsage {
   skill_name: string;
   count: number;
+}
+
+export interface MCPToolUsage {
+  tool_name: string;
+  mcp_server: string;
+  count: number;
+  avg_duration_ms: number;
+  error_count: number;
+}
+
+export interface MCPServerUsage {
+  server_name: string;
+  tool_count: number;
+  total_calls: number;
+  avg_duration_ms: number;
+  error_count: number;
+  tools: MCPToolUsage[];
 }
 
 export interface DailyStats {

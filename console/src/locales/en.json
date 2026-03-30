@@ -547,6 +547,10 @@
     "selectSession": "Select a session to view details",
     "noTraces": "No traces",
     "traceTimeline": "Trace Timeline",
-    "close": "Close"
+    "close": "Close",
+    "mcpToolCalls": "MCP Tool Calls",
+    "mcpServer": "MCP Server",
+    "tool": "Tool",
+    "topSkills": "Top Skills"
   }
 }
