@@ -219,3 +219,34 @@ class TraceListItem(BaseModel):
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
+
+
+class SessionListItem(BaseModel):
+    """Session list item with stats."""
+
+    session_id: str
+    user_id: str
+    channel: str
+    total_traces: int = 0
+    total_tokens: int = 0
+    total_skills: int = 0
+    first_active: Optional[datetime] = None
+    last_active: Optional[datetime] = None
+
+
+class SessionStats(BaseModel):
+    """Session-specific statistics."""
+
+    session_id: str
+    user_id: str
+    channel: str
+    model_usage: list[ModelUsage] = Field(default_factory=list)
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_traces: int = 0
+    avg_duration_ms: int = 0
+    tools_used: list[ToolUsage] = Field(default_factory=list)
+    skills_used: list[SkillUsage] = Field(default_factory=list)
+    first_active: Optional[datetime] = None
+    last_active: Optional[datetime] = None

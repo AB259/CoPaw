@@ -66,7 +66,7 @@ const KEY_TO_PATH: Record<string, string> = {
   "agent-config": "/agent-config",
   "analytics-overview": "/analytics/overview",
   "analytics-users": "/analytics/users",
-  "analytics-traces": "/analytics/traces",
+  "analytics-sessions": "/analytics/sessions",
 };
 
 const UPDATE_MD: Record<string, string> = {
@@ -361,9 +361,9 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           icon: <UsersRound size={16} />,
         },
         {
-          key: "analytics-traces",
-          label: t("nav.analyticsTraces", "Traces"),
-          icon: <FileSearch size={16} />,
+          key: "analytics-sessions",
+          label: t("nav.analyticsSessions", "Sessions"),
+          icon: <MessageSquare size={16} />,
         },
       ],
     },
