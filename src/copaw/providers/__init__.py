@@ -14,6 +14,7 @@ from .models import (
 )
 from .registry import (
     PROVIDERS,
+    build_providers_list,
     get_chat_model_class,
     get_provider,
     get_provider_chat_model,
@@ -48,6 +49,7 @@ __all__ = [
     "ProvidersData",
     "ResolvedModelConfig",
     "PROVIDERS",
+    "build_providers_list",
     "get_chat_model_class",
     "get_provider",
     "get_provider_chat_model",

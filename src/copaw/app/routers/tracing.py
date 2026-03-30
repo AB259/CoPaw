@@ -16,6 +16,8 @@ from ...tracing.models import (
     UserListItem,
     TraceListItem,
     TraceDetail,
+    SessionListItem,
+    SessionStats,
 )
 
 router = APIRouter(prefix="/tracing", tags=["tracing"])
@@ -270,3 +272,102 @@ async def get_tool_usage(
     )
 
     return {"tools": [t.model_dump() for t in stats.top_tools]}
+
+
+@router.get("/sessions", response_model=dict)
+async def get_sessions(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    session_id: Optional[str] = Query(None, description="Filter by session ID (partial match)"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get list of sessions with their statistics.
+
+    Args:
+        page: Page number
+        page_size: Page size
+        user_id: Filter by user ID
+        session_id: Filter by session ID (partial match)
+        start_date: Start date filter
+        end_date: End date filter
+
+    Returns:
+        Paginated list of sessions with stats
+    """
+    try:
+        manager = get_trace_manager()
+    except RuntimeError:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    sessions, total = await manager.get_sessions(
+        page=page,
+        page_size=page_size,
+        user_id=user_id,
+        session_id=session_id,
+        start_date=start,
+        end_date=end,
+    )
+    return {
+        "items": [s.model_dump() for s in sessions],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/sessions/{session_id:path}", response_model=SessionStats)
+async def get_session_stats(
+    session_id: str,
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> SessionStats:
+    """Get statistics for a specific session.
+
+    Args:
+        session_id: Session identifier
+        start_date: Optional start date filter
+        end_date: Optional end date filter
+
+    Returns:
+        Session statistics
+    """
+    try:
+        manager = get_trace_manager()
+    except RuntimeError:
+        return SessionStats(session_id=session_id, user_id="", channel="")
+
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    return await manager.get_session_stats(session_id, start, end)

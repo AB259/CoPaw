@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Table, Card, Input, Select, Tag, Drawer, Descriptions, Timeline, Spin, Empty } from "antd";
+import { Table, Card, Input, Select, Tag, Drawer, Descriptions, Timeline, Spin, Empty, DatePicker } from "antd";
 import { FileText, Clock, Zap } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { request } from "../../../api";
+import { tracingApi } from "../../../api/modules/tracing";
 import styles from "./index.module.less";
 
-const { Search: SearchInput } = Input;
+const { RangePicker } = DatePicker;
 
 interface TraceListItem {
   trace_id: string;
@@ -19,7 +19,7 @@ interface TraceListItem {
   total_tokens: number;
   model_name: string | null;
   status: string;
-  tools_count: number;
+  skills_count: number;
 }
 
 interface TraceDetail {
@@ -89,28 +89,24 @@ export default function TracesPage() {
   const [pageSize, setPageSize] = useState(20);
   const [userIdFilter, setUserIdFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
 
   useEffect(() => {
     fetchTraces();
-  }, [page, pageSize, statusFilter]);
+  }, [page, pageSize, statusFilter, dateRange]);
 
   const fetchTraces = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.append("page", page.toString());
-      params.append("page_size", pageSize.toString());
-      if (userIdFilter) {
-        params.append("user_id", userIdFilter);
-      }
-      if (statusFilter) {
-        params.append("status", statusFilter);
-      }
-
-      const data = await request<TracesResponse>(`/tracing/traces?${params.toString()}`);
+      const data = await tracingApi.getTraces(page, pageSize, {
+        user_id: userIdFilter || undefined,
+        status: statusFilter,
+        start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
+        end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
+      });
       setTraces(data.items || []);
       setTotal(data.total || 0);
     } catch (error) {
@@ -123,7 +119,7 @@ export default function TracesPage() {
   const fetchTraceDetail = async (traceId: string) => {
     setTraceLoading(true);
     try {
-      const data = await request<TraceDetail>(`/tracing/traces/${traceId}`);
+      const data = await tracingApi.getTraceDetail(traceId);
       setSelectedTrace(data);
     } catch (error) {
       console.error("Failed to fetch trace detail:", error);
@@ -140,6 +136,11 @@ export default function TracesPage() {
   const handleSearch = () => {
     setPage(1);
     fetchTraces();
+  };
+
+  const handleDateChange = (dates: [dayjs.Dayjs, dayjs.Dayjs] | null) => {
+    setDateRange(dates);
+    setPage(1);
   };
 
   const formatDuration = (ms: number | null) => {
@@ -218,9 +219,9 @@ export default function TracesPage() {
       render: (v) => formatTokens(v),
     },
     {
-      title: t("analytics.tools", "Tools"),
-      dataIndex: "tools_count",
-      key: "tools_count",
+      title: t("analytics.skills", "Skills"),
+      dataIndex: "skills_count",
+      key: "skills_count",
       width: 80,
     },
     {
@@ -237,11 +238,16 @@ export default function TracesPage() {
       <div className={styles.header}>
         <h2>{t("analytics.traceDetails", "Trace Details")}</h2>
         <div className={styles.filters}>
-          <SearchInput
+          <RangePicker
+            value={dateRange}
+            onChange={(dates) => handleDateChange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
+            allowClear
+          />
+          <Input
             placeholder={t("analytics.searchUser", "Search user...")}
             value={userIdFilter}
             onChange={(e) => setUserIdFilter(e.target.value)}
-            onSearch={handleSearch}
+            onPressEnter={handleSearch}
             style={{ width: 200 }}
             allowClear
           />
@@ -276,6 +282,7 @@ export default function TracesPage() {
             pageSize,
             total,
             showSizeChanger: true,
+            showQuickJumper: true,
             showTotal: (total) => t("analytics.totalItems", { total }),
             onChange: (p, ps) => {
               setPage(p);

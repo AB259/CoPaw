@@ -316,7 +316,15 @@ def load_providers_json(path: Optional[Path] = None) -> ProvidersData:
                     raw,
                 )
         except (json.JSONDecodeError, ValueError):
-            providers = {}
+            # On parse error, skip sync to global registry to avoid losing
+            # custom providers from other users/requests
+            logger.warning("Failed to parse %s, using empty config", path)
+            # Don't sync empty custom_providers to global PROVIDERS
+            return ProvidersData(
+                providers=providers,
+                custom_providers=custom_providers,
+                active_llm=active_llm,
+            )
 
     sync_custom_providers(custom_providers)
     sync_local_models()

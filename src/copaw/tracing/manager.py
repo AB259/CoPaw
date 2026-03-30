@@ -663,6 +663,29 @@ class TraceManager:
         """Get trace detail."""
         return await self.store.get_trace_detail(trace_id)
 
+    async def get_sessions(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ):
+        """Get sessions list."""
+        return await self.store.get_sessions(
+            page, page_size, user_id, session_id, start_date, end_date
+        )
+
+    async def get_session_stats(
+        self,
+        session_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ):
+        """Get session statistics."""
+        return await self.store.get_session_stats(session_id, start_date, end_date)
+
 
 # Global trace manager instance
 _trace_manager: Optional[TraceManager] = None
