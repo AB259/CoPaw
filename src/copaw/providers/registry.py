@@ -210,6 +210,35 @@ def list_providers() -> List[ProviderDefinition]:
     return list(PROVIDERS.values())
 
 
+def build_providers_list(
+    custom_providers: dict[str, CustomProviderData],
+) -> List[ProviderDefinition]:
+    """Build a complete provider list from built-in + custom providers.
+
+    This function creates a fresh list each time, avoiding issues with
+    the global PROVIDERS registry being out of sync with user data.
+
+    Args:
+        custom_providers: Custom provider data from providers.json
+
+    Returns:
+        List of all providers (built-in + custom + local)
+    """
+    result: List[ProviderDefinition] = []
+
+    # Add built-in providers (non-custom, non-local first for stable ordering)
+    for pid in _BUILTIN_IDS:
+        defn = PROVIDERS.get(pid)
+        if defn:
+            result.append(defn)
+
+    # Add custom providers from user data
+    for cpd in custom_providers.values():
+        result.append(_custom_data_to_definition(cpd))
+
+    return result
+
+
 def is_builtin(provider_id: str) -> bool:
     return provider_id in _BUILTIN_IDS
 

@@ -15,6 +15,7 @@ from ...providers import (
     ProviderInfo,
     ProvidersData,
     add_model,
+    build_providers_list,
     create_custom_provider,
     delete_custom_provider,
     discover_provider_models,
@@ -111,7 +112,10 @@ def _build_provider_info(
 )
 async def list_all_providers() -> List[ProviderInfo]:
     data = load_providers_json()
-    return [_build_provider_info(p, data) for p in list_providers()]
+    # Use build_providers_list to get fresh list from user's providers.json
+    # instead of relying on global PROVIDERS registry which may be stale
+    providers = build_providers_list(data.custom_providers)
+    return [_build_provider_info(p, data) for p in providers]
 
 
 @router.put(
@@ -297,7 +301,8 @@ async def delete_custom_provider_endpoint(
         data = delete_custom_provider(provider_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return [_build_provider_info(p, data) for p in list_providers()]
+    providers = build_providers_list(data.custom_providers)
+    return [_build_provider_info(p, data) for p in providers]
 
 
 @router.post(
