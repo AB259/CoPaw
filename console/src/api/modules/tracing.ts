@@ -188,12 +188,20 @@ export const tracingApi = {
   getUsers: async (
     page = 1,
     pageSize = 20,
-    userId?: string
+    filters?: {
+      user_id?: string;
+      start_date?: string;
+      end_date?: string;
+    }
   ): Promise<{ items: UserListItem[]; total: number; page: number; page_size: number }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
-    if (userId) params.append("user_id", userId);
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
     return request(`/tracing/users?${params.toString()}`);
   },
 

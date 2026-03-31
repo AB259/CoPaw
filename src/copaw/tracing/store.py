@@ -250,6 +250,8 @@ class TraceStore:
         page: int = 1,
         page_size: int = 20,
         user_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> tuple[list[UserListItem], int]:
         """Get list of users with stats.
 
@@ -257,13 +259,15 @@ class TraceStore:
             page: Page number
             page_size: Page size
             user_id: Filter by user ID
+            start_date: Filter by start date
+            end_date: Filter by end date
 
         Returns:
             Tuple of (users list, total count)
         """
         if self._use_db:
-            return await self._db_get_users(page, page_size, user_id)
-        return self._memory_get_users(page, page_size, user_id)
+            return await self._db_get_users(page, page_size, user_id, start_date, end_date)
+        return self._memory_get_users(page, page_size, user_id, start_date, end_date)
 
     async def get_user_stats(
         self,
@@ -1083,6 +1087,8 @@ class TraceStore:
         page: int,
         page_size: int,
         user_id: Optional[str],
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> tuple[list[UserListItem], int]:
         """Get users from database."""
         where_clauses = []
@@ -1090,6 +1096,12 @@ class TraceStore:
         if user_id:
             where_clauses.append("user_id LIKE %s")
             params.append(f"%{user_id}%")
+        if start_date:
+            where_clauses.append("start_time >= %s")
+            params.append(start_date)
+        if end_date:
+            where_clauses.append("start_time <= %s")
+            params.append(end_date)
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
@@ -1364,6 +1376,8 @@ class TraceStore:
         page: int,
         page_size: int,
         user_id: Optional[str],
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> tuple[list[UserListItem], int]:
         """Get users from memory."""
         # Aggregate by user
@@ -1371,6 +1385,10 @@ class TraceStore:
         for t in self._traces.values():
             uid = t.user_id
             if user_id and user_id not in uid:
+                continue
+            if start_date and t.start_time < start_date:
+                continue
+            if end_date and t.start_time > end_date:
                 continue
             if uid not in user_data:
                 user_data[uid] = {

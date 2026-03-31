@@ -693,9 +693,16 @@ class TraceManager:
         """Get overview statistics."""
         return await self.store.get_overview_stats(start_date, end_date)
 
-    async def get_users(self, page: int = 1, page_size: int = 20, user_id: Optional[str] = None):
+    async def get_users(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ):
         """Get users list."""
-        return await self.store.get_users(page, page_size, user_id)
+        return await self.store.get_users(page, page_size, user_id, start_date, end_date)
 
     async def get_user_stats(
         self,

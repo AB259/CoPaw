@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Table, Card, Input, Drawer, Descriptions, Spin, Empty, Tag } from "antd";
+import { Table, Card, Input, Drawer, Descriptions, Spin, Empty, Tag, DatePicker } from "antd";
 import { Search, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { request } from "../../../api";
 import styles from "./index.module.less";
+
+const { RangePicker } = DatePicker;
 
 interface UserListItem {
   user_id: string;
@@ -62,13 +64,14 @@ export default function UsersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [searchQuery, setSearchQuery] = useState("");
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserStats | null>(null);
   const [userLoading, setUserLoading] = useState(false);
 
   useEffect(() => {
     fetchUsers();
-  }, [page, pageSize, searchQuery]);
+  }, [page, pageSize, searchQuery, dateRange]);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -78,6 +81,10 @@ export default function UsersPage() {
       params.append("page_size", pageSize.toString());
       if (searchQuery) {
         params.append("user_id", searchQuery);
+      }
+      if (dateRange) {
+        params.append("start_date", dateRange[0].format("YYYY-MM-DD"));
+        params.append("end_date", dateRange[1].format("YYYY-MM-DD"));
       }
 
       const data = await request<UsersResponse>(`/tracing/users?${params.toString()}`);
@@ -165,17 +172,27 @@ export default function UsersPage() {
     <div className={styles.usersPage}>
       <div className={styles.header}>
         <h2>{t("analytics.userAnalysis", "User Analysis")}</h2>
-        <Input
-          placeholder={t("analytics.searchUser", "Search user...")}
-          prefix={<Search size={16} />}
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            setPage(1);
-          }}
-          style={{ width: 250 }}
-          allowClear
-        />
+        <div style={{ display: "flex", gap: 12 }}>
+          <RangePicker
+            value={dateRange}
+            onChange={(dates) => {
+              setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
+              setPage(1);
+            }}
+            allowClear
+          />
+          <Input
+            placeholder={t("analytics.searchUser", "Search user...")}
+            prefix={<Search size={16} />}
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+            style={{ width: 250 }}
+            allowClear
+          />
+        </div>
       </div>
 
       <Card className={styles.tableCard}>
