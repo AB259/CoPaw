@@ -671,7 +671,10 @@ class TraceStore:
                         "duration": 0,
                         "errors": 0,
                     }
-                self._increment_count(mcp_tool_counts[key], "dummy", span)
+                mcp_tool_counts[key]["count"] += 1
+                mcp_tool_counts[key]["duration"] += span.duration_ms or 0
+                if span.error:
+                    mcp_tool_counts[key]["errors"] += 1
             else:
                 self._increment_count(tool_counts, span.tool_name, span)
 
@@ -1595,6 +1598,7 @@ class TraceStore:
         model_usage = await self._db_get_session_model_usage(session_id, start_date, end_date)
         tools_used = await self._db_get_session_tools(session_id, start_date, end_date)
         skills_used = await self._db_get_session_skills(session_id, start_date, end_date)
+        mcp_tools_used = await self._db_get_session_mcp_tools(session_id, start_date, end_date)
 
         return SessionStats(
             session_id=session_id,
@@ -1608,6 +1612,7 @@ class TraceStore:
             avg_duration_ms=int(stats_row["avg_duration"] or 0) if stats_row and stats_row["avg_duration"] else 0,
             tools_used=tools_used,
             skills_used=skills_used,
+            mcp_tools_used=mcp_tools_used,
             first_active=stats_row["first_active"],
             last_active=stats_row["last_active"],
         )
@@ -1671,7 +1676,7 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[ToolUsage]:
-        """Get tool usage for session."""
+        """Get tool usage for session (non-MCP)."""
         query = """
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
@@ -1680,6 +1685,7 @@ class TraceStore:
             WHERE session_id = %s AND start_time >= %s AND start_time <= %s
               AND event_type = 'tool_call_end'
               AND tool_name IS NOT NULL
+              AND mcp_server IS NULL
             GROUP BY tool_name
             ORDER BY count DESC
         """
@@ -1687,6 +1693,36 @@ class TraceStore:
         return [
             ToolUsage(
                 tool_name=row["tool_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
+
+    async def _db_get_session_mcp_tools(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[MCPToolUsage]:
+        """Get MCP tool usage for session."""
+        query = """
+            SELECT tool_name, mcp_server, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND mcp_server IS NOT NULL
+            GROUP BY tool_name, mcp_server
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (session_id, start_date, end_date))
+        return [
+            MCPToolUsage(
+                tool_name=row["tool_name"],
+                mcp_server=row["mcp_server"],
                 count=row["count"],
                 avg_duration_ms=int(row["avg_duration"] or 0),
                 error_count=row["error_count"] or 0,
@@ -1879,9 +1915,21 @@ class TraceStore:
         totals = self._calculate_trace_totals(traces)
 
         # Collect span stats
-        tool_counts, skill_counts, _ = self._collect_span_stats(
+        tool_counts, skill_counts, mcp_tool_counts = self._collect_span_stats(
             start_date, end_date, session_id=session_id
         )
+
+        # Build MCP tools list
+        mcp_tools_used = [
+            MCPToolUsage(
+                tool_name=data["tool_name"],
+                mcp_server=data["mcp_server"],
+                count=data["count"],
+                avg_duration_ms=data["duration"] // max(data["count"], 1),
+                error_count=data["errors"],
+            )
+            for data in mcp_tool_counts.values()
+        ]
 
         return SessionStats(
             session_id=session_id,
@@ -1895,6 +1943,7 @@ class TraceStore:
             avg_duration_ms=totals["avg_duration"],
             tools_used=self._build_top_tools(tool_counts),
             skills_used=self._build_top_skills(skill_counts),
+            mcp_tools_used=mcp_tools_used,
             first_active=totals["first_active"],
             last_active=totals["last_active"],
         )

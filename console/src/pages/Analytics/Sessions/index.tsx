@@ -20,6 +20,7 @@ import {
   FileText,
   Cpu,
   Zap,
+  Plug,
 } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -358,6 +359,23 @@ export default function SessionsPage() {
                           {sessionStats.skills_used.map((s) => (
                             <Tag key={s.skill_name} color="blue">
                               {s.skill_name}: {s.count}
+                            </Tag>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* MCP 工具使用 */}
+                    {sessionStats.mcp_tools_used && sessionStats.mcp_tools_used.length > 0 && (
+                      <div className={styles.section}>
+                        <h4>
+                          <Plug size={14} />
+                          {t("analytics.mcpToolsUsed", "MCP Tools Used")}
+                        </h4>
+                        <div className={styles.tagList}>
+                          {sessionStats.mcp_tools_used.map((t) => (
+                            <Tag key={`${t.mcp_server}-${t.tool_name}`} color="geekblue">
+                              {t.mcp_server}/{t.tool_name}: {t.count}
                             </Tag>
                           ))}
                         </div>
