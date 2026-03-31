@@ -40,7 +40,8 @@
     "analyticsOverview": "Overview",
     "analyticsUsers": "Users",
     "analyticsSessions": "Sessions",
-    "analyticsTraces": "Traces"
+    "analyticsTraces": "Traces",
+    "analyticsMessages": "Messages"
   },
   "workspace": {
     "title": "WorkSpace",
@@ -503,6 +504,8 @@
     "sessionAnalysis": "Session Analysis",
     "traceDetails": "Trace Details",
     "onlineUsers": "Online Users",
+    "users": "Users",
+    "online": "online",
     "totalSessions": "Total Sessions",
     "totalTokens": "Total Tokens",
     "avgDuration": "Avg Duration",
@@ -551,6 +554,17 @@
     "mcpToolCalls": "MCP Tool Calls",
     "mcpServer": "MCP Server",
     "tool": "Tool",
-    "topSkills": "Top Skills"
+    "topSkills": "Top Skills",
+    "userMessages": "User Messages",
+    "userMessage": "User Message",
+    "fullMessage": "Full Message",
+    "searchMessage": "Search messages...",
+    "filterUser": "User ID",
+    "filterSession": "Session ID",
+    "search": "Search",
+    "exportExcel": "Export Excel",
+    "noMCPTools": "No MCP tool calls",
+    "noTools": "No tool calls",
+    "avgDuration": "Avg Duration"
   }
 }

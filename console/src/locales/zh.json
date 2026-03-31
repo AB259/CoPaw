@@ -40,7 +40,8 @@
     "analyticsOverview": "总览",
     "analyticsUsers": "用户分析",
     "analyticsSessions": "会话分析",
-    "analyticsTraces": "对话详情"
+    "analyticsTraces": "对话详情",
+    "analyticsMessages": "用户消息"
   },
   "workspace": {
     "title": "工作区",
@@ -503,6 +504,8 @@
     "sessionAnalysis": "会话分析",
     "traceDetails": "对话详情",
     "onlineUsers": "在线用户",
+    "users": "用户",
+    "online": "在线",
     "totalSessions": "总会话数",
     "totalTokens": "总Token数",
     "avgDuration": "平均耗时",
@@ -551,6 +554,17 @@
     "mcpToolCalls": "MCP工具调用",
     "mcpServer": "MCP服务器",
     "tool": "工具",
-    "topSkills": "常用技能"
+    "topSkills": "常用技能",
+    "userMessages": "用户消息",
+    "userMessage": "用户消息",
+    "fullMessage": "完整消息",
+    "searchMessage": "搜索消息内容...",
+    "filterUser": "用户ID",
+    "filterSession": "会话ID",
+    "search": "搜索",
+    "exportExcel": "导出Excel",
+    "noMCPTools": "暂无MCP工具调用",
+    "noTools": "暂无工具调用",
+    "avgDuration": "平均耗时"
   }
 }

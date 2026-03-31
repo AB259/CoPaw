@@ -27,6 +27,7 @@ from .models import (
     ToolUsage,
     SkillUsage,
     UserListItem,
+    UserMessageItem,
     UserStats,
 )
 
@@ -423,6 +424,200 @@ class TraceStore:
         if self._use_db:
             return await self._db_get_session_stats(session_id, start_date, end_date)
         return self._memory_get_session_stats(session_id, start_date, end_date)
+
+    async def get_user_messages(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        query: Optional[str] = None,
+        export: bool = False,
+    ) -> tuple[list[UserMessageItem], int]:
+        """Get user messages with token info for cost analysis.
+
+        Args:
+            page: Page number
+            page_size: Page size
+            user_id: Filter by user ID
+            session_id: Filter by session ID
+            start_date: Filter by start date
+            end_date: Filter by end date
+            query: Search in user message content (partial match)
+            export: If True, return all results (ignore pagination)
+
+        Returns:
+            Tuple of (messages list, total count)
+        """
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=7)
+        if end_date is None:
+            end_date = datetime.now()
+
+        if self._use_db:
+            return await self._db_get_user_messages(
+                page, page_size, user_id, session_id, start_date, end_date, query, export
+            )
+        return self._memory_get_user_messages(
+            page, page_size, user_id, session_id, start_date, end_date, query, export
+        )
+
+    async def _db_get_user_messages(
+        self,
+        page: int,
+        page_size: int,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        start_date: datetime,
+        end_date: datetime,
+        query: Optional[str],
+        export: bool,
+    ) -> tuple[list[UserMessageItem], int]:
+        """Get user messages from database.
+
+        Args:
+            page: Page number
+            page_size: Page size
+            user_id: Filter by user ID
+            session_id: Filter by session ID
+            start_date: Start date filter
+            end_date: End date filter
+            query: Search in user message content (partial match)
+            export: If True, return all results (ignore pagination)
+
+        Returns:
+            Tuple of (messages list, total count)
+        """
+        where_clauses = ["start_time >= %s", "start_time <= %s"]
+        params: list = [start_date, end_date]
+
+        if user_id:
+            where_clauses.append("user_id = %s")
+            params.append(user_id)
+        if session_id:
+            where_clauses.append("session_id = %s")
+            params.append(session_id)
+        if query:
+            where_clauses.append("user_message LIKE %s")
+            params.append(f"%{query}%")
+
+        where_sql = " AND ".join(where_clauses)
+
+        # Get total count
+        count_query = f"SELECT COUNT(*) as total FROM swe_tracing_traces WHERE {where_sql}"
+        count_row = await self.db.fetch_one(count_query, tuple(params))
+        total = count_row["total"] if count_row else 0
+
+        # Get messages
+        if export:
+            # Export mode: return all results without pagination
+            sql_query = f"""
+                SELECT trace_id, user_id, session_id, channel, user_message,
+                       total_input_tokens, total_output_tokens, model_name,
+                       start_time, duration_ms
+                FROM swe_tracing_traces
+                WHERE {where_sql}
+                ORDER BY start_time DESC
+            """
+            rows = await self.db.fetch_all(sql_query, tuple(params))
+        else:
+            # Paginated mode
+            offset = (page - 1) * page_size
+            sql_query = f"""
+                SELECT trace_id, user_id, session_id, channel, user_message,
+                       total_input_tokens, total_output_tokens, model_name,
+                       start_time, duration_ms
+                FROM swe_tracing_traces
+                WHERE {where_sql}
+                ORDER BY start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend([page_size, offset])
+            rows = await self.db.fetch_all(sql_query, tuple(params))
+
+        messages = [
+            UserMessageItem(
+                trace_id=row["trace_id"],
+                user_id=row["user_id"],
+                session_id=row["session_id"],
+                channel=row["channel"],
+                user_message=row["user_message"],
+                input_tokens=row["total_input_tokens"] or 0,
+                output_tokens=row["total_output_tokens"] or 0,
+                model_name=row["model_name"],
+                start_time=row["start_time"],
+                duration_ms=row["duration_ms"],
+            )
+            for row in rows
+        ]
+        return messages, total
+
+    def _memory_get_user_messages(
+        self,
+        page: int,
+        page_size: int,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        start_date: datetime,
+        end_date: datetime,
+        query: Optional[str],
+        export: bool,
+    ) -> tuple[list[UserMessageItem], int]:
+        """Get user messages from memory.
+
+        Args:
+            page: Page number
+            page_size: Page size
+            user_id: Filter by user ID
+            session_id: Filter by session ID
+            start_date: Start date filter
+            end_date: End date filter
+            query: Search in user message content (partial match)
+            export: If True, return all results (ignore pagination)
+
+        Returns:
+            Tuple of (messages list, total count)
+        """
+        traces = list(self._traces.values())
+
+        # Apply filters
+        traces = [t for t in traces if start_date <= t.start_time <= end_date]
+        if user_id:
+            traces = [t for t in traces if t.user_id == user_id]
+        if session_id:
+            traces = [t for t in traces if t.session_id == session_id]
+        if query:
+            traces = [t for t in traces if t.user_message and query.lower() in t.user_message.lower()]
+
+        # Sort by start time descending
+        traces.sort(key=lambda t: t.start_time, reverse=True)
+
+        total = len(traces)
+
+        if export:
+            items = traces
+        else:
+            offset = (page - 1) * page_size
+            items = traces[offset:offset + page_size]
+
+        messages = [
+            UserMessageItem(
+                trace_id=t.trace_id,
+                user_id=t.user_id,
+                session_id=t.session_id,
+                channel=t.channel,
+                user_message=t.user_message,
+                input_tokens=t.total_input_tokens,
+                output_tokens=t.total_output_tokens,
+                model_name=t.model_name,
+                start_time=t.start_time,
+                duration_ms=t.duration_ms,
+            )
+            for t in items
+        ]
+        return messages, total
 
     # Database implementations
 
@@ -1632,6 +1827,7 @@ class TraceStore:
                 MAX(start_time) as last_active
             FROM swe_tracing_traces
             WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+            GROUP BY user_id, channel
         """
         return await self.db.fetch_one(query, (session_id, start_date, end_date))
 

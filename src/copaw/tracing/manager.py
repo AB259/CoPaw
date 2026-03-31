@@ -170,6 +170,7 @@ class TraceManager:
         session_id: str,
         channel: str,
         trace_id: Optional[str] = None,
+        user_message: Optional[str] = None,
     ) -> str:
         """Start a new trace.
 
@@ -178,6 +179,7 @@ class TraceManager:
             session_id: Session identifier
             channel: Channel identifier
             trace_id: Optional trace ID (generated if not provided)
+            user_message: Optional user's input message
 
         Returns:
             Trace ID
@@ -194,6 +196,7 @@ class TraceManager:
             channel=channel,
             start_time=datetime.now(),
             status=TraceStatus.RUNNING,
+            user_message=user_message,
         )
 
         await self.store.create_trace(trace)
@@ -747,6 +750,36 @@ class TraceManager:
     ):
         """Get session statistics."""
         return await self.store.get_session_stats(session_id, start_date, end_date)
+
+    async def get_user_messages(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        query: Optional[str] = None,
+        export: bool = False,
+    ):
+        """Get user messages with token info for cost analysis.
+
+        Args:
+            page: Page number
+            page_size: Page size
+            user_id: Filter by user ID
+            session_id: Filter by session ID
+            start_date: Filter by start date
+            end_date: Filter by end date
+            query: Search in user message content (partial match)
+            export: If True, return all results (ignore pagination)
+
+        Returns:
+            Tuple of (messages list, total count)
+        """
+        return await self.store.get_user_messages(
+            page, page_size, user_id, session_id, start_date, end_date, query, export
+        )
 
 
 # Global trace manager instance

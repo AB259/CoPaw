@@ -99,6 +99,10 @@ class Trace(BaseModel):
     skills_used: list[str] = Field(default_factory=list, description="Skills used in trace")
     status: TraceStatus = Field(default=TraceStatus.RUNNING, description="Trace status")
     error: Optional[str] = Field(default=None, description="Error message if failed")
+    user_message: Optional[str] = Field(
+        default=None,
+        description="User's input message (truncated)",
+    )
 
     class Config:
         use_enum_values = True
@@ -278,3 +282,18 @@ class SessionStats(BaseModel):
     mcp_tools_used: list[MCPToolUsage] = Field(default_factory=list)
     first_active: Optional[datetime] = None
     last_active: Optional[datetime] = None
+
+
+class UserMessageItem(BaseModel):
+    """User message with token info for cost analysis."""
+
+    trace_id: str
+    user_id: str
+    session_id: str
+    channel: str
+    user_message: Optional[str] = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model_name: Optional[str] = None
+    start_time: datetime
+    duration_ms: Optional[int] = None

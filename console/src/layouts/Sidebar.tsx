@@ -67,6 +67,7 @@ const KEY_TO_PATH: Record<string, string> = {
   "analytics-overview": "/analytics/overview",
   "analytics-users": "/analytics/users",
   "analytics-sessions": "/analytics/sessions",
+  "analytics-messages": "/analytics/messages",
 };
 
 const UPDATE_MD: Record<string, string> = {
@@ -364,6 +365,11 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-sessions",
           label: t("nav.analyticsSessions", "Sessions"),
           icon: <MessageSquare size={16} />,
+        },
+        {
+          key: "analytics-messages",
+          label: t("nav.analyticsMessages", "Messages"),
+          icon: <FileSearch size={16} />,
         },
       ],
     },

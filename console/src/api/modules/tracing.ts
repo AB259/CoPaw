@@ -175,6 +175,19 @@ export interface ToolCall {
   error: string | null;
 }
 
+export interface UserMessageItem {
+  trace_id: string;
+  user_id: string;
+  session_id: string;
+  channel: string;
+  user_message: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  model_name: string | null;
+  start_time: string;
+  duration_ms: number | null;
+}
+
 // API functions
 export const tracingApi = {
   getOverview: async (startDate?: string, endDate?: string): Promise<OverviewStats> => {
@@ -273,5 +286,48 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/tracing/sessions/${encodeURIComponent(sessionId)}${query}`);
+  },
+
+  getUserMessages: async (
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      user_id?: string;
+      session_id?: string;
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+    }
+  ): Promise<{ items: UserMessageItem[]; total: number; page: number; page_size: number }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/tracing/user-messages?${params.toString()}`);
+  },
+
+  exportUserMessages: async (
+    filters?: {
+      user_id?: string;
+      session_id?: string;
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+    },
+    format: string = "xlsx"
+  ): Promise<Blob> => {
+    const params = new URLSearchParams();
+    params.append("format", format);
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const response = await fetch(`/api/tracing/user-messages/export?${params.toString()}`);
+    return response.blob();
   },
 };

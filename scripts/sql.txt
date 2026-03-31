@@ -29,12 +29,16 @@
       skills_used JSON,
       status VARCHAR(32) DEFAULT 'running',
       error TEXT,
+      user_message TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_user_id (user_id),
       INDEX idx_start_time (start_time),
       INDEX idx_model_name (model_name),
       INDEX idx_session_id (session_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  -- 如果表已存在，添加user_message字段
+  -- ALTER TABLE swe_tracing_traces ADD COLUMN user_message TEXT AFTER error;
 
   -- 操作表
   CREATE TABLE IF NOT EXISTS swe_tracing_spans (
@@ -66,8 +70,7 @@
       INDEX idx_skill_name (skill_name),
       INDEX idx_mcp_server (mcp_server),
       INDEX idx_user_id (user_id),
-      INDEX idx_start_time (start_time),
-      FOREIGN KEY (trace_id) REFERENCES swe_tracing_traces(trace_id) ON DELETE CASCADE
+      INDEX idx_start_time (start_time)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   -- 用户每日统计表

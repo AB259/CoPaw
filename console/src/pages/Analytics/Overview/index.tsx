@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Row, Col, Card, Statistic, Table, Spin, DatePicker, Empty, Tag, Collapse } from "antd";
+import { Row, Col, Card, Statistic, Table, Spin, DatePicker, Empty, Tag, Collapse, Progress } from "antd";
 import {
   Users,
   MessageSquare,
@@ -191,8 +191,6 @@ export default function OverviewPage() {
     );
   }
 
-  const hasMCPTools = stats.top_mcp_tools && stats.top_mcp_tools.length > 0;
-
   return (
     <div className={styles.overviewPage}>
       <div className={styles.header}>
@@ -206,12 +204,32 @@ export default function OverviewPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title={t("analytics.onlineUsers", "Online Users")}
-              value={stats.online_users}
-              prefix={<Users size={20} />}
-              valueStyle={{ color: "#52c41a" }}
-            />
+            <div style={{ marginBottom: 8 }}>
+              <span style={{ color: "#666", fontSize: 14 }}>
+                <Users size={16} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                {t("analytics.users", "Users")}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+              <span style={{ fontSize: 30, fontWeight: 600, color: "#52c41a" }}>
+                {stats.online_users}
+              </span>
+              <span style={{ fontSize: 18, color: "#999" }}>
+                / {stats.total_users}
+              </span>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Progress
+                percent={stats.total_users > 0 ? Math.round((stats.online_users / stats.total_users) * 100) : 0}
+                size="small"
+                strokeColor="#52c41a"
+                format={(percent) => (
+                  <span style={{ fontSize: 12, color: "#52c41a" }}>
+                    {percent}% {t("analytics.online", "online")}
+                  </span>
+                )}
+              />
+            </div>
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
@@ -285,19 +303,19 @@ export default function OverviewPage() {
       </Row>
 
       {/* MCP Tools Section */}
-      {hasMCPTools && (
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24}>
-            <Card
-              title={
-                <span>
-                  <Plug size={16} style={{ marginRight: 8 }} />
-                  {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.top_mcp_tools?.length || 0} tools)
-                </span>
-              }
-            >
-              <Collapse defaultActiveKey={stats.mcp_servers?.slice(0, 3).map((_, i) => `server-${i}`) || []}>
-                {stats.mcp_servers?.map((server, idx) => (
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <span>
+                <Plug size={16} style={{ marginRight: 8 }} />
+                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} servers)
+              </span>
+            }
+          >
+            {stats.mcp_servers && stats.mcp_servers.length > 0 ? (
+              <Collapse defaultActiveKey={stats.mcp_servers.slice(0, 3).map((_, i) => `server-${i}`)}>
+                {stats.mcp_servers.map((server, idx) => (
                   <Panel
                     key={`server-${idx}`}
                     header={
@@ -322,23 +340,25 @@ export default function OverviewPage() {
                   </Panel>
                 ))}
               </Collapse>
-            </Card>
-          </Col>
-        </Row>
-      )}
+            ) : (
+              <Empty description={t("analytics.noMCPTools", "No MCP tool calls")} />
+            )}
+          </Card>
+        </Col>
+      </Row>
 
       {/* Regular Tools Section */}
-      {stats.top_tools && stats.top_tools.length > 0 && (
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24}>
-            <Card
-              title={
-                <span>
-                  <Wrench size={16} style={{ marginRight: 8 }} />
-                  {t("analytics.topTools", "Top Tools")} (Non-MCP)
-                </span>
-              }
-            >
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <span>
+                <Wrench size={16} style={{ marginRight: 8 }} />
+                {t("analytics.topTools", "Top Tools")} (Non-MCP)
+              </span>
+            }
+          >
+            {stats.top_tools && stats.top_tools.length > 0 ? (
               <Table
                 dataSource={stats.top_tools}
                 columns={toolColumns}
@@ -346,10 +366,12 @@ export default function OverviewPage() {
                 size="small"
                 pagination={false}
               />
-            </Card>
-          </Col>
-        </Row>
-      )}
+            ) : (
+              <Empty description={t("analytics.noTools", "No tool calls")} />
+            )}
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 }
