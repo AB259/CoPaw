@@ -120,6 +120,7 @@ export interface SessionStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
   first_active: string | null;
   last_active: string | null;
 }

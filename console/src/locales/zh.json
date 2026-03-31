@@ -555,6 +555,7 @@
     "mcpServer": "MCP服务器",
     "tool": "工具",
     "topSkills": "常用技能",
+    "mcpToolsUsed": "MCP工具使用",
     "userMessages": "用户消息",
     "userMessage": "用户消息",
     "fullMessage": "完整消息",
