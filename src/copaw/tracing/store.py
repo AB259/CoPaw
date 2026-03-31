@@ -671,7 +671,10 @@ class TraceStore:
                         "duration": 0,
                         "errors": 0,
                     }
-                self._increment_count(mcp_tool_counts[key], "dummy", span)
+                mcp_tool_counts[key]["count"] += 1
+                mcp_tool_counts[key]["duration"] += span.duration_ms or 0
+                if span.error:
+                    mcp_tool_counts[key]["errors"] += 1
             else:
                 self._increment_count(tool_counts, span.tool_name, span)
 
@@ -1583,22 +1586,7 @@ class TraceStore:
         end_date: datetime,
     ) -> SessionStats:
         """Get session stats from database."""
-        # Get basic stats
-        stats_query = """
-            SELECT
-                user_id,
-                channel,
-                COUNT(*) as total_traces,
-                SUM(total_input_tokens) as input_tokens,
-                SUM(total_output_tokens) as output_tokens,
-                SUM(total_tokens) as total_tokens,
-                AVG(duration_ms) as avg_duration,
-                MIN(start_time) as first_active,
-                MAX(start_time) as last_active
-            FROM swe_tracing_traces
-            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
-        """
-        stats_row = await self.db.fetch_one(stats_query, (session_id, start_date, end_date))
+        stats_row = await self._db_get_session_basic_stats(session_id, start_date, end_date)
 
         if not stats_row or not stats_row.get("user_id"):
             return SessionStats(session_id=session_id, user_id="", channel="")
@@ -1606,72 +1594,11 @@ class TraceStore:
         user_id = stats_row["user_id"]
         channel = stats_row["channel"] or ""
 
-        # Get model usage
-        model_query = """
-            SELECT model_name, COUNT(*) as count,
-                   SUM(total_input_tokens) as input_tokens,
-                   SUM(total_output_tokens) as output_tokens,
-                   SUM(total_tokens) as total_tokens
-            FROM swe_tracing_traces
-            WHERE session_id = %s AND start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
-            GROUP BY model_name
-            ORDER BY count DESC
-        """
-        model_rows = await self.db.fetch_all(model_query, (session_id, start_date, end_date))
-        model_usage = [
-            ModelUsage(
-                model_name=row["model_name"],
-                count=row["count"],
-                total_tokens=row["total_tokens"] or 0,
-                input_tokens=row["input_tokens"] or 0,
-                output_tokens=row["output_tokens"] or 0,
-            )
-            for row in model_rows
-        ]
-
-        # Get tool usage (by event_type = tool_call_end)
-        tool_query = """
-            SELECT tool_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND tool_name IS NOT NULL
-            GROUP BY tool_name
-            ORDER BY count DESC
-        """
-        tool_rows = await self.db.fetch_all(tool_query, (session_id, start_date, end_date))
-        tools_used = [
-            ToolUsage(
-                tool_name=row["tool_name"],
-                count=row["count"],
-                avg_duration_ms=int(row["avg_duration"] or 0),
-                error_count=row["error_count"] or 0,
-            )
-            for row in tool_rows
-        ]
-
-        # Get skill usage (by event_type = skill_invocation)
-        skill_query = """
-            SELECT skill_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration
-            FROM swe_tracing_spans
-            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'skill_invocation'
-              AND skill_name IS NOT NULL
-            GROUP BY skill_name
-            ORDER BY count DESC
-        """
-        skill_rows = await self.db.fetch_all(skill_query, (session_id, start_date, end_date))
-        skills_used = [
-            SkillUsage(
-                skill_name=row["skill_name"],
-                count=row["count"],
-                avg_duration_ms=int(row["avg_duration"] or 0),
-            )
-            for row in skill_rows
-        ]
+        # Get distribution stats
+        model_usage = await self._db_get_session_model_usage(session_id, start_date, end_date)
+        tools_used = await self._db_get_session_tools(session_id, start_date, end_date)
+        skills_used = await self._db_get_session_skills(session_id, start_date, end_date)
+        mcp_tools_used = await self._db_get_session_mcp_tools(session_id, start_date, end_date)
 
         return SessionStats(
             session_id=session_id,
@@ -1685,9 +1612,150 @@ class TraceStore:
             avg_duration_ms=int(stats_row["avg_duration"] or 0) if stats_row and stats_row["avg_duration"] else 0,
             tools_used=tools_used,
             skills_used=skills_used,
+            mcp_tools_used=mcp_tools_used,
             first_active=stats_row["first_active"],
             last_active=stats_row["last_active"],
         )
+
+    async def _db_get_session_basic_stats(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> Optional[dict]:
+        """Get basic session stats."""
+        query = """
+            SELECT
+                user_id,
+                channel,
+                COUNT(*) as total_traces,
+                SUM(total_input_tokens) as input_tokens,
+                SUM(total_output_tokens) as output_tokens,
+                SUM(total_tokens) as total_tokens,
+                AVG(duration_ms) as avg_duration,
+                MIN(start_time) as first_active,
+                MAX(start_time) as last_active
+            FROM swe_tracing_traces
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+            GROUP BY user_id, channel
+        """
+        return await self.db.fetch_one(query, (session_id, start_date, end_date))
+
+    async def _db_get_session_model_usage(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[ModelUsage]:
+        """Get model usage for session."""
+        query = """
+            SELECT model_name, COUNT(*) as count,
+                   SUM(total_input_tokens) as input_tokens,
+                   SUM(total_output_tokens) as output_tokens,
+                   SUM(total_tokens) as total_tokens
+            FROM swe_tracing_traces
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
+            GROUP BY model_name
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (session_id, start_date, end_date))
+        return [
+            ModelUsage(
+                model_name=row["model_name"],
+                count=row["count"],
+                total_tokens=row["total_tokens"] or 0,
+                input_tokens=row["input_tokens"] or 0,
+                output_tokens=row["output_tokens"] or 0,
+            )
+            for row in rows
+        ]
+
+    async def _db_get_session_tools(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[ToolUsage]:
+        """Get tool usage for session (non-MCP)."""
+        query = """
+            SELECT tool_name, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND tool_name IS NOT NULL
+              AND mcp_server IS NULL
+            GROUP BY tool_name
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (session_id, start_date, end_date))
+        return [
+            ToolUsage(
+                tool_name=row["tool_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
+
+    async def _db_get_session_mcp_tools(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[MCPToolUsage]:
+        """Get MCP tool usage for session."""
+        query = """
+            SELECT tool_name, mcp_server, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'tool_call_end'
+              AND mcp_server IS NOT NULL
+            GROUP BY tool_name, mcp_server
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (session_id, start_date, end_date))
+        return [
+            MCPToolUsage(
+                tool_name=row["tool_name"],
+                mcp_server=row["mcp_server"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
+
+    async def _db_get_session_skills(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[SkillUsage]:
+        """Get skill usage for session."""
+        query = """
+            SELECT skill_name, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration
+            FROM swe_tracing_spans
+            WHERE session_id = %s AND start_time >= %s AND start_time <= %s
+              AND event_type = 'skill_invocation'
+              AND skill_name IS NOT NULL
+            GROUP BY skill_name
+            ORDER BY count DESC
+        """
+        rows = await self.db.fetch_all(query, (session_id, start_date, end_date))
+        return [
+            SkillUsage(
+                skill_name=row["skill_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+            )
+            for row in rows
+        ]
 
     def _memory_get_sessions(
         self,
@@ -1699,54 +1767,32 @@ class TraceStore:
         end_date: Optional[datetime],
     ) -> tuple[list[SessionListItem], int]:
         """Get sessions from memory."""
-        # Aggregate by session
-        session_data: dict[str, dict] = {}
-        for t in self._traces.values():
-            sid = t.session_id
-            # Apply filters
-            if user_id and t.user_id != user_id:
-                continue
-            if session_id and session_id not in sid:
-                continue
-            if start_date and t.start_time < start_date:
-                continue
-            if end_date and t.start_time > end_date:
-                continue
+        session_data = self._aggregate_sessions_by_trace(
+            user_id, session_id, start_date, end_date
+        )
+        self._count_session_skills(session_data)
 
-            if sid not in session_data:
-                session_data[sid] = {
-                    "user_id": t.user_id,
-                    "channel": t.channel,
-                    "traces": 0,
-                    "tokens": 0,
-                    "skills": 0,
-                    "first_active": t.start_time,
-                    "last_active": t.start_time,
-                }
-            session_data[sid]["traces"] += 1
-            session_data[sid]["tokens"] += t.total_input_tokens + t.total_output_tokens
-            if t.start_time < session_data[sid]["first_active"]:
-                session_data[sid]["first_active"] = t.start_time
-            if t.start_time > session_data[sid]["last_active"]:
-                session_data[sid]["last_active"] = t.start_time
+        sorted_sessions = self._sort_sessions_by_activity(session_data)
+        return self._paginate_sessions(sorted_sessions, page, page_size)
 
-        # Count skills per session from spans
-        for trace_id, spans in self._spans.items():
-            trace = self._traces.get(trace_id)
-            if trace and trace.session_id in session_data:
-                for s in spans:
-                    event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
-                    if event_type_str == EventType.SKILL_INVOCATION.value:
-                        session_data[trace.session_id]["skills"] += 1
-
-        # Sort and paginate
-        sorted_sessions = sorted(
+    def _sort_sessions_by_activity(self, session_data: dict[str, dict]) -> list[tuple[str, dict]]:
+        """Sort sessions by last activity time."""
+        return sorted(
             session_data.items(),
             key=lambda x: x[1]["last_active"],
             reverse=True,
         )
+
+    def _paginate_sessions(
+        self,
+        sorted_sessions: list[tuple[str, dict]],
+        page: int,
+        page_size: int,
+    ) -> tuple[list[SessionListItem], int]:
+        """Paginate session list and convert to SessionListItem."""
         total = len(sorted_sessions)
         offset = (page - 1) * page_size
+
         items = [
             SessionListItem(
                 session_id=sid,
@@ -1762,6 +1808,96 @@ class TraceStore:
         ]
         return items, total
 
+    def _aggregate_sessions_by_trace(
+        self,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+    ) -> dict[str, dict]:
+        """Aggregate session data from traces.
+
+        Args:
+            user_id: Optional user filter
+            session_id: Optional session filter
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            Dictionary of session_id -> session data
+        """
+        session_data: dict[str, dict] = {}
+        for t in self._traces.values():
+            if not self._trace_matches_filters(t, user_id, session_id, start_date, end_date):
+                continue
+
+            self._update_session_aggregate(session_data, t)
+
+        return session_data
+
+    def _trace_matches_filters(
+        self,
+        trace: Trace,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+    ) -> bool:
+        """Check if trace matches all filter criteria."""
+        if user_id and trace.user_id != user_id:
+            return False
+        if session_id and session_id not in trace.session_id:
+            return False
+        if start_date and trace.start_time < start_date:
+            return False
+        if end_date and trace.start_time > end_date:
+            return False
+        return True
+
+    def _update_session_aggregate(self, session_data: dict[str, dict], trace: Trace) -> None:
+        """Update session aggregate with trace data."""
+        sid = trace.session_id
+        if sid not in session_data:
+            session_data[sid] = {
+                "user_id": trace.user_id,
+                "channel": trace.channel,
+                "traces": 0,
+                "tokens": 0,
+                "skills": 0,
+                "first_active": trace.start_time,
+                "last_active": trace.start_time,
+            }
+
+        entry = session_data[sid]
+        entry["traces"] += 1
+        entry["tokens"] += trace.total_input_tokens + trace.total_output_tokens
+        entry["first_active"] = min(entry["first_active"], trace.start_time)
+        entry["last_active"] = max(entry["last_active"], trace.start_time)
+
+    def _count_session_skills(self, session_data: dict[str, dict]) -> None:
+        """Count skills per session from spans (in-place update).
+
+        Args:
+            session_data: Session data dictionary to update
+        """
+        for trace_id, spans in self._spans.items():
+            trace = self._traces.get(trace_id)
+            if not trace:
+                continue
+            session_entry = session_data.get(trace.session_id)
+            if not session_entry:
+                continue
+            session_entry["skills"] += sum(
+                1 for s in spans
+                if self._is_skill_invocation(s)
+            )
+
+    @staticmethod
+    def _is_skill_invocation(span: Span) -> bool:
+        """Check if a span is a skill invocation."""
+        event_type = span.event_type.value if hasattr(span.event_type, 'value') else str(span.event_type)
+        return event_type == EventType.SKILL_INVOCATION.value
+
     def _memory_get_session_stats(
         self,
         session_id: str,
@@ -1769,106 +1905,75 @@ class TraceStore:
         end_date: datetime,
     ) -> SessionStats:
         """Get session stats from memory."""
-        traces = [
-            t for t in self._traces.values()
-            if t.session_id == session_id and start_date <= t.start_time <= end_date
-        ]
+        traces = self._filter_traces_by_session(session_id, start_date, end_date)
 
         if not traces:
             return SessionStats(session_id=session_id, user_id="", channel="")
 
-        # Get user_id and channel from first trace
-        user_id = traces[0].user_id
-        channel = traces[0].channel
+        # Calculate basic stats
+        first_trace = traces[0]
+        totals = self._calculate_trace_totals(traces)
 
-        total_input = sum(t.total_input_tokens for t in traces)
-        total_output = sum(t.total_output_tokens for t in traces)
-        avg_duration = sum(t.duration_ms or 0 for t in traces) // max(len(traces), 1)
-        first_active = min(t.start_time for t in traces)
-        last_active = max(t.start_time for t in traces)
+        # Collect span stats
+        tool_counts, skill_counts, mcp_tool_counts = self._collect_span_stats(
+            start_date, end_date, session_id=session_id
+        )
 
-        # Model usage
-        model_counts: dict[str, dict] = {}
-        for t in traces:
-            if t.model_name:
-                if t.model_name not in model_counts:
-                    model_counts[t.model_name] = {"count": 0, "tokens": 0, "input": 0, "output": 0}
-                model_counts[t.model_name]["count"] += 1
-                model_counts[t.model_name]["tokens"] += t.total_input_tokens + t.total_output_tokens
-                model_counts[t.model_name]["input"] += t.total_input_tokens
-                model_counts[t.model_name]["output"] += t.total_output_tokens
-
-        model_usage = [
-            ModelUsage(
-                model_name=name,
-                count=data["count"],
-                total_tokens=data["tokens"],
-                input_tokens=data["input"],
-                output_tokens=data["output"],
-            )
-            for name, data in sorted(model_counts.items(), key=lambda x: -x[1]["count"])
-        ]
-
-        # Tool and skill usage (separate by event_type)
-        tool_counts: dict[str, dict] = {}
-        skill_counts: dict[str, dict] = {}
-        for trace_id, spans in self._spans.items():
-            trace = self._traces.get(trace_id)
-            if trace and trace.session_id == session_id:
-                for s in spans:
-                    if not (start_date <= s.start_time <= end_date):
-                        continue
-                    event_type_str = s.event_type.value if hasattr(s.event_type, 'value') else str(s.event_type)
-
-                    if event_type_str == EventType.SKILL_INVOCATION.value and s.skill_name:
-                        if s.skill_name not in skill_counts:
-                            skill_counts[s.skill_name] = {"count": 0, "duration": 0, "errors": 0}
-                        skill_counts[s.skill_name]["count"] += 1
-                        skill_counts[s.skill_name]["duration"] += s.duration_ms or 0
-                        if s.error:
-                            skill_counts[s.skill_name]["errors"] += 1
-                    elif event_type_str == EventType.TOOL_CALL_END.value and s.tool_name:
-                        if s.tool_name not in tool_counts:
-                            tool_counts[s.tool_name] = {"count": 0, "duration": 0, "errors": 0}
-                        tool_counts[s.tool_name]["count"] += 1
-                        tool_counts[s.tool_name]["duration"] += s.duration_ms or 0
-                        if s.error:
-                            tool_counts[s.tool_name]["errors"] += 1
-
-        tools_used = [
-            ToolUsage(
-                tool_name=name,
+        # Build MCP tools list
+        mcp_tools_used = [
+            MCPToolUsage(
+                tool_name=data["tool_name"],
+                mcp_server=data["mcp_server"],
                 count=data["count"],
                 avg_duration_ms=data["duration"] // max(data["count"], 1),
                 error_count=data["errors"],
             )
-            for name, data in sorted(tool_counts.items(), key=lambda x: -x[1]["count"])
-        ]
-
-        skills_used = [
-            SkillUsage(
-                skill_name=name,
-                count=data["count"],
-                avg_duration_ms=data["duration"] // max(data["count"], 1),
-            )
-            for name, data in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])
+            for data in mcp_tool_counts.values()
         ]
 
         return SessionStats(
             session_id=session_id,
-            user_id=user_id,
-            channel=channel,
-            model_usage=model_usage,
-            total_tokens=total_input + total_output,
-            input_tokens=total_input,
-            output_tokens=total_output,
+            user_id=first_trace.user_id,
+            channel=first_trace.channel,
+            model_usage=self._build_model_distribution(traces),
+            total_tokens=totals["total_tokens"],
+            input_tokens=totals["input_tokens"],
+            output_tokens=totals["output_tokens"],
             total_traces=len(traces),
-            avg_duration_ms=avg_duration,
-            tools_used=tools_used,
-            skills_used=skills_used,
-            first_active=first_active,
-            last_active=last_active,
+            avg_duration_ms=totals["avg_duration"],
+            tools_used=self._build_top_tools(tool_counts),
+            skills_used=self._build_top_skills(skill_counts),
+            mcp_tools_used=mcp_tools_used,
+            first_active=totals["first_active"],
+            last_active=totals["last_active"],
         )
+
+    def _filter_traces_by_session(
+        self,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[Trace]:
+        """Filter traces by session and date range."""
+        return [
+            t for t in self._traces.values()
+            if t.session_id == session_id and start_date <= t.start_time <= end_date
+        ]
+
+    def _calculate_trace_totals(self, traces: list[Trace]) -> dict:
+        """Calculate totals from a list of traces."""
+        input_tokens = sum(t.total_input_tokens for t in traces)
+        output_tokens = sum(t.total_output_tokens for t in traces)
+        durations = [t.duration_ms or 0 for t in traces]
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "avg_duration": sum(durations) // max(len(traces), 1),
+            "first_active": min(t.start_time for t in traces),
+            "last_active": max(t.start_time for t in traces),
+        }
 
     # Helper methods
 

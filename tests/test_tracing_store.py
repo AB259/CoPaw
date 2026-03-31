@@ -978,3 +978,292 @@ class TestMCPToolStatistics:
 
         assert len(stats.mcp_servers) == 1
         assert stats.mcp_servers[0].error_count == 1
+
+    def test_session_stats_mcp_tools(self, store):
+        """Session stats should include MCP tools used in the session."""
+        session_id = "session-001"
+        trace = Trace(
+            trace_id="trace-001",
+            user_id="user-001",
+            session_id=session_id,
+            channel="console",
+            start_time=datetime.now(),
+            status=TraceStatus.COMPLETED,
+        )
+        asyncio.run(store.create_trace(trace))
+
+        # Regular tool
+        regular_span = Span(
+            span_id="span-regular",
+            trace_id="trace-001",
+            name="regular_tool",
+            event_type=EventType.TOOL_CALL_END,
+            start_time=datetime.now(),
+            user_id="user-001",
+            session_id=session_id,
+            channel="console",
+            tool_name="regular_tool",
+            duration_ms=100,
+            mcp_server=None,
+        )
+        asyncio.run(store.create_span(regular_span))
+
+        # MCP tools from different servers
+        mcp_spans = [
+            Span(
+                span_id=f"span-mcp-{i}",
+                trace_id="trace-001",
+                name=f"mcp_tool_{i}",
+                event_type=EventType.TOOL_CALL_END,
+                start_time=datetime.now(),
+                user_id="user-001",
+                session_id=session_id,
+                channel="console",
+                tool_name=f"mcp_tool_{i}",
+                duration_ms=100,
+                mcp_server="filesystem" if i < 2 else "database",
+            )
+            for i in range(3)
+        ]
+        asyncio.run(store.batch_create_spans(mcp_spans))
+
+        stats = asyncio.run(store.get_session_stats(session_id))
+
+        # Should have MCP tools
+        assert len(stats.mcp_tools_used) == 3
+
+        # MCP tools should have mcp_server set
+        for tool in stats.mcp_tools_used:
+            assert tool.mcp_server in ["filesystem", "database"]
+
+        # Regular tools should NOT be in mcp_tools_used
+        regular_tool_names = [t.tool_name for t in stats.tools_used]
+        mcp_tool_names = [t.tool_name for t in stats.mcp_tools_used]
+        assert "regular_tool" in regular_tool_names
+        assert "regular_tool" not in mcp_tool_names
+
+
+class TestMCPToolStatisticsDatabase:
+    """Tests for MCP tool usage statistics in database mode."""
+
+    @pytest.fixture
+    def mock_db(self):
+        db = MagicMock()
+        db.is_connected = True
+        db.execute = AsyncMock()
+        db.execute_many = AsyncMock()
+        db.fetch_one = AsyncMock()
+        db.fetch_all = AsyncMock()
+        db.close = AsyncMock()
+        return db
+
+    @pytest.fixture
+    def store(self, mock_db):
+        config = TracingConfig(enabled=True)
+        store = TraceStore(config, db=mock_db)
+        asyncio.run(store.initialize())
+        return store
+
+    def test_db_get_overview_mcp_tools(self, store, mock_db):
+        """Database mode should query MCP tools correctly."""
+        mock_db.fetch_one.return_value = {
+            "online_users": 5,
+            "total_users": 10,
+            "total_sessions": 20,
+            "total_conversations": 50,
+            "total_tokens": 10000,
+            "input_tokens": 6000,
+            "output_tokens": 4000,
+            "avg_duration": 1500.0,
+        }
+        mock_db.fetch_all.return_value = []
+
+        stats = asyncio.run(store.get_overview_stats())
+        assert mock_db.fetch_one.called
+        assert mock_db.fetch_all.called
+
+    def test_db_get_session_stats_with_mcp_tools(self, store, mock_db):
+        """Database mode should return MCP tools in session stats."""
+        mock_db.fetch_one.return_value = {
+            "user_id": "user-001",
+            "channel": "console",
+            "total_traces": 5,
+            "input_tokens": 500,
+            "output_tokens": 250,
+            "total_tokens": 750,
+            "avg_duration": 1000.0,
+            "first_active": datetime.now(),
+            "last_active": datetime.now(),
+        }
+
+        # Mock MCP tools query result
+        mock_db.fetch_all.side_effect = [
+            [],  # model_usage
+            [],  # tools_used (non-MCP)
+            [],  # skills_used
+            [
+                {
+                    "tool_name": "read_file",
+                    "mcp_server": "filesystem",
+                    "count": 3,
+                    "avg_duration": 100.0,
+                    "error_count": 0,
+                },
+                {
+                    "tool_name": "query_db",
+                    "mcp_server": "database",
+                    "count": 2,
+                    "avg_duration": 200.0,
+                    "error_count": 1,
+                },
+            ],  # mcp_tools_used
+        ]
+
+        stats = asyncio.run(store.get_session_stats("session-001"))
+
+        assert stats.session_id == "session-001"
+        assert len(stats.mcp_tools_used) == 2
+        assert stats.mcp_tools_used[0].tool_name == "read_file"
+        assert stats.mcp_tools_used[0].mcp_server == "filesystem"
+        assert stats.mcp_tools_used[1].tool_name == "query_db"
+        assert stats.mcp_tools_used[1].mcp_server == "database"
+
+    def test_db_session_tools_excludes_mcp(self, store, mock_db):
+        """Database mode should exclude MCP tools from regular tools query."""
+        mock_db.fetch_one.return_value = {
+            "user_id": "user-001",
+            "channel": "console",
+            "total_traces": 5,
+            "input_tokens": 500,
+            "output_tokens": 250,
+            "total_tokens": 750,
+            "avg_duration": 1000.0,
+            "first_active": datetime.now(),
+            "last_active": datetime.now(),
+        }
+
+        # Regular tools (non-MCP) should have mcp_server IS NULL
+        mock_db.fetch_all.side_effect = [
+            [],  # model_usage
+            [
+                {
+                    "tool_name": "regular_tool",
+                    "count": 5,
+                    "avg_duration": 50.0,
+                    "error_count": 0,
+                }
+            ],  # tools_used (non-MCP only)
+            [],  # skills_used
+            [],  # mcp_tools_used
+        ]
+
+        stats = asyncio.run(store.get_session_stats("session-001"))
+
+        # Only regular tool in tools_used
+        assert len(stats.tools_used) == 1
+        assert stats.tools_used[0].tool_name == "regular_tool"
+
+        # No MCP tools
+        assert len(stats.mcp_tools_used) == 0
+
+    def test_db_overview_mcp_servers_grouped(self, store, mock_db):
+        """Database mode should group MCP tools by server in overview."""
+        mock_db.fetch_one.return_value = {
+            "online_users": 5,
+            "total_users": 10,
+            "total_sessions": 20,
+            "total_conversations": 50,
+            "total_tokens": 10000,
+            "input_tokens": 6000,
+            "output_tokens": 4000,
+            "avg_duration": 1500.0,
+        }
+
+        # MCP tools with server info
+        mock_db.fetch_all.side_effect = [
+            [],  # model_distribution
+            [],  # top_tools (non-MCP)
+            [],  # top_skills
+            [
+                {
+                    "tool_name": "read",
+                    "mcp_server": "filesystem",
+                    "count": 10,
+                    "avg_duration": 50.0,
+                    "error_count": 0,
+                },
+                {
+                    "tool_name": "write",
+                    "mcp_server": "filesystem",
+                    "count": 5,
+                    "avg_duration": 100.0,
+                    "error_count": 1,
+                },
+                {
+                    "tool_name": "query",
+                    "mcp_server": "database",
+                    "count": 8,
+                    "avg_duration": 200.0,
+                    "error_count": 0,
+                },
+            ],  # top_mcp_tools
+            [
+                # mcp_servers query
+                {
+                    "mcp_server": "filesystem",
+                    "tool_count": 2,
+                    "total_calls": 15,
+                    "avg_duration": 66.67,
+                    "error_count": 1,
+                },
+                {
+                    "mcp_server": "database",
+                    "tool_count": 1,
+                    "total_calls": 8,
+                    "avg_duration": 200.0,
+                    "error_count": 0,
+                },
+            ],
+            # tools for each server (2 servers, each needs a fetch_all)
+            [
+                {
+                    "tool_name": "read",
+                    "mcp_server": "filesystem",
+                    "count": 10,
+                    "avg_duration": 50.0,
+                    "error_count": 0,
+                },
+                {
+                    "tool_name": "write",
+                    "mcp_server": "filesystem",
+                    "count": 5,
+                    "avg_duration": 100.0,
+                    "error_count": 1,
+                },
+            ],
+            [
+                {
+                    "tool_name": "query",
+                    "mcp_server": "database",
+                    "count": 8,
+                    "avg_duration": 200.0,
+                    "error_count": 0,
+                },
+            ],
+        ]
+
+        stats = asyncio.run(store.get_overview_stats())
+
+        # Should have MCP tools
+        assert len(stats.top_mcp_tools) == 3
+
+        # Should have 2 servers grouped
+        assert len(stats.mcp_servers) == 2
+        server_names = {s.server_name for s in stats.mcp_servers}
+        assert server_names == {"filesystem", "database"}
+
+        # Filesystem server: 2 tools, 15 total calls, 1 error
+        fs_server = next(s for s in stats.mcp_servers if s.server_name == "filesystem")
+        assert fs_server.tool_count == 2
+        assert fs_server.total_calls == 15
+        assert fs_server.error_count == 1

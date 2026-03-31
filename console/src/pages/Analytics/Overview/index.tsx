@@ -285,17 +285,17 @@ export default function OverviewPage() {
       </Row>
 
       {/* MCP Tools Section */}
-      {hasMCPTools && (
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24}>
-            <Card
-              title={
-                <span>
-                  <Plug size={16} style={{ marginRight: 8 }} />
-                  {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.top_mcp_tools?.length || 0} tools)
-                </span>
-              }
-            >
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <span>
+                <Plug size={16} style={{ marginRight: 8 }} />
+                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} servers)
+              </span>
+            }
+          >
+            {hasMCPTools ? (
               <Collapse defaultActiveKey={stats.mcp_servers?.slice(0, 3).map((_, i) => `server-${i}`) || []}>
                 {stats.mcp_servers?.map((server, idx) => (
                   <Panel
@@ -322,23 +322,25 @@ export default function OverviewPage() {
                   </Panel>
                 ))}
               </Collapse>
-            </Card>
-          </Col>
-        </Row>
-      )}
+            ) : (
+              <Empty description={t("analytics.noMCPTools", "No MCP tool calls")} />
+            )}
+          </Card>
+        </Col>
+      </Row>
 
       {/* Regular Tools Section */}
-      {stats.top_tools && stats.top_tools.length > 0 && (
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24}>
-            <Card
-              title={
-                <span>
-                  <Wrench size={16} style={{ marginRight: 8 }} />
-                  {t("analytics.topTools", "Top Tools")} (Non-MCP)
-                </span>
-              }
-            >
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <span>
+                <Wrench size={16} style={{ marginRight: 8 }} />
+                {t("analytics.topTools", "Top Tools")} (Non-MCP)
+              </span>
+            }
+          >
+            {stats.top_tools && stats.top_tools.length > 0 ? (
               <Table
                 dataSource={stats.top_tools}
                 columns={toolColumns}
@@ -346,10 +348,12 @@ export default function OverviewPage() {
                 size="small"
                 pagination={false}
               />
-            </Card>
-          </Col>
-        </Row>
-      )}
+            ) : (
+              <Empty description={t("analytics.noTools", "No tool calls")} />
+            )}
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 }

@@ -551,6 +551,7 @@
     "mcpToolCalls": "MCP Tool Calls",
     "mcpServer": "MCP Server",
     "tool": "Tool",
-    "topSkills": "Top Skills"
+    "topSkills": "Top Skills",
+    "mcpToolsUsed": "MCP Tools Used"
   }
 }
