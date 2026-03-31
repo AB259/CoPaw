@@ -15,6 +15,7 @@ FROM agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/node:slim
 ENV NODE_ENV=production
 ENV WORKSPACE_DIR=/app
 ENV COPAW_WORKING_DIR=/app/working
+ENV TZ=Asia/Shanghai
 
 # Available channels for this image.
 # Override at runtime with -e COPAW_ENABLED_CHANNELS=... if needed.
@@ -40,6 +41,7 @@ RUN apt-get update && apt-get install -y --fix-missing \
     dbus-x11 \
     fonts-wqy-zenhei \
     fonts-wqy-microhei \
+    tzdata \
   && rm -rf /var/lib/apt/lists/* \
   && apt-get clean
 
