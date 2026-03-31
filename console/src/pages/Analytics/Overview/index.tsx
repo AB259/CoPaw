@@ -245,9 +245,10 @@ export default function OverviewPage() {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }} className={styles.tableRow}>
         <Col xs={24} lg={12}>
           <Card
+            className={styles.tableCard}
             title={
               <span>
                 <Cpu size={16} style={{ marginRight: 8 }} />
@@ -266,6 +267,7 @@ export default function OverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <Card
+            className={styles.tableCard}
             title={
               <span>
                 <BookOpen size={16} style={{ marginRight: 8 }} />
@@ -291,7 +293,7 @@ export default function OverviewPage() {
             title={
               <span>
                 <Plug size={16} style={{ marginRight: 8 }} />
-                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} servers)
+                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} 个)
               </span>
             }
           >
@@ -336,7 +338,7 @@ export default function OverviewPage() {
             title={
               <span>
                 <Wrench size={16} style={{ marginRight: 8 }} />
-                {t("analytics.topTools", "Top Tools")} (Non-MCP)
+                {t("analytics.topTools", "Top Tools")} (非MCP)
               </span>
             }
           >

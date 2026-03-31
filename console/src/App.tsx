@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import MainLayout from "./layouts/MainLayout";
 import "./styles/layout.css";
 import "./styles/form-override.css";
+import zhCN from "antd/locale/zh_CN";
 
 const GlobalStyle = createGlobalStyle`
 * {
@@ -12,11 +13,20 @@ const GlobalStyle = createGlobalStyle`
 }
 `;
 
+// 自定义分页国际化
+const customZhCN = {
+  ...zhCN,
+  Pagination: {
+    ...zhCN.Pagination,
+    items_per_page: '条/页',
+  },
+};
+
 function App() {
   return (
     <BrowserRouter>
       <GlobalStyle />
-      <ConfigProvider {...bailianTheme} prefix="copaw" prefixCls="copaw">
+      <ConfigProvider {...bailianTheme} prefix="copaw" prefixCls="copaw" locale={customZhCN}>
         <MainLayout />
       </ConfigProvider>
     </BrowserRouter>

@@ -247,6 +247,7 @@ export default function SessionsPage() {
           columns={columns}
           rowKey="session_id"
           loading={loading}
+          className={sessions.length === 0 ? styles.emptyTable : ''}
           pagination={{
             current: page,
             pageSize,
