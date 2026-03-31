@@ -256,6 +256,7 @@ export default function MessagesPage() {
             icon={<Download size={16} />}
             onClick={handleExport}
             loading={exporting}
+            style={{ minWidth: 120 }}
           >
             {t("analytics.exportExcel", "Export Excel")}
           </Button>

@@ -628,8 +628,8 @@ class TraceStore:
                 trace_id, user_id, session_id, channel, start_time,
                 end_time, duration_ms, model_name, total_input_tokens,
                 total_output_tokens, total_tokens, tools_used, skills_used,
-                status, error
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                status, error, user_message
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             trace.trace_id,
@@ -647,6 +647,7 @@ class TraceStore:
             json.dumps(trace.skills_used),
             trace.status.value if isinstance(trace.status, TraceStatus) else trace.status,
             trace.error,
+            trace.user_message,
         )
         await self.db.execute(query, params)
 
@@ -2189,6 +2190,7 @@ class TraceStore:
             skills_used=json.loads(row["skills_used"]) if row["skills_used"] else [],
             status=TraceStatus(row["status"]) if row["status"] else TraceStatus.RUNNING,
             error=row["error"],
+            user_message=row.get("user_message"),
         )
 
     def _row_to_span(self, row: dict) -> Span:

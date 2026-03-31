@@ -328,7 +328,18 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    const response = await fetch(`/api/tracing/user-messages/export?${params.toString()}`);
+    // Use the proper API URL and include authorization token
+    const { getApiUrl, getApiToken } = await import("../config");
+    const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
+    const token = getApiToken();
+    const headers: HeadersInit = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+    }
     return response.blob();
   },
 };

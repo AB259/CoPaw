@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Row, Col, Card, Statistic, Table, Spin, DatePicker, Empty, Tag, Collapse, Progress } from "antd";
+import { Row, Col, Card, Statistic, Table, Spin, DatePicker, Empty, Tag, Collapse } from "antd";
 import {
   Users,
   MessageSquare,
@@ -204,32 +204,13 @@ export default function OverviewPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <div style={{ marginBottom: 8 }}>
-              <span style={{ color: "#666", fontSize: 14 }}>
-                <Users size={16} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                {t("analytics.users", "Users")}
-              </span>
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-              <span style={{ fontSize: 30, fontWeight: 600, color: "#52c41a" }}>
-                {stats.online_users}
-              </span>
-              <span style={{ fontSize: 18, color: "#999" }}>
-                / {stats.total_users}
-              </span>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <Progress
-                percent={stats.total_users > 0 ? Math.round((stats.online_users / stats.total_users) * 100) : 0}
-                size="small"
-                strokeColor="#52c41a"
-                format={(percent) => (
-                  <span style={{ fontSize: 12, color: "#52c41a" }}>
-                    {percent}% {t("analytics.online", "online")}
-                  </span>
-                )}
-              />
-            </div>
+            <Statistic
+              title={t("analytics.users", "Users")}
+              value={stats.online_users}
+              suffix={<span style={{ fontSize: 14, color: "#999" }}> / {stats.total_users} ({stats.total_users > 0 ? Math.round((stats.online_users / stats.total_users) * 100) : 0}%)</span>}
+              prefix={<Users size={20} />}
+              valueStyle={{ color: "#52c41a" }}
+            />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
