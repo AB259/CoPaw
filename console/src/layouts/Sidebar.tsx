@@ -36,6 +36,7 @@ import {
   BarChart3,
   LineChart,
   FileSearch,
+  Server,
 } from "lucide-react";
 import api from "../api";
 import styles from "./index.module.less";
@@ -50,6 +51,7 @@ const DEFAULT_OPEN_KEYS = [
   "agent-group",
   "settings-group",
   "analytics-group",
+  "instance-group",
 ];
 
 const KEY_TO_PATH: Record<string, string> = {
@@ -68,6 +70,7 @@ const KEY_TO_PATH: Record<string, string> = {
   "analytics-users": "/analytics/users",
   "analytics-sessions": "/analytics/sessions",
   "analytics-messages": "/analytics/messages",
+  instance: "/instance",
 };
 
 const UPDATE_MD: Record<string, string> = {
@@ -370,6 +373,18 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-messages",
           label: t("nav.analyticsMessages", "Messages"),
           icon: <FileSearch size={16} />,
+        },
+      ],
+    },
+    {
+      key: "instance-group",
+      label: t("nav.instance", "Instance"),
+      icon: <Server size={16} />,
+      children: [
+        {
+          key: "instance",
+          label: t("nav.instanceManagement", "Instance Management"),
+          icon: <Server size={16} />,
         },
       ],
     },

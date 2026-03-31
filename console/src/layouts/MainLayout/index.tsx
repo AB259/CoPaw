@@ -17,6 +17,7 @@ import MCPPage from "../../pages/Agent/MCP";
 import ModelsPage from "../../pages/Settings/Models";
 import EnvironmentsPage from "../../pages/Settings/Environments";
 import AnalyticsPage from "../../pages/Analytics";
+import InstancePage from "../../pages/Instance";
 
 const { Content } = Layout;
 
@@ -36,6 +37,7 @@ const pathToKey: Record<string, string> = {
   "/analytics/overview": "analytics-overview",
   "/analytics/users": "analytics-users",
   "/analytics/traces": "analytics-traces",
+  "/instance": "instance",
 };
 
 export default function MainLayout() {
@@ -71,6 +73,7 @@ export default function MainLayout() {
               <Route path="/environments" element={<EnvironmentsPage />} />
               <Route path="/agent-config" element={<AgentConfigPage />} />
               <Route path="/analytics/*" element={<AnalyticsPage />} />
+              <Route path="/instance" element={<InstancePage />} />
               <Route path="/" element={<Chat />} />
             </Routes>
           </div>

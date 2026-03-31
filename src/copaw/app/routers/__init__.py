@@ -17,6 +17,7 @@ from .zhaohu import zhaohu_router
 from ..crons.api import router as cron_router
 from ..runner.api import router as runner_router
 from ..backup import router as backup_router
+from ..instance import instance_router
 
 
 router = APIRouter()
@@ -37,5 +38,6 @@ router.include_router(workspace_router)
 router.include_router(envs_router)
 router.include_router(backup_router)
 router.include_router(zhaohu_router)
+router.include_router(instance_router)
 
 __all__ = ["router"]
