@@ -72,6 +72,8 @@ async def get_users(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     user_id: Optional[str] = Query(None, description="Filter by user ID (partial match)"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
 ) -> dict:
     """Get list of users with their statistics.
 
@@ -79,6 +81,8 @@ async def get_users(
         page: Page number
         page_size: Page size
         user_id: Filter by user ID
+        start_date: Start date filter
+        end_date: End date filter
 
     Returns:
         Paginated list of users with stats
@@ -88,7 +92,23 @@ async def get_users(
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
-    users, total = await manager.get_users(page, page_size, user_id)
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)  # Include the end date
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    users, total = await manager.get_users(page, page_size, user_id, start, end)
     return {
         "items": [u.model_dump() for u in users],
         "total": total,
