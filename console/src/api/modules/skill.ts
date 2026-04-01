@@ -13,10 +13,14 @@ export const skillApi = {
       }),
     }),
 
-  enableSkill: (skillName: string) =>
-    request<void>(`/skills/${encodeURIComponent(skillName)}/enable`, {
+  enableSkill: (skillName: string, source?: string) => {
+    const url = source
+      ? `/skills/${encodeURIComponent(skillName)}/enable?source=${encodeURIComponent(source)}`
+      : `/skills/${encodeURIComponent(skillName)}/enable`;
+    return request<void>(url, {
       method: "POST",
-    }),
+    });
+  },
 
   disableSkill: (skillName: string) =>
     request<void>(`/skills/${encodeURIComponent(skillName)}/disable`, {

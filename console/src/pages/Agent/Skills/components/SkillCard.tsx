@@ -85,6 +85,7 @@ export function SkillCard({
 }: SkillCardProps) {
   const { t } = useTranslation();
   const isCustomized = skill.source === "customized";
+  const isBuiltin = skill.source === "builtin";
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -115,6 +116,19 @@ export function SkillCard({
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className={styles.fileIcon}>{getFileIcon(skill.name)}</span>
             <h3 className={styles.skillTitle}>{skill.name}</h3>
+            {/* Source badge */}
+            <span
+              style={{
+                fontSize: 12,
+                padding: "2px 8px",
+                borderRadius: 4,
+                backgroundColor: isBuiltin ? "#e6f7ff" : "#fff7e6",
+                color: isBuiltin ? "#1890ff" : "#fa8c16",
+                marginLeft: 4,
+              }}
+            >
+              {skill.source}
+            </span>
           </div>
           <div className={styles.statusContainer}>
             <span

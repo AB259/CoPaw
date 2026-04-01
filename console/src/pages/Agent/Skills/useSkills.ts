@@ -93,21 +93,14 @@ export function useSkills() {
     try {
       if (skill.enabled) {
         await api.disableSkill(skill.name);
-        setSkills((prev) =>
-          prev.map((s) =>
-            s.name === skill.name ? { ...s, enabled: false } : s,
-          ),
-        );
         message.success("Disabled successfully");
       } else {
-        await api.enableSkill(skill.name);
-        setSkills((prev) =>
-          prev.map((s) =>
-            s.name === skill.name ? { ...s, enabled: true } : s,
-          ),
-        );
+        // Enable with source to ensure only this source version is enabled
+        await api.enableSkill(skill.name, skill.source);
         message.success("Enabled successfully");
       }
+      // Refetch to get accurate state from backend
+      await fetchSkills();
       return true;
     } catch (error) {
       console.error("Failed to toggle skill", error);

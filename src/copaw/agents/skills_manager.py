@@ -129,6 +129,7 @@ def _collect_skills_from_dir(directory: Path) -> dict[str, Path]:
 def sync_skills_to_working_dir(
     skill_names: list[str] | None = None,
     force: bool = False,
+    source: str | None = None,
 ) -> tuple[int, int]:
     """
     Sync skills from builtin and customized to active_skills directory.
@@ -136,6 +137,10 @@ def sync_skills_to_working_dir(
     Args:
         skill_names: List of skill names to sync. If None, sync all skills.
         force: If True, overwrite existing skills in active_skills.
+        source: Source to sync from. Options:
+            - None: Default behavior, customized overrides builtin (original)
+            - "builtin": Only sync from builtin_skills
+            - "customized": Only sync from customized_skills
 
     Returns:
         Tuple of (synced_count, skipped_count).
@@ -147,16 +152,28 @@ def sync_skills_to_working_dir(
     # Ensure active skills directory exists
     active_skills.mkdir(parents=True, exist_ok=True)
 
-    # Collect skills from both sources (customized overwrites builtin)
-    skills_to_sync = _collect_skills_from_dir(builtin_skills)
-    if not skills_to_sync and not builtin_skills.exists():
-        logger.warning(
-            "Built-in skills directory not found: %s",
-            builtin_skills,
-        )
-
-    # Customized skills override builtin with same name
-    skills_to_sync.update(_collect_skills_from_dir(customized_skills))
+    # Collect skills based on source parameter
+    if source == "builtin":
+        # Only sync from builtin, ignore customized
+        skills_to_sync = _collect_skills_from_dir(builtin_skills)
+        if not skills_to_sync and not builtin_skills.exists():
+            logger.warning(
+                "Built-in skills directory not found: %s",
+                builtin_skills,
+            )
+    elif source == "customized":
+        # Only sync from customized
+        skills_to_sync = _collect_skills_from_dir(customized_skills)
+    else:
+        # Default behavior: customized overrides builtin
+        skills_to_sync = _collect_skills_from_dir(builtin_skills)
+        if not skills_to_sync and not builtin_skills.exists():
+            logger.warning(
+                "Built-in skills directory not found: %s",
+                builtin_skills,
+            )
+        # Customized skills override builtin with same name
+        skills_to_sync.update(_collect_skills_from_dir(customized_skills))
 
     # Filter by skill_names if specified
     if skill_names is not None:
@@ -474,6 +491,9 @@ class SkillService:
         """
         List all skills from builtin and customized directories.
 
+        Returns all skills without deduplication, so builtin and customized
+        skills with the same name will both be returned separately.
+
         Returns:
             List of SkillInfo with name, content, source, and path.
         """
@@ -492,24 +512,25 @@ class SkillService:
                 e,
             )
 
-        # Use dict to deduplicate by skill name, customized takes precedence
-        skills: dict[str, SkillInfo] = {}
+        skills: list[SkillInfo] = []
 
-        # Add builtin skills first
-        for skill in _read_skills_from_dir(
-            get_builtin_skills_dir(),
-            "builtin",
-        ):
-            skills[skill.name] = skill
+        # Add builtin skills
+        skills.extend(
+            _read_skills_from_dir(
+                get_builtin_skills_dir(),
+                "builtin",
+            ),
+        )
 
-        # Add customized skills (overrides builtin with same name)
-        for skill in _read_skills_from_dir(
-            get_customized_skills_dir(),
-            "customized",
-        ):
-            skills[skill.name] = skill
+        # Add customized skills (not overriding builtin, return separately)
+        skills.extend(
+            _read_skills_from_dir(
+                get_customized_skills_dir(),
+                "customized",
+            ),
+        )
 
-        return list(skills.values())
+        return skills
 
     @staticmethod
     def list_available_skills() -> list[SkillInfo]:
@@ -695,18 +716,22 @@ class SkillService:
             return False
 
     @staticmethod
-    def enable_skill(name: str, force: bool = False) -> bool:
+    def enable_skill(name: str, source: str | None = None, force: bool = False) -> bool:
         """
         Enable a skill by syncing it to active_skills directory.
 
         Args:
             name: Skill name to enable.
+            source: Source to enable from. Options:
+                - None: Default behavior, customized overrides builtin
+                - "builtin": Only enable from builtin_skills
+                - "customized": Only enable from customized_skills
             force: If True, overwrite existing skill in active_skills.
 
         Returns:
             True if skill was enabled successfully, False otherwise.
         """
-        sync_skills_to_working_dir(skill_names=[name], force=force)
+        sync_skills_to_working_dir(skill_names=[name], force=force, source=source)
         # Check if skill was actually synced
         active_dir = get_active_skills_dir()
         return (active_dir / name).exists()
