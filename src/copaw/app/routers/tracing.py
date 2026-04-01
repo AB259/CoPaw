@@ -5,9 +5,12 @@ Provides REST API endpoints for tracing analytics.
 """
 from datetime import datetime, timedelta
 from typing import Optional
+import io
+import csv
 import logging
 
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import StreamingResponse
 
 from ...tracing import get_trace_manager, TracingConfig
 from ...tracing.models import (
@@ -18,6 +21,7 @@ from ...tracing.models import (
     TraceDetail,
     SessionListItem,
     SessionStats,
+    UserMessageItem,
 )
 
 router = APIRouter(prefix="/tracing", tags=["tracing"])
@@ -68,6 +72,8 @@ async def get_users(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     user_id: Optional[str] = Query(None, description="Filter by user ID (partial match)"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
 ) -> dict:
     """Get list of users with their statistics.
 
@@ -75,6 +81,8 @@ async def get_users(
         page: Page number
         page_size: Page size
         user_id: Filter by user ID
+        start_date: Start date filter
+        end_date: End date filter
 
     Returns:
         Paginated list of users with stats
@@ -84,7 +92,23 @@ async def get_users(
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
-    users, total = await manager.get_users(page, page_size, user_id)
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)  # Include the end date
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    users, total = await manager.get_users(page, page_size, user_id, start, end)
     return {
         "items": [u.model_dump() for u in users],
         "total": total,
@@ -371,3 +395,236 @@ async def get_session_stats(
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
     return await manager.get_session_stats(session_id, start, end)
+
+
+@router.get("/user-messages", response_model=dict)
+async def get_user_messages(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    session_id: Optional[str] = Query(None, description="Filter by session ID"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    query: Optional[str] = Query(None, description="Search in user message content"),
+) -> dict:
+    """Get user messages with token info for cost analysis.
+
+    Args:
+        page: Page number
+        page_size: Page size
+        user_id: Filter by user ID
+        session_id: Filter by session ID
+        start_date: Start date filter
+        end_date: End date filter
+        query: Search in user message content (partial match)
+
+    Returns:
+        Paginated list of user messages with token usage
+    """
+    try:
+        manager = get_trace_manager()
+    except RuntimeError:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    messages, total = await manager.get_user_messages(
+        page=page,
+        page_size=page_size,
+        user_id=user_id,
+        session_id=session_id,
+        start_date=start,
+        end_date=end,
+        query=query,
+        export=False,
+    )
+    return {
+        "items": [m.model_dump() for m in messages],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/user-messages/export")
+async def export_user_messages(
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    session_id: Optional[str] = Query(None, description="Filter by session ID"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    query: Optional[str] = Query(None, description="Search in user message content"),
+    format: str = Query("xlsx", description="Export format: csv, json or xlsx"),
+) -> StreamingResponse:
+    """Export user messages with token info for cost analysis.
+
+    Args:
+        user_id: Filter by user ID
+        session_id: Filter by session ID
+        start_date: Start date filter
+        end_date: End date filter
+        query: Search in user message content (partial match)
+        format: Export format (csv, json or xlsx)
+
+    Returns:
+        StreamingResponse with exported data
+    """
+    try:
+        manager = get_trace_manager()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Tracing not available")
+
+    start = None
+    end = None
+
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    messages, _ = await manager.get_user_messages(
+        page=1,
+        page_size=1,  # Ignored in export mode
+        user_id=user_id,
+        session_id=session_id,
+        start_date=start,
+        end_date=end,
+        query=query,
+        export=True,
+    )
+
+    if format == "json":
+        import json
+        data = [m.model_dump() for m in messages]
+        # Convert datetime to string for JSON serialization
+        for item in data:
+            if item.get("start_time"):
+                item["start_time"] = item["start_time"].isoformat()
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=user_messages_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            },
+        )
+    elif format == "xlsx":
+        # Excel format
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "User Messages"
+
+        # Header style
+        header_font = Font(bold=True)
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font_white = Font(bold=True, color="FFFFFF")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Write header
+        headers = [
+            "Trace ID", "User ID", "Session ID", "Channel", "User Message",
+            "Input Tokens", "Output Tokens", "Model Name", "Start Time", "Duration (ms)"
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+
+        # Write data
+        for row, m in enumerate(messages, 2):
+            ws.cell(row=row, column=1, value=m.trace_id).border = thin_border
+            ws.cell(row=row, column=2, value=m.user_id).border = thin_border
+            ws.cell(row=row, column=3, value=m.session_id).border = thin_border
+            ws.cell(row=row, column=4, value=m.channel).border = thin_border
+            # Wrap text for user message
+            msg_cell = ws.cell(row=row, column=5, value=m.user_message or "")
+            msg_cell.border = thin_border
+            msg_cell.alignment = Alignment(wrap_text=True, vertical="top")
+            ws.cell(row=row, column=6, value=m.input_tokens).border = thin_border
+            ws.cell(row=row, column=7, value=m.output_tokens).border = thin_border
+            ws.cell(row=row, column=8, value=m.model_name or "").border = thin_border
+            ws.cell(row=row, column=9, value=m.start_time.isoformat() if m.start_time else "").border = thin_border
+            ws.cell(row=row, column=10, value=m.duration_ms or "").border = thin_border
+
+        # Auto-adjust column widths
+        column_widths = [36, 20, 36, 15, 60, 12, 12, 25, 22, 12]
+        for col, width in enumerate(column_widths, 1):
+            ws.column_dimensions[get_column_letter(col)].width = width
+
+        # Save to bytes
+        excel_buffer = io.BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+
+        return StreamingResponse(
+            iter([excel_buffer.getvalue()]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename=user_messages_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            },
+        )
+    else:
+        # CSV format
+        output = io.StringIO()
+        writer = csv.writer(output)
+        # Write header
+        writer.writerow([
+            "trace_id", "user_id", "session_id", "channel", "user_message",
+            "input_tokens", "output_tokens", "model_name", "start_time", "duration_ms"
+        ])
+        # Write data
+        for m in messages:
+            writer.writerow([
+                m.trace_id,
+                m.user_id,
+                m.session_id,
+                m.channel,
+                m.user_message or "",
+                m.input_tokens,
+                m.output_tokens,
+                m.model_name or "",
+                m.start_time.isoformat() if m.start_time else "",
+                m.duration_ms or "",
+            ])
+        content = output.getvalue()
+        return StreamingResponse(
+            iter([content]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=user_messages_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            },
+        )
+

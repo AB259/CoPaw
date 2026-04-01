@@ -252,6 +252,7 @@ class AgentRunner(Runner):
                     user_id=user_id,
                     session_id=session_id,
                     channel=channel,
+                    user_message=query,
                 )
             except RuntimeError:
                 # Tracing not initialized

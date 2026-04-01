@@ -176,7 +176,7 @@ export default function TracesPage() {
       title: t("analytics.traceId", "Trace ID"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 120,
+      width: 100,
       render: (v) => (
         <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
           {v.slice(0, 8)}...
@@ -208,27 +208,26 @@ export default function TracesPage() {
       title: t("analytics.model", "Model"),
       dataIndex: "model_name",
       key: "model_name",
-      width: 120,
       ellipsis: true,
     },
     {
       title: t("analytics.tokens", "Tokens"),
       dataIndex: "total_tokens",
       key: "total_tokens",
-      width: 100,
+      width: 80,
       render: (v) => formatTokens(v),
     },
     {
       title: t("analytics.skills", "Skills"),
       dataIndex: "skills_count",
       key: "skills_count",
-      width: 80,
+      width: 60,
     },
     {
       title: t("analytics.status", "Status"),
       dataIndex: "status",
       key: "status",
-      width: 100,
+      width: 90,
       render: (v) => <Tag color={getStatusColor(v)}>{v}</Tag>,
     },
   ];
@@ -276,7 +275,6 @@ export default function TracesPage() {
           columns={columns}
           rowKey="trace_id"
           loading={loading}
-          scroll={{ x: 850 }}
           pagination={{
             current: page,
             pageSize,

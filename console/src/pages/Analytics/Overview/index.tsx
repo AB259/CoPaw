@@ -191,8 +191,6 @@ export default function OverviewPage() {
     );
   }
 
-  const hasMCPTools = stats.top_mcp_tools && stats.top_mcp_tools.length > 0;
-
   return (
     <div className={styles.overviewPage}>
       <div className={styles.header}>
@@ -207,8 +205,9 @@ export default function OverviewPage() {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title={t("analytics.onlineUsers", "Online Users")}
+              title={t("analytics.users", "Users")}
               value={stats.online_users}
+              suffix={<span style={{ fontSize: 14, color: "#999" }}> / {stats.total_users} ({stats.total_users > 0 ? Math.round((stats.online_users / stats.total_users) * 100) : 0}%)</span>}
               prefix={<Users size={20} />}
               valueStyle={{ color: "#52c41a" }}
             />
@@ -245,9 +244,10 @@ export default function OverviewPage() {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }} className={styles.tableRow}>
         <Col xs={24} lg={12}>
           <Card
+            className={styles.tableCard}
             title={
               <span>
                 <Cpu size={16} style={{ marginRight: 8 }} />
@@ -266,6 +266,7 @@ export default function OverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <Card
+            className={styles.tableCard}
             title={
               <span>
                 <BookOpen size={16} style={{ marginRight: 8 }} />
@@ -291,13 +292,13 @@ export default function OverviewPage() {
             title={
               <span>
                 <Plug size={16} style={{ marginRight: 8 }} />
-                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} servers)
+                {t("analytics.mcpToolCalls", "MCP Tool Calls")} ({stats.mcp_servers?.length || 0} 个)
               </span>
             }
           >
-            {hasMCPTools ? (
-              <Collapse defaultActiveKey={stats.mcp_servers?.slice(0, 3).map((_, i) => `server-${i}`) || []}>
-                {stats.mcp_servers?.map((server, idx) => (
+            {stats.mcp_servers && stats.mcp_servers.length > 0 ? (
+              <Collapse defaultActiveKey={stats.mcp_servers.slice(0, 3).map((_, i) => `server-${i}`)}>
+                {stats.mcp_servers.map((server, idx) => (
                   <Panel
                     key={`server-${idx}`}
                     header={
@@ -336,7 +337,7 @@ export default function OverviewPage() {
             title={
               <span>
                 <Wrench size={16} style={{ marginRight: 8 }} />
-                {t("analytics.topTools", "Top Tools")} (Non-MCP)
+                {t("analytics.topTools", "Top Tools")} (非MCP)
               </span>
             }
           >

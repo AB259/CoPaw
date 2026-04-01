@@ -148,6 +148,7 @@ export interface Trace {
   skills_used: string[];
   status: string;
   error: string | null;
+  user_message: string | null;
 }
 
 export interface Span {
@@ -176,6 +177,19 @@ export interface ToolCall {
   error: string | null;
 }
 
+export interface UserMessageItem {
+  trace_id: string;
+  user_id: string;
+  session_id: string;
+  channel: string;
+  user_message: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  model_name: string | null;
+  start_time: string;
+  duration_ms: number | null;
+}
+
 // API functions
 export const tracingApi = {
   getOverview: async (startDate?: string, endDate?: string): Promise<OverviewStats> => {
@@ -188,12 +202,20 @@ export const tracingApi = {
   getUsers: async (
     page = 1,
     pageSize = 20,
-    userId?: string
+    filters?: {
+      user_id?: string;
+      start_date?: string;
+      end_date?: string;
+    }
   ): Promise<{ items: UserListItem[]; total: number; page: number; page_size: number }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
-    if (userId) params.append("user_id", userId);
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
     return request(`/tracing/users?${params.toString()}`);
   },
 
@@ -274,5 +296,59 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/tracing/sessions/${encodeURIComponent(sessionId)}${query}`);
+  },
+
+  getUserMessages: async (
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      user_id?: string;
+      session_id?: string;
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+    }
+  ): Promise<{ items: UserMessageItem[]; total: number; page: number; page_size: number }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/tracing/user-messages?${params.toString()}`);
+  },
+
+  exportUserMessages: async (
+    filters?: {
+      user_id?: string;
+      session_id?: string;
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+    },
+    format: string = "xlsx"
+  ): Promise<Blob> => {
+    const params = new URLSearchParams();
+    params.append("format", format);
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    // Use the proper API URL and include authorization token
+    const { getApiUrl, getApiToken } = await import("../config");
+    const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
+    const token = getApiToken();
+    const headers: HeadersInit = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+    }
+    return response.blob();
   },
 };

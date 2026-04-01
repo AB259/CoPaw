@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import OverviewPage from "./Overview";
 import UsersPage from "./Users";
 import SessionsPage from "./Sessions";
+import MessagesPage from "./Messages";
 
 export default function AnalyticsPage() {
   return (
@@ -10,6 +11,7 @@ export default function AnalyticsPage() {
       <Route path="overview" element={<OverviewPage />} />
       <Route path="users" element={<UsersPage />} />
       <Route path="sessions" element={<SessionsPage />} />
+      <Route path="messages" element={<MessagesPage />} />
     </Routes>
   );
 }

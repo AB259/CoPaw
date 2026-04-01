@@ -35,61 +35,45 @@
   }
 }
 
-/* 主从布局 */
-.masterDetail {
-  flex: 1;
-  display: flex;
-  gap: 16px;
-  overflow: hidden;
+.emptyTable {
+  :global {
+    .copaw-table-cell {
+      border-bottom: none !important;
+    }
+  }
 }
 
-.masterPanel {
-  flex: 1;
-  min-width: 0;
+/* 抽屉内容 */
+.drawerLoading {
   display: flex;
-  flex-direction: column;
-}
-
-.detailPanel {
-  width: 480px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  background: #fff;
-  overflow: hidden;
-}
-
-.detailHeader {
-  padding: 16px 20px;
-  border-bottom: 1px solid #e8e8e8;
-  display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  background: #fafafa;
+  height: 200px;
+}
 
-  h3 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
+.drawerContent {
+  .section {
+    margin-top: 24px;
+
+    h4 {
+      margin-bottom: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #333;
+    }
+  }
+
+  .tagList {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
   }
 }
 
-.detailBody {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
-}
-
-/* 会话详情 */
-.sessionInfo {
-  margin-bottom: 20px;
-}
-
+/* 统计卡片 */
 .statsRow {
   display: flex;
   gap: 16px;
@@ -116,33 +100,7 @@
   }
 }
 
-.section {
-  margin-top: 20px;
-
-  h4 {
-    margin-bottom: 12px;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #333;
-  }
-}
-
-.tagList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 /* 对话列表 */
-.tracesSection {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid #e8e8e8;
-}
-
 .tracesList {
   max-height: 300px;
   overflow-y: auto;
@@ -187,26 +145,37 @@
   color: #888;
 }
 
-/* 空状态 */
-.emptyDetail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #999;
-  padding: 40px;
-  text-align: center;
-
-  p {
-    margin-top: 16px;
-  }
-}
-
 /* 加载状态 */
 .loading {
   display: flex;
   justify-content: center;
   align-items: center;
   height: 200px;
+}
+
+/* 用户输入 */
+.userMessageSection {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f6f8fa;
+  border-radius: 6px;
+  border-left: 3px solid #1890ff;
+
+  h4 {
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #333;
+  }
+}
+
+.userMessageContent {
+  font-size: 13px;
+  color: #333;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

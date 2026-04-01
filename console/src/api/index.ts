@@ -18,6 +18,7 @@ import { localModelApi } from "./modules/localModel";
 import { ollamaModelApi } from "./modules/ollamaModel";
 import { mcpApi } from "./modules/mcp";
 import { tracingApi } from "./modules/tracing";
+import { instanceApi } from "./modules/instance";
 
 export const api = {
   // Root
@@ -64,6 +65,9 @@ export const api = {
 
   // Tracing Analytics
   ...tracingApi,
+
+  // Instance Management
+  ...instanceApi,
 };
 
 export default api;
