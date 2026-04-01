@@ -7,11 +7,23 @@ import json
 import os
 import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from copaw.constant import DEFAULT_WORKING_DIR
 from .models import BackupTask, BackupTaskStatus, BackupTaskType
+
+
+def _normalize_datetime(dt: datetime) -> datetime:
+    """Normalize datetime to UTC for comparison.
+
+    Handles both offset-naive and offset-aware datetimes.
+    """
+    if dt.tzinfo is None:
+        # Assume naive datetime is in UTC
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class TaskStore:
@@ -91,8 +103,8 @@ class TaskStore:
                 t for t in result if t.task_type == BackupTaskType(task_type)
             ]
 
-        # Sort by created_at desc
-        result.sort(key=lambda t: t.created_at, reverse=True)
+        # Sort by created_at desc (handle mixed timezone-aware/naive datetimes)
+        result.sort(key=lambda t: _normalize_datetime(t.created_at), reverse=True)
         return result[:limit]
 
     def has_running_task(self) -> bool:
