@@ -148,6 +148,7 @@ export interface Trace {
   skills_used: string[];
   status: string;
   error: string | null;
+  user_message: string | null;
 }
 
 export interface Span {

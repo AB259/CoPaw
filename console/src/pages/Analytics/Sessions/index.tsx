@@ -20,6 +20,7 @@ import {
   Cpu,
   Zap,
   Plug,
+  User,
 } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -414,6 +415,19 @@ export default function SessionsPage() {
             {/* 对话详情 */}
             {selectedTrace && traceDetail && (
               <div className={styles.section}>
+                {/* 用户输入 */}
+                {traceDetail.trace.user_message && (
+                  <div className={styles.userMessageSection}>
+                    <h4>
+                      <User size={14} />
+                      {t("analytics.userInput", "User Input")}
+                    </h4>
+                    <div className={styles.userMessageContent}>
+                      {traceDetail.trace.user_message}
+                    </div>
+                  </div>
+                )}
+
                 <h4>
                   <Clock size={14} />
                   {t("analytics.traceTimeline", "Trace Timeline")}

@@ -552,6 +552,7 @@
     "selectSession": "选择会话查看详情",
     "noTraces": "暂无对话记录",
     "traceTimeline": "对话时间线",
+    "userInput": "用户输入",
     "close": "关闭",
     "mcpToolCalls": "MCP工具调用",
     "mcpServer": "MCP服务器",

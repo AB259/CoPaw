@@ -552,6 +552,7 @@
     "selectSession": "Select a session to view details",
     "noTraces": "No traces",
     "traceTimeline": "Trace Timeline",
+    "userInput": "User Input",
     "close": "Close",
     "mcpToolCalls": "MCP Tool Calls",
     "mcpServer": "MCP Server",
