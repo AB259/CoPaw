@@ -163,6 +163,10 @@ export const instanceApi = {
   },
 
   // Allocations
+  getUserIds: async (): Promise<string[]> => {
+    return request("/instance/user-ids");
+  },
+
   getAllocations: async (params?: {
     user_id?: string;
     source_id?: string;

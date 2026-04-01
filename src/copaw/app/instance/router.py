@@ -145,6 +145,17 @@ async def delete_instance(instance_id: str):
 # ==================== User allocation ====================
 
 
+@router.get("/user-ids", response_model=list[str])
+async def get_user_ids():
+    """Get list of all user IDs from allocations.
+
+    Returns:
+        List of all unique user IDs with active status
+    """
+    service = get_service()
+    return await service.store.get_user_ids()
+
+
 @router.get("/allocations", response_model=AllocationListResponse)
 async def list_allocations(
     user_id: Optional[str] = Query(None, description="Filter by user ID (partial match)"),

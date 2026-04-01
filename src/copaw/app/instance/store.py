@@ -483,6 +483,18 @@ class InstanceStore:
             return allocations, total
         return [], 0
 
+    async def get_user_ids(self) -> list[str]:
+        """Get all unique user IDs from allocations.
+
+        Returns:
+            List of unique user IDs
+        """
+        if self._use_db:
+            query = "SELECT DISTINCT user_id FROM swe_instance_user WHERE status = 'active' ORDER BY user_id"
+            rows = await self.db.fetch_all(query)
+            return [row["user_id"] for row in rows]
+        return []
+
     async def update_allocation_instance(
         self,
         user_id: str,
