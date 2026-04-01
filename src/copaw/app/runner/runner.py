@@ -20,7 +20,7 @@ from .command_dispatch import (
 )
 from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
-from .utils import build_env_context
+from .utils import build_env_context, ensure_reme_safe_markdown_paths
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.memory import MemoryManager
 from ...agents.model_factory import create_model_and_formatter
@@ -37,6 +37,8 @@ from ...constant import (
     reset_request_user_id,
     get_request_working_dir,
     get_request_user_id,
+    set_request_cookies,
+    reset_request_cookies,
 )
 from ...tracing import (
     TracingConfig,
@@ -126,6 +128,12 @@ class AgentRunner(Runner):
                 max_input_length=config.agents.running.max_input_length,
                 memory_compact_ratio=MEMORY_COMPACT_RATIO,
             )
+            renamed_paths = ensure_reme_safe_markdown_paths(working_dir)
+            if renamed_paths:
+                logger.warning(
+                    "Sanitized %d ReMe-scanned path(s) before MemoryManager.start()",
+                    len(renamed_paths),
+                )
             await mm.start()
             self._memory_manager_cache[user_id] = mm
             logger.info(
@@ -173,6 +181,10 @@ class AgentRunner(Runner):
         ) or get_request_user_id()
         user_token = set_request_user_id(user_id)
 
+        # Set request cookies for browser automation
+        cookies = getattr(request, "cookies", None) if request else None
+        cookie_token = set_request_cookies(cookies)
+
         # Auto-initialize user directory if this is a new user.
         # Channel requests bypass HTTP middleware, so initialization
         # happens here. HTTP requests already initialized in middleware.
@@ -209,6 +221,7 @@ class AgentRunner(Runner):
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
+                reset_request_cookies(cookie_token)
 
         agent = None
         chat = None
@@ -418,6 +431,7 @@ class AgentRunner(Runner):
             finally:
                 # Always restore previous context
                 reset_request_user_id(user_token)
+                reset_request_cookies(cookie_token)
 
     async def init_handler(self, *args, **kwargs):
         """

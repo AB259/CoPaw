@@ -13,6 +13,8 @@ export interface OverviewStats {
   avg_duration_ms: number;
   top_tools: ToolUsage[];
   top_skills: SkillUsage[];
+  top_mcp_tools: MCPToolUsage[];
+  mcp_servers: MCPServerUsage[];
   daily_trend: DailyStats[];
 }
 
@@ -34,6 +36,23 @@ export interface ToolUsage {
 export interface SkillUsage {
   skill_name: string;
   count: number;
+}
+
+export interface MCPToolUsage {
+  tool_name: string;
+  mcp_server: string;
+  count: number;
+  avg_duration_ms: number;
+  error_count: number;
+}
+
+export interface MCPServerUsage {
+  server_name: string;
+  tool_count: number;
+  total_calls: number;
+  avg_duration_ms: number;
+  error_count: number;
+  tools: MCPToolUsage[];
 }
 
 export interface DailyStats {
@@ -75,7 +94,35 @@ export interface TraceListItem {
   total_tokens: number;
   model_name: string | null;
   status: string;
-  tools_count: number;
+  skills_count: number;
+}
+
+export interface SessionListItem {
+  session_id: string;
+  user_id: string;
+  channel: string;
+  total_traces: number;
+  total_tokens: number;
+  total_skills: number;
+  first_active: string | null;
+  last_active: string | null;
+}
+
+export interface SessionStats {
+  session_id: string;
+  user_id: string;
+  channel: string;
+  model_usage: ModelUsage[];
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_traces: number;
+  avg_duration_ms: number;
+  tools_used: ToolUsage[];
+  skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
+  first_active: string | null;
+  last_active: string | null;
 }
 
 export interface TraceDetail {
@@ -198,5 +245,34 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/tracing/tools${query}`);
+  },
+
+  getSessions: async (
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      user_id?: string;
+      session_id?: string;
+      start_date?: string;
+      end_date?: string;
+    }
+  ): Promise<{ items: SessionListItem[]; total: number; page: number; page_size: number }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/tracing/sessions?${params.toString()}`);
+  },
+
+  getSessionStats: async (sessionId: string, startDate?: string, endDate?: string): Promise<SessionStats> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/tracing/sessions/${encodeURIComponent(sessionId)}${query}`);
   },
 };

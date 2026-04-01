@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 import json
+import logging
+import os
+import re
+import unicodedata
+import uuid
+from pathlib import Path
 from typing import Optional, Union, List
 from urllib.parse import urlparse
+
 from agentscope.message import Msg
 from agentscope_runtime.engine.schemas.agent_schemas import (
     Message,
@@ -14,6 +21,140 @@ from ...local_models.tag_parser import (
     extract_thinking_from_text,
     text_contains_think_tag,
 )
+
+logger = logging.getLogger(__name__)
+
+_SAFE_REME_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _is_utf8_safe(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _normalize_ascii_name(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text)
+    ascii_text = normalized.encode("ascii", errors="ignore").decode("ascii")
+    ascii_text = _SAFE_REME_NAME_RE.sub("_", ascii_text).strip("._-")
+    return ascii_text
+
+
+def _decode_surrogate_name(raw_name: str) -> str | None:
+    raw_bytes = os.fsencode(raw_name)
+    for encoding in ("gb18030", "gbk", "big5"):
+        try:
+            decoded = raw_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if _is_utf8_safe(decoded):
+            return decoded
+    return None
+
+
+def _to_pinyin_if_possible(text: str) -> str | None:
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return None
+
+    parts = [
+        _normalize_ascii_name(piece)
+        for piece in lazy_pinyin(text, errors="ignore")
+    ]
+    parts = [piece for piece in parts if piece]
+    if not parts:
+        return None
+    return "_".join(parts)
+
+
+def _build_safe_reme_name(path: Path) -> str:
+    suffix = "".join(path.suffixes)
+    stem = path.name[: -len(suffix)] if suffix else path.name
+    decoded_stem = _decode_surrogate_name(stem) if not _is_utf8_safe(stem) else stem
+
+    candidate_stem = ""
+    if decoded_stem and _contains_cjk(decoded_stem):
+        candidate_stem = _to_pinyin_if_possible(decoded_stem) or ""
+
+    if not candidate_stem and decoded_stem and _is_utf8_safe(decoded_stem):
+        candidate_stem = _normalize_ascii_name(decoded_stem)
+
+    if not candidate_stem:
+        candidate_stem = f"md_{uuid.uuid4().hex[:12]}"
+
+    candidate_stem = candidate_stem.strip("._-") or f"md_{uuid.uuid4().hex[:12]}"
+    return f"{candidate_stem}{suffix}"
+
+
+def _dedupe_path(parent: Path, candidate_name: str) -> Path:
+    candidate = parent / candidate_name
+    if not candidate.exists():
+        return candidate
+
+    suffix = "".join(candidate.suffixes)
+    stem = (
+        candidate_name[: -len(suffix)] if suffix else candidate_name
+    ).rstrip("._-") or f"md_{uuid.uuid4().hex[:8]}"
+    for idx in range(1, 1000):
+        deduped = parent / f"{stem}_{idx}{suffix}"
+        if not deduped.exists():
+            return deduped
+
+    return parent / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+
+
+def _iter_reme_paths(working_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for filename in ("MEMORY.md", "memory.md"):
+        path = working_dir / filename
+        if path.exists():
+            candidates.append(path)
+
+    memory_dir = working_dir / "memory"
+    if memory_dir.exists():
+        files = [path for path in memory_dir.rglob("*.md") if path.is_file()]
+        directories = sorted(
+            [path for path in memory_dir.rglob("*") if path.is_dir()],
+            key=lambda p: len(p.parts),
+            reverse=True,
+        )
+        candidates.extend(files)
+        candidates.extend(directories)
+    return candidates
+
+
+def ensure_reme_safe_markdown_paths(
+    working_dir: Path,
+) -> list[tuple[Path, Path]]:
+    """Rename ReMe-scanned paths whose names cannot be UTF-8 encoded.
+
+    ReMe hashes source metadata using ``text.encode("utf-8")`` and will crash
+    if any path segment contains surrogate escapes. This helper only touches
+    the memory files/directories that ReMe is expected to watch.
+    """
+    renamed: list[tuple[Path, Path]] = []
+    for path in _iter_reme_paths(working_dir):
+        if _is_utf8_safe(path.name):
+            continue
+
+        new_name = _build_safe_reme_name(path)
+        new_path = _dedupe_path(path.parent, new_name)
+        path.rename(new_path)
+        renamed.append((path, new_path))
+        logger.warning(
+            "Renamed ReMe-scanned path with invalid UTF-8 name: %r -> %s",
+            str(path),
+            new_path,
+        )
+
+    return renamed
 
 
 def build_env_context(
@@ -84,66 +225,67 @@ def agentscope_msg_to_message(
 
     results: List[Message] = []
 
+    def _append_text_and_reasoning(
+        *,
+        role: str,
+        text: str,
+        metadata: dict,
+    ) -> None:
+        if text and text_contains_think_tag(text):
+            parsed = extract_thinking_from_text(text)
+            if parsed.thinking:
+                rb = ResponseBuilder()
+                mb = rb.create_message_builder(
+                    role=role,
+                    message_type=MessageType.REASONING,
+                )
+                mb.message.metadata = metadata
+                cb = mb.create_content_builder(content_type="text")
+                cb.set_text(parsed.thinking)
+                cb.complete()
+                mb.complete()
+                results.append(mb.get_message_data())
+
+            if parsed.remaining_text:
+                rb = ResponseBuilder()
+                mb = rb.create_message_builder(
+                    role=role,
+                    message_type=MessageType.MESSAGE,
+                )
+                mb.message.metadata = metadata
+                cb = mb.create_content_builder(content_type="text")
+                cb.set_text(parsed.remaining_text)
+                cb.complete()
+                mb.complete()
+                results.append(mb.get_message_data())
+            return
+
+        rb = ResponseBuilder()
+        mb = rb.create_message_builder(
+            role=role,
+            message_type=MessageType.MESSAGE,
+        )
+        mb.message.metadata = metadata
+        cb = mb.create_content_builder(content_type="text")
+        cb.set_text(text)
+        cb.complete()
+        mb.complete()
+        results.append(mb.get_message_data())
+
     for msg in msgs:
         role = msg.role or "assistant"
+        metadata = {
+            "original_id": msg.id,
+            "original_name": msg.name,
+            "metadata": msg.metadata,
+        }
 
         if isinstance(msg.content, str):
-            # Only text - check for thinking tags
-            text = msg.content
-            if text_contains_think_tag(text):
-                parsed = extract_thinking_from_text(text)
-                # Add thinking block if present
-                if parsed.thinking:
-                    rb = ResponseBuilder()
-                    mb = rb.create_message_builder(
-                        role=role,
-                        message_type=MessageType.REASONING,
-                    )
-                    mb.message.metadata = {
-                        "original_id": msg.id,
-                        "original_name": msg.name,
-                        "metadata": msg.metadata,
-                    }
-                    cb = mb.create_content_builder(content_type="text")
-                    cb.set_text(parsed.thinking)
-                    cb.complete()
-                    mb.complete()
-                    results.append(mb.get_message_data())
-                # Add remaining text if present
-                if parsed.remaining_text:
-                    rb = ResponseBuilder()
-                    mb = rb.create_message_builder(
-                        role=role,
-                        message_type=MessageType.MESSAGE,
-                    )
-                    mb.message.metadata = {
-                        "original_id": msg.id,
-                        "original_name": msg.name,
-                        "metadata": msg.metadata,
-                    }
-                    cb = mb.create_content_builder(content_type="text")
-                    cb.set_text(parsed.remaining_text)
-                    cb.complete()
-                    mb.complete()
-                    results.append(mb.get_message_data())
-                continue
-            # No thinking tags - original logic
-            rb = ResponseBuilder()
-            mb = rb.create_message_builder(
+            _append_text_and_reasoning(
                 role=role,
-                message_type=MessageType.MESSAGE,
+                text=msg.content,
+                metadata=metadata,
             )
-            # add meta field to store old id and name
-            mb.message.metadata = {
-                "original_id": msg.id,
-                "original_name": msg.name,
-                "metadata": msg.metadata,
-            }
-            cb = mb.create_content_builder(content_type="text")
-            cb.set_text(msg.content)
-            cb.complete()
-            mb.complete()
-            results.append(mb.get_message_data())
             continue
 
         # msg.content is a list of blocks
@@ -214,12 +356,22 @@ def agentscope_msg_to_message(
                         message_type=MessageType.MESSAGE,
                     )
                     # add meta field to store old id and name
-                    current_mb.message.metadata = {
-                        "original_id": msg.id,
-                        "original_name": msg.name,
-                        "metadata": msg.metadata,
-                    }
+                    current_mb.message.metadata = metadata
                     current_type = MessageType.MESSAGE
+                text = block.get("text", "")
+                if text and text_contains_think_tag(text):
+                    if current_mb:
+                        current_mb.complete()
+                        results.append(current_mb.get_message_data())
+                        current_mb = None
+                        current_type = None
+                    _append_text_and_reasoning(
+                        role=role,
+                        text=text,
+                        metadata=metadata,
+                    )
+                    continue
+
                 cb = current_mb.create_content_builder(content_type="text")
                 cb.set_text(text)
                 cb.complete()
@@ -236,11 +388,7 @@ def agentscope_msg_to_message(
                         message_type=MessageType.REASONING,
                     )
                     # add meta field to store old id and name
-                    current_mb.message.metadata = {
-                        "original_id": msg.id,
-                        "original_name": msg.name,
-                        "metadata": msg.metadata,
-                    }
+                    current_mb.message.metadata = metadata
                     current_type = MessageType.REASONING
                 cb = current_mb.create_content_builder(content_type="text")
                 cb.set_text(block.get("thinking", ""))
@@ -257,11 +405,7 @@ def agentscope_msg_to_message(
                     message_type=MessageType.PLUGIN_CALL,
                 )
                 # add meta field to store old id and name
-                current_mb.message.metadata = {
-                    "original_id": msg.id,
-                    "original_name": msg.name,
-                    "metadata": msg.metadata,
-                }
+                current_mb.message.metadata = metadata
                 current_type = MessageType.PLUGIN_CALL
                 cb = current_mb.create_content_builder(content_type="data")
 
@@ -292,11 +436,7 @@ def agentscope_msg_to_message(
                     message_type=MessageType.PLUGIN_CALL_OUTPUT,
                 )
                 # add meta field to store old id and name
-                current_mb.message.metadata = {
-                    "original_id": msg.id,
-                    "original_name": msg.name,
-                    "metadata": msg.metadata,
-                }
+                current_mb.message.metadata = metadata
                 current_type = MessageType.PLUGIN_CALL_OUTPUT
                 cb = current_mb.create_content_builder(content_type="data")
 
@@ -328,11 +468,7 @@ def agentscope_msg_to_message(
                         message_type=MessageType.MESSAGE,
                     )
                     # add meta field to store old id and name
-                    current_mb.message.metadata = {
-                        "original_id": msg.id,
-                        "original_name": msg.name,
-                        "metadata": msg.metadata,
-                    }
+                    current_mb.message.metadata = metadata
                     current_type = MessageType.MESSAGE
                 cb = current_mb.create_content_builder(content_type="image")
 

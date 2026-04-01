@@ -56,6 +56,10 @@ class Span(BaseModel):
     output_tokens: Optional[int] = Field(default=None, description="Output token count")
     tool_name: Optional[str] = Field(default=None, description="Tool name for tool events")
     skill_name: Optional[str] = Field(default=None, description="Skill name for skill events")
+    mcp_server: Optional[str] = Field(
+        default=None,
+        description="MCP server name if this tool is from MCP",
+    )
     tool_input: Optional[dict[str, Any]] = Field(
         default=None,
         description="Tool input (sanitized)",
@@ -100,35 +104,6 @@ class Trace(BaseModel):
         use_enum_values = True
 
 
-class SpanCreate(BaseModel):
-    """Payload for creating a new span."""
-
-    trace_id: str
-    parent_span_id: Optional[str] = None
-    name: str
-    event_type: EventType
-    user_id: str
-    session_id: str
-    channel: str
-    model_name: Optional[str] = None
-    input_tokens: Optional[int] = None
-    tool_name: Optional[str] = None
-    skill_name: Optional[str] = None
-    tool_input: Optional[dict[str, Any]] = None
-
-
-class SpanUpdate(BaseModel):
-    """Payload for updating an existing span."""
-
-    span_id: str
-    end_time: Optional[datetime] = None
-    duration_ms: Optional[int] = None
-    output_tokens: Optional[int] = None
-    tool_output: Optional[str] = None
-    error: Optional[str] = None
-    metadata: Optional[dict[str, Any]] = None
-
-
 # API Response Models
 
 class ModelUsage(BaseModel):
@@ -156,6 +131,27 @@ class SkillUsage(BaseModel):
     skill_name: str
     count: int = 0
     avg_duration_ms: int = 0
+
+
+class MCPToolUsage(BaseModel):
+    """MCP tool usage statistics."""
+
+    tool_name: str
+    mcp_server: str
+    count: int = 0
+    avg_duration_ms: int = 0
+    error_count: int = 0
+
+
+class MCPServerUsage(BaseModel):
+    """MCP server usage statistics."""
+
+    server_name: str
+    tool_count: int = 0
+    total_calls: int = 0
+    avg_duration_ms: int = 0
+    error_count: int = 0
+    tools: list[MCPToolUsage] = Field(default_factory=list)
 
 
 class DailyStats(BaseModel):
@@ -186,6 +182,8 @@ class OverviewStats(BaseModel):
     avg_duration_ms: int = 0
     top_tools: list[ToolUsage] = Field(default_factory=list)
     top_skills: list[SkillUsage] = Field(default_factory=list)
+    top_mcp_tools: list[MCPToolUsage] = Field(default_factory=list)
+    mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
 
 
@@ -247,4 +245,36 @@ class TraceListItem(BaseModel):
     total_tokens: int = 0
     model_name: Optional[str] = None
     status: str
-    tools_count: int = 0
+    skills_count: int = 0
+
+
+class SessionListItem(BaseModel):
+    """Session list item with stats."""
+
+    session_id: str
+    user_id: str
+    channel: str
+    total_traces: int = 0
+    total_tokens: int = 0
+    total_skills: int = 0
+    first_active: Optional[datetime] = None
+    last_active: Optional[datetime] = None
+
+
+class SessionStats(BaseModel):
+    """Session-specific statistics."""
+
+    session_id: str
+    user_id: str
+    channel: str
+    model_usage: list[ModelUsage] = Field(default_factory=list)
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_traces: int = 0
+    avg_duration_ms: int = 0
+    tools_used: list[ToolUsage] = Field(default_factory=list)
+    skills_used: list[SkillUsage] = Field(default_factory=list)
+    mcp_tools_used: list[MCPToolUsage] = Field(default_factory=list)
+    first_active: Optional[datetime] = None
+    last_active: Optional[datetime] = None

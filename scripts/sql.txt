@@ -13,7 +13,7 @@
   USE copaw_tracing;
 
   -- 会话表
-  CREATE TABLE IF NOT EXISTS traces (
+  CREATE TABLE IF NOT EXISTS swe_tracing_traces (
       trace_id VARCHAR(36) PRIMARY KEY,
       user_id VARCHAR(128) NOT NULL,
       session_id VARCHAR(256) NOT NULL,
@@ -37,7 +37,7 @@
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   -- 操作表
-  CREATE TABLE IF NOT EXISTS spans (
+  CREATE TABLE IF NOT EXISTS swe_tracing_spans (
       span_id VARCHAR(36) PRIMARY KEY,
       trace_id VARCHAR(36) NOT NULL,
       parent_span_id VARCHAR(36),
@@ -54,6 +54,7 @@
       output_tokens INT,
       tool_name VARCHAR(128),
       skill_name VARCHAR(128),
+      mcp_server VARCHAR(128),
       tool_input JSON,
       tool_output TEXT,
       error TEXT,
@@ -63,13 +64,14 @@
       INDEX idx_event_type (event_type),
       INDEX idx_tool_name (tool_name),
       INDEX idx_skill_name (skill_name),
+      INDEX idx_mcp_server (mcp_server),
       INDEX idx_user_id (user_id),
       INDEX idx_start_time (start_time),
-      FOREIGN KEY (trace_id) REFERENCES traces(trace_id) ON DELETE CASCADE
+      FOREIGN KEY (trace_id) REFERENCES swe_tracing_traces(trace_id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   -- 用户每日统计表
-  CREATE TABLE IF NOT EXISTS user_daily_stats (
+  CREATE TABLE IF NOT EXISTS swe_tracing_user_daily_stats (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
       user_id VARCHAR(128) NOT NULL,
       stat_date DATE NOT NULL,
@@ -89,7 +91,7 @@
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   -- 全局每日统计表
-  CREATE TABLE IF NOT EXISTS global_daily_stats (
+  CREATE TABLE IF NOT EXISTS swe_tracing_global_daily_stats (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
       stat_date DATE NOT NULL UNIQUE,
       total_users INT DEFAULT 0,

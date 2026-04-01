@@ -69,7 +69,7 @@ class TracingHook:
             return span_id
         except Exception as e:
             logger.warning("Failed to emit LLM start event: %s", e)
-            return ""
+            return None
 
     async def on_llm_end(
         self,
@@ -102,6 +102,7 @@ class TracingHook:
         tool_name: str,
         tool_input: Optional[dict[str, Any]],
         tool_call_id: Optional[str] = None,
+        mcp_server: Optional[str] = None,
     ) -> str:
         """Called when a tool starts executing.
 
@@ -109,6 +110,7 @@ class TracingHook:
             tool_name: Tool name
             tool_input: Tool input
             tool_call_id: Optional tool call ID for tracking
+            mcp_server: Optional MCP server name if this is an MCP tool
 
         Returns:
             Span ID (empty string if skipped)
@@ -127,6 +129,7 @@ class TracingHook:
                 user_id=self.user_id,
                 session_id=self.session_id,
                 channel=self.channel,
+                mcp_server=mcp_server,
             )
             if tool_call_id:
                 self._tool_spans[tool_call_id] = span_id
@@ -134,7 +137,7 @@ class TracingHook:
             return span_id
         except Exception as e:
             logger.warning("Failed to emit tool start event: %s", e)
-            return ""
+            return None
 
     async def on_tool_end(
         self,
@@ -206,7 +209,7 @@ class TracingHook:
             return span_id
         except Exception as e:
             logger.warning("Failed to emit skill event: %s", e)
-            return ""
+            return None
 
     async def on_skill_end(
         self,
