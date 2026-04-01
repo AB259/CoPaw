@@ -2,11 +2,16 @@
 import logging
 from typing import Any
 from fastapi import APIRouter, HTTPException
+from pathlib import Path
 from pydantic import BaseModel, Field
 from ...agents.skills_manager import (
     SkillService,
     SkillInfo,
     list_available_skills,
+    get_builtin_skills_dir,
+    get_customized_skills_dir,
+    get_active_skills_dir,
+    _is_directory_same,
 )
 from ...agents.skills_hub import (
     search_hub_skills,
@@ -19,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class SkillSpec(SkillInfo):
     enabled: bool = False
+    active_source: str | None = None  # Which source version is currently active
 
 
 class CreateSkillRequest(BaseModel):
@@ -59,13 +65,60 @@ class HubInstallRequest(BaseModel):
 router = APIRouter(prefix="/skills", tags=["skills"])
 
 
+def _get_active_source(skill_name: str) -> str | None:
+    """Determine which source version of a skill is currently active.
+
+    Args:
+        skill_name: Name of the skill to check.
+
+    Returns:
+        "builtin" if builtin version is active,
+        "customized" if customized version is active,
+        None if skill is not active or cannot determine source.
+    """
+    active_dir = get_active_skills_dir()
+    active_skill_dir = active_dir / skill_name
+
+    if not active_skill_dir.exists():
+        return None
+
+    builtin_dir = get_builtin_skills_dir() / skill_name
+    customized_dir = get_customized_skills_dir() / skill_name
+
+    # Check if active matches builtin
+    if builtin_dir.exists() and _is_directory_same(active_skill_dir, builtin_dir):
+        return "builtin"
+
+    # Check if active matches customized
+    if customized_dir.exists() and _is_directory_same(active_skill_dir, customized_dir):
+        return "customized"
+
+    # Active exists but doesn't match either - could be modified version
+    # Return the source that exists (prefer customized if both exist)
+    if customized_dir.exists():
+        return "customized"
+    if builtin_dir.exists():
+        return "builtin"
+
+    return None
+
+
 @router.get("")
 async def list_skills() -> list[SkillSpec]:
     all_skills = SkillService.list_all_skills()
 
-    available_skills = list_available_skills()
+    # Get which source version is active for each skill name
+    active_sources: dict[str, str | None] = {}
+    for skill in all_skills:
+        if skill.name not in active_sources:
+            active_sources[skill.name] = _get_active_source(skill.name)
+
     skills_spec = []
     for skill in all_skills:
+        # Determine enabled status: skill is enabled if its source matches active_source
+        skill_active_source = active_sources.get(skill.name)
+        enabled = skill_active_source == skill.source
+
         skills_spec.append(
             SkillSpec(
                 name=skill.name,
@@ -74,7 +127,8 @@ async def list_skills() -> list[SkillSpec]:
                 path=skill.path,
                 references=skill.references,
                 scripts=skill.scripts,
-                enabled=skill.name in available_skills,
+                enabled=enabled,
+                active_source=skill_active_source,
             ),
         )
     return skills_spec
@@ -174,8 +228,9 @@ async def batch_disable_skills(skill_name: list[str]) -> None:
 
 @router.post("/batch-enable")
 async def batch_enable_skills(skill_name: list[str]) -> None:
+    """Batch enable skills using default behavior (customized overrides builtin)."""
     for skill in skill_name:
-        SkillService.enable_skill(skill)
+        SkillService.enable_skill(skill, force=True)
 
 
 @router.post("")
@@ -196,9 +251,23 @@ async def disable_skill(skill_name: str):
 
 
 @router.post("/{skill_name}/enable")
-async def enable_skill(skill_name: str):
-    result = SkillService.enable_skill(skill_name)
-    return {"enabled": result}
+async def enable_skill(skill_name: str, source: str | None = None):
+    """Enable a skill from a specific source.
+
+    Args:
+        skill_name: Name of the skill to enable.
+        source: Source to enable from. Options:
+            - None (default): customized overrides builtin if both exist
+            - "builtin": Only enable from builtin_skills
+            - "customized": Only enable from customized_skills
+    """
+    if source is not None and source not in ("builtin", "customized"):
+        raise HTTPException(
+            status_code=400,
+            detail="source must be 'builtin' or 'customized'",
+        )
+    result = SkillService.enable_skill(skill_name, source=source, force=True)
+    return {"enabled": result, "source": source}
 
 
 @router.delete("/{skill_name}")

@@ -6,7 +6,6 @@ Exports ``zhaohu_router`` with Zhaohu callback endpoint:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Optional
 
@@ -52,14 +51,23 @@ def _get_zhaohu_channel(request: Request):
     return None
 
 
-def _process_callback_background(channel, body: ZhaohuCallbackRequest) -> None:
+async def _process_callback_background(
+    channel,
+    body: ZhaohuCallbackRequest,
+) -> None:
     """Background task to process callback message.
 
     This runs after the response is returned to the caller.
+    The channel.process_callback_message() method will:
+    1. Set user context via set_request_user_id()
+    2. Query user info (openId -> sapId)
+    3. Load session state from file (conversation history)
+    4. Call LLM with conversation context
+    5. Save session state
+    6. Send response via push_url
     """
     try:
-        # Create new event loop for background task
-        asyncio.run(channel.process_callback_message(body))
+        await channel.process_callback_message(body)
     except Exception:
         logger.exception(
             "zhaohu background processing failed: msgId=%s",
@@ -116,6 +124,7 @@ async def zhaohu_callback(
         )
 
     # Schedule background processing and return immediately
+    # FastAPI will properly await the async function
     background_tasks.add_task(_process_callback_background, zhaohu_ch, body)
 
     return Response(

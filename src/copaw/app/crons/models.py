@@ -83,6 +83,7 @@ class CronJobSpec(BaseModel):
     id: str = ""
     name: str
     enabled: bool = True
+    created_by: str = ""  # User ID of the job creator (for LLM config)
 
     schedule: ScheduleSpec
     task_type: TaskType = "agent"
@@ -101,14 +102,6 @@ class CronJobSpec(BaseModel):
         elif self.task_type == "agent":
             if self.request is None:
                 raise ValueError("task_type is agent but request is missing")
-            # Keep request.user_id and request.session_id in sync with target
-            target = self.dispatch.target
-            self.request = self.request.model_copy(
-                update={
-                    "user_id": target.user_id,
-                    "session_id": target.session_id,
-                },
-            )
         return self
 
 

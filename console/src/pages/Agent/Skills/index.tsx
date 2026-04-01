@@ -209,15 +209,19 @@ function SkillsPage() {
             .sort((a, b) => {
               if (a.enabled && !b.enabled) return -1;
               if (!a.enabled && b.enabled) return 1;
-              return a.name.localeCompare(b.name);
+              // Sort by name first, then by source (builtin before customized)
+              if (a.name !== b.name) return a.name.localeCompare(b.name);
+              if (a.source === "builtin" && b.source === "customized") return -1;
+              if (a.source === "customized" && b.source === "builtin") return 1;
+              return 0;
             })
             .map((skill) => (
               <SkillCard
-                key={skill.name}
+                key={`${skill.name}-${skill.source}`}
                 skill={skill}
-                isHover={hoverKey === skill.name}
+                isHover={hoverKey === `${skill.name}-${skill.source}`}
                 onClick={() => handleEdit(skill)}
-                onMouseEnter={() => setHoverKey(skill.name)}
+                onMouseEnter={() => setHoverKey(`${skill.name}-${skill.source}`)}
                 onMouseLeave={() => setHoverKey(null)}
                 onToggleEnabled={(e) => handleToggleEnabled(skill, e)}
                 onDelete={(e) => handleDelete(skill, e)}

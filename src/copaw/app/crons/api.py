@@ -62,7 +62,11 @@ async def create_job(
     await mgr.ensure_user_started(user_id)
     # Server generates id; ignore client-provided spec.id
     job_id = str(uuid.uuid4())
-    created = spec.model_copy(update={"id": job_id})
+    # Set created_by to the user creating the job (for LLM config)
+    created = spec.model_copy(update={
+        "id": job_id,
+        "created_by": user_id,
+    })
     await mgr.create_or_replace_job(created, user_id)
     return created
 
@@ -79,6 +83,9 @@ async def replace_job(
     await mgr.ensure_user_started(user_id)
     if spec.id != job_id:
         raise HTTPException(status_code=400, detail="job_id mismatch")
+    # Preserve or set created_by
+    if not spec.created_by:
+        spec = spec.model_copy(update={"created_by": user_id})
     await mgr.create_or_replace_job(spec, user_id)
     return spec
 

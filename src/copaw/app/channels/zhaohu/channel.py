@@ -180,30 +180,56 @@ class ZhaohuChannel(BaseChannel):
     ) -> "ZhaohuChannel":
         c = config if isinstance(config, dict) else config.model_dump()
 
-        def _get_str(key: str) -> str:
-            return (c.get(key) or "").strip()
+        def _get_env_str(key: str, default: str = "") -> str:                               
+            """Get string from env (priority) or config."""                                 
+            env_val = os.getenv(key, "")                                                    
+            if env_val:                                                                     
+                return env_val.strip()                                                      
+            return (c.get(key) or default).strip() 
+
+        def _get_env_bool(key: str, default: bool = False) -> bool:
+            """Get string from env (priority) or config."""
+            env_val = os.getenv(key, "")
+            if env_val:
+                return env_val.strip()
+            return (c.get(key) or default).strip()
+
+        def _get_env_float(key: str, default: float) -> float: 
+            """Get float from env (priority) or config."""  
+            env_val = os.getenv(key, "") 
+            if env_val:
+                try: 
+                    return float(env_val)
+                except ValueError: 
+                    pass
+            return float(c.get(key) or default)
+
+        def _get_env_list(key: str, default: Optional[list] = None) -> list: 
+            """Get list from env (comma-separated) or config.""" 
+            env_val = os.getenv(key, "")
+            if env_val: 
+                return [s.strip() for s in env_val.split(",") if s.strip()]
+            return c.get(key) or default or []
 
         return cls(
             process=process,
-            enabled=bool(c.get("enabled", False)),
-            push_url=_get_str("push_url"),
-            sys_id=_get_str("sys_id"),
-            robot_open_id=_get_str("robot_open_id"),
-            channel_code=_get_str("channel") or _DEFAULT_CHANNEL,
-            net=_get_str("net") or _DEFAULT_NET,
-            request_timeout=float(
-                c.get("request_timeout") or _DEFAULT_TIMEOUT,
-            ),
-            bot_prefix=_get_str("bot_prefix"),
-            user_query_url=_get_str("user_query_url"),
+            enabled=_get_env_bool("ZHAOHU_CHANNEL_ENABLED", False), 
+            push_url=_get_env_str("ZHAOHU_PUSH_URL"),
+            sys_id=_get_env_str("ZHAOHU_SYS_ID"), 
+            robot_open_id=_get_env_str("ZHAOHU_ROBOT_OPEN_ID"),
+            channel_code=_get_env_str("ZHAOHU_CHANNEL", _DEFAULT_CHANNEL),
+            net=_get_env_str("ZHAOHU_NET", _DEFAULT_NET),
+            request_timeout=_get_env_float("ZHAOHU_REQUEST_TIMEOUT", _DEFAULT_TIMEOUT),
+            bot_prefix=_get_env_str("ZHAOHU_BOT_PREFIX"),
+            user_query_url=_get_env_str("ZHAOHU_USER_QUERY_URL"),
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
             filter_tool_messages=filter_tool_messages,
             filter_thinking=filter_thinking,
-            dm_policy=c.get("dm_policy") or "open",
-            group_policy=c.get("group_policy") or "open",
-            allow_from=c.get("allow_from") or [],
-            deny_message=c.get("deny_message") or "",
+            dm_policy=_get_env_str("ZHAOHU_DM_POLICY", "open"),
+            group_policy=_get_env_str("ZHAOHU_GROUP_POLICY", "open"),
+            allow_from=_get_env_list("ZHAOHU_ALLOW_FROM"),
+            deny_message=_get_env_str("ZHAOHU_DENY_MESSAGE"),
         )
 
     def resolve_session_id(
@@ -414,6 +440,11 @@ class ZhaohuChannel(BaseChannel):
         3. Send response via push_url
         """
         from agentscope_runtime.engine.schemas.agent_schemas import RunStatus
+        from ....constant import (
+            set_request_user_id,
+            reset_request_user_id,
+            get_request_working_dir,
+        )
 
         msg_id = getattr(callback_body, "msg_id", "") or ""
         from_id = getattr(callback_body, "from_id", "") or ""
@@ -433,9 +464,12 @@ class ZhaohuChannel(BaseChannel):
 
         # Query user info to get sapId from openId
         user_info = await self._query_user_info(from_id)
-        sap_id = (user_info or {}).get("sapId") or from_id
+        sap_id = (user_info or {}).get("sapId") or ""
+        yst_id = (user_info or {}).get("ystId") or ""
         user_name = (user_info or {}).get("userName") or ""
 
+        # Set user context for session state loading
+        user_token = set_request_user_id(sap_id)
         is_group = group_id is not None
 
         # Build meta for send path
@@ -449,68 +483,81 @@ class ZhaohuChannel(BaseChannel):
             "timestamp": timestamp,
             "is_group": is_group,
         }
-        if user_name:
-            meta["user_name"] = user_name
 
-        # Build content parts
-        content_parts = [
-            TextContent(type=ContentType.TEXT, text=msg_content),
-        ]
-
-        # Build session_id for conversation continuity
-        session_id = self.resolve_session_id(sap_id, meta)
-
-        # Build AgentRequest
-        request = self.build_agent_request_from_user_content(
-            channel_id=self.channel,
-            sender_id=sap_id,
-            session_id=session_id,
-            content_parts=content_parts,
-            channel_meta=meta,
-        )
-        request.channel_meta = meta
-
-        # Process through LLM and collect response
         try:
-            response_text = ""
-            async for event in self._process(request):
-                obj = getattr(event, "object", None)
-                status = getattr(event, "status", None)
-                if obj == "message" and status == RunStatus.Completed:
-                    # Extract text from the completed message
-                    parts = self._message_to_content_parts(event)
-                    for part in parts:
-                        if hasattr(part, "text") and part.text:
-                            response_text += part.text
-                        elif hasattr(part, "refusal") and part.refusal:
-                            response_text += part.refusal
+            if user_name:
+                meta["user_name"] = user_name
 
-            if response_text:
-                logger.info(
-                    "zhaohu response: msgId=%s to=%s text=%s",
-                    msg_id,
-                    sap_id,
-                    response_text[:50] if response_text else "",
-                )
-                # Send response via push_url
-                await self.send(sap_id, response_text, meta)
-            else:
-                logger.warning(
-                    "zhaohu no response text: msgId=%s",
-                    msg_id,
-                )
+            # Build content parts
+            content_parts = [
+                TextContent(type=ContentType.TEXT, text=msg_content),
+            ]
 
-        except Exception:
-            logger.exception(
-                "zhaohu LLM processing failed: msgId=%s",
-                msg_id,
-            )
-            # Send error message
-            await self.send(
+            # Build session_id for conversation continuity
+            session_id = self.resolve_session_id(sap_id, meta)
+
+            logger.info(
+                "zhaohu session: sessionId=%s userId=%s workingDir=%s",
+                session_id,
                 sap_id,
-                "抱歉，处理您的消息时发生错误，请稍后重试。",
-                meta,
+                get_request_working_dir(),
             )
+
+            # Build AgentRequest
+            request = self.build_agent_request_from_user_content(
+                channel_id=self.channel,
+                sender_id=sap_id,
+                session_id=session_id,
+                content_parts=content_parts,
+                channel_meta=meta,
+            )
+            request.channel_meta = meta
+
+            # Process through LLM and collect response
+            # Note: self._process (Runner.query_handler) will load/save session state
+            try:
+                response_text = ""
+                async for event in self._process(request):
+                    obj = getattr(event, "object", None)
+                    status = getattr(event, "status", None)
+                    if obj == "message" and status == RunStatus.Completed:
+                        # Extract text from the completed message
+                        parts = self._message_to_content_parts(event)
+                        for part in parts:
+                            if hasattr(part, "text") and part.text:
+                                response_text += part.text
+                            elif hasattr(part, "refusal") and part.refusal:
+                                response_text += part.refusal
+
+                if response_text:
+                    logger.info(
+                        "zhaohu response: msgId=%s to=%s text=%s",
+                        msg_id,
+                        yst_id,
+                        response_text[:50] if response_text else "",
+                    )
+                    # Send response via push_url
+                    await self.send(yst_id, response_text, meta)
+                else:
+                    logger.warning(
+                        "zhaohu no response text: msgId=%s",
+                        msg_id,
+                    )
+
+            except Exception:
+                logger.exception(
+                    "zhaohu LLM processing failed: msgId=%s",
+                    msg_id,
+                )
+                # Send error message
+                await self.send(
+                    yst_id,
+                    "抱歉，处理您的消息时发生错误，请稍后重试。",
+                    meta,
+                )
+        finally:
+            # Always restore user context
+            reset_request_user_id(user_token)
 
     async def start(self) -> None:
         if not self.enabled:

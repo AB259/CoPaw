@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -49,8 +50,16 @@ class BackupService:
     async def create_backup_task(
         self,
         target_user_id: str | None = None,
+        instance_id: str | None = None,
+        backup_hour: int | None = None,
     ) -> BackupTask:
-        """Create a new backup task."""
+        """Create a new backup task.
+
+        Args:
+            target_user_id: Specific user to backup, or None for all users
+            instance_id: Instance identifier for multi-instance deployment
+            backup_hour: Hour of day (0-23), defaults to current hour
+        """
         async with self._lock:
             if self.task_store.has_running_task():
                 raise HTTPException(
@@ -58,12 +67,21 @@ class BackupService:
                     detail="Another backup task is already running",
                 )
 
+        # Set backup date and hour (Beijing time)
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        backup_date = now.strftime("%Y-%m-%d")
+        if backup_hour is None:
+            backup_hour = now.hour
+
         task = BackupTask(
             task_id=str(uuid.uuid4()),
             task_type=BackupTaskType.BACKUP,
             status=BackupTaskStatus.PENDING,
-            created_at=datetime.now(),
+            created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
             target_user_id=target_user_id,
+            instance_id=instance_id,
+            backup_date=backup_date,
+            backup_hour=backup_hour,
         )
         self.task_store.save(task)
 
@@ -75,9 +93,18 @@ class BackupService:
     async def create_restore_task(
         self,
         date: str,
+        hour: int | None = None,
+        instance_id: str | None = None,
         user_ids: list[str] | None = None,
     ) -> BackupTask:
-        """Create a new restore task."""
+        """Create a new restore task.
+
+        Args:
+            date: Backup date (YYYY-MM-DD)
+            hour: Backup hour (0-23)
+            instance_id: Instance identifier
+            user_ids: Specific users to restore, or None for all
+        """
         async with self._lock:
             if self.task_store.has_running_task():
                 raise HTTPException(
@@ -89,8 +116,10 @@ class BackupService:
             task_id=str(uuid.uuid4()),
             task_type=BackupTaskType.RESTORE,
             status=BackupTaskStatus.PENDING,
-            created_at=datetime.now(),
+            created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
             backup_date=date,
+            backup_hour=hour,
+            instance_id=instance_id,
             target_user_ids=user_ids,
         )
         self.task_store.save(task)
@@ -123,10 +152,19 @@ class BackupService:
 
     def list_available_backups(
         self,
-        user_id: str | None = None,
+        instance_id: str | None = None,
         date: str | None = None,
+        hour: int | None = None,
+        user_id: str | None = None,
     ) -> dict:
-        """List available backups from S3."""
+        """List available backups from S3.
+
+        Args:
+            instance_id: Filter by instance ID
+            date: Filter by date (YYYY-MM-DD)
+            hour: Filter by hour (0-23)
+            user_id: Filter by user ID
+        """
         backup_config = self._get_backup_config()
         env_config = backup_config.get_active_config()
         if env_config is None:
@@ -138,4 +176,9 @@ class BackupService:
         from .s3_client import S3BackupClient
 
         s3_client = S3BackupClient(env_config)
-        return s3_client.list_backups(user_id=user_id, date=date)
+        return s3_client.list_backups(
+            instance_id=instance_id,
+            date=date,
+            hour=hour,
+            user_id=user_id,
+        )

@@ -4,6 +4,7 @@ export interface SkillSpec {
   source: string;
   path: string;
   enabled?: boolean;
+  active_source?: string | null; // Which source version is currently active
 }
 
 export interface HubSkillSpec {
