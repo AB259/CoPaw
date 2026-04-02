@@ -23,8 +23,10 @@ from .model_factory import create_model_and_formatter
 from .prompt import build_system_prompt_from_working_dir
 from .skills_manager import (
     ensure_skills_initialized,
+    get_skill_trigger_rules,
     get_working_skills_dir,
     list_available_skills,
+    SkillTriggerRule,
 )
 from .tools import (
     browser_use,
@@ -112,6 +114,10 @@ class CoPawAgent(ReActAgent):
         self._namesake_strategy = namesake_strategy
         self._enable_tracing = enable_tracing
         self._trace_id = trace_id
+
+        # Skill context for multi-tool skill execution
+        self._in_skill_context: bool = False
+        self._current_skill_name: str | None = None
 
         # Memory compaction threshold: configurable ratio of max_input_length
         self._memory_compact_threshold = int(
@@ -226,6 +232,9 @@ class CoPawAgent(ReActAgent):
         # Store registered skill names for tracing distinction
         self._registered_skills: set[str] = set()
 
+        # Store skill trigger rules for detection
+        self._skill_trigger_rules: list[SkillTriggerRule] = []
+
         for skill_name in available_skills:
             skill_dir = working_skills_dir / skill_name
             if skill_dir.exists():
@@ -245,6 +254,10 @@ class CoPawAgent(ReActAgent):
         logger.debug("Registered skills for tracing: %s (from %d available skill dirs)",
                     self._registered_skills, len(available_skills))
 
+        # Load skill trigger rules for detection
+        self._skill_trigger_rules = get_skill_trigger_rules()
+        logger.debug("Loaded %d skill trigger rules", len(self._skill_trigger_rules))
+
     def _build_sys_prompt(self) -> str:
         """Build system prompt from working dir files and env context.
 
@@ -254,7 +267,42 @@ class CoPawAgent(ReActAgent):
         sys_prompt = build_system_prompt_from_working_dir()
         if self._env_context is not None:
             sys_prompt = self._env_context + "\n\n" + sys_prompt
+
+        # Add skill declaration rule for tracing
+        skill_declaration_rule = self._build_skill_declaration_rule()
+        if skill_declaration_rule:
+            sys_prompt = sys_prompt + "\n\n" + skill_declaration_rule
+
         return sys_prompt
+
+    def _build_skill_declaration_rule(self) -> str | None:
+        """Build skill declaration rule for LLM.
+
+        This rule asks LLM to declare which skill it's using before
+        the first tool call, enabling accurate skill tracing.
+
+        Returns:
+            Skill declaration rule string, or None if no skills registered
+        """
+        if not self._registered_skills:
+            return None
+
+        skill_names = ", ".join(sorted(self._registered_skills))
+
+        return f"""## 技能使用声明规则
+
+当你决定使用某个技能来完成任务时，在第一次工具调用前的回复中，必须先声明你正在使用的技能：
+
+<skill>技能名称</skill>
+
+可用的技能列表：{skill_names}
+
+示例：
+- 处理 PDF 文件时：<skill>pdf</skill>
+- 查询客户信息时：<skill>customer_query</skill>
+- 处理 Excel 表格时：<skill>xlsx</skill>
+
+这个声明用于系统追踪技能使用情况，不会影响你的实际执行。请务必在工具调用前声明。"""
 
     def _setup_memory_manager(
         self,
@@ -723,11 +771,16 @@ class CoPawAgent(ReActAgent):
         """Ensure a stable default tool-choice behavior across providers.
 
         Also emits tracing events for LLM calls if tracing is enabled.
+        Clears skill context at the start of each reasoning round.
         """
         tool_choice = normalize_reasoning_tool_choice(
             tool_choice=tool_choice,
             has_tools=bool(self.toolkit.get_json_schemas()),
         )
+
+        # Clear skill context at the start of each reasoning round
+        # This marks the end of a skill execution (LLM is processing results)
+        self._clear_skill_context()
 
         # Emit LLM start event if tracing is enabled
         llm_span_id = None
@@ -742,6 +795,20 @@ class CoPawAgent(ReActAgent):
             await self._emit_llm_end(result)
 
         return result
+
+    def _clear_skill_context(self) -> None:
+        """Clear skill context at the end of skill execution.
+
+        This is called at the start of each reasoning round to mark
+        the end of a skill's multi-tool execution.
+        """
+        if hasattr(self, '_in_skill_context') and self._in_skill_context:
+            logger.debug(
+                "Clearing skill context (skill: %s)",
+                getattr(self, '_current_skill_name', 'unknown'),
+            )
+        self._in_skill_context = False
+        self._current_skill_name = None
 
     async def _emit_llm_start(self) -> str | None:
         """Emit LLM start tracing event.
@@ -795,6 +862,14 @@ class CoPawAgent(ReActAgent):
     ) -> tuple[bool, str | None]:
         """Detect if a tool call is actually a skill invocation.
 
+        This is a FALLBACK detection mechanism. The primary method is
+        LLM skill declaration via <skill>skill_name</skill> tag.
+
+        Fallback detection logic:
+        1. Direct skill call - tool_name matches a registered skill
+        2. Shell command executing a skill - "copaw <skill_name>"
+        3. Tool call matching skill trigger rules - based on description patterns
+
         Args:
             tool_name: Tool name
             tool_input: Tool input arguments
@@ -809,23 +884,192 @@ class CoPawAgent(ReActAgent):
             return True, tool_name
 
         # 2. Shell command executing a skill
-        if tool_name != "execute_shell_command":
-            return False, None
+        if tool_name == "execute_shell_command":
+            command = tool_input.get("command", "")
+            if command:
+                import re
+                match = re.match(r'^copaw\s+(\w+)', command)
+                if match:
+                    potential_skill = match.group(1)
+                    if potential_skill in registered_skills:
+                        return True, potential_skill
 
-        command = tool_input.get("command", "")
-        if not command:
-            return False, None
-
-        import re
-        match = re.match(r'^copaw\s+(\w+)', command)
-        if not match:
-            return False, None
-
-        potential_skill = match.group(1)
-        if potential_skill in registered_skills:
-            return True, potential_skill
+        # 3. Check skill trigger rules for multi-MCP skill detection
+        # Only detect if not already in a skill context
+        in_skill_context = getattr(self, '_in_skill_context', False)
+        if not in_skill_context:
+            skill_name = self._match_skill_trigger_rules(tool_name, tool_input)
+            if skill_name:
+                return True, skill_name
 
         return False, None
+
+    def _match_skill_trigger_rules(
+        self,
+        tool_name: str,
+        tool_input: dict,
+    ) -> str | None:
+        """Match tool call against skill trigger rules.
+
+        This method detects if a tool call should trigger a skill
+        based on the tool name, input patterns, and skill descriptions.
+
+        Args:
+            tool_name: Tool name
+            tool_input: Tool input arguments
+
+        Returns:
+            Skill name if matched, None otherwise
+        """
+        trigger_rules = getattr(self, '_skill_trigger_rules', [])
+        if not trigger_rules:
+            return None
+
+        # Get recent user message for context matching
+        user_message = self._get_recent_user_message()
+
+        for rule in trigger_rules:
+            # Check if tool_name matches keywords in the rule
+            tool_matched = self._check_tool_match(tool_name, tool_input, rule)
+
+            # Check if user message contains relevant keywords
+            message_matched = self._check_message_match(user_message, rule)
+
+            # Both conditions should match for a skill to be detected
+            if tool_matched and message_matched:
+                logger.debug(
+                    "Skill '%s' detected by trigger rules (tool=%s, message_match=%s)",
+                    rule.skill_name,
+                    tool_name,
+                    message_matched,
+                )
+                return rule.skill_name
+
+        return None
+
+    def _check_tool_match(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        rule: "SkillTriggerRule",
+    ) -> bool:
+        """Check if tool call matches skill trigger rule.
+
+        Uses tool_hints from the rule for matching:
+        - If tool_name matches any tool_hint, check additional conditions
+        - For file tools, check file extension matches description keywords
+
+        Args:
+            tool_name: Tool name
+            tool_input: Tool input arguments
+            rule: Skill trigger rule
+
+        Returns:
+            True if matched
+        """
+        # Check if tool_name matches any tool_hint
+        tool_matched = False
+        for hint in rule.tool_hints:
+            if hint in tool_name or tool_name in hint:
+                tool_matched = True
+                break
+
+        if not tool_matched:
+            return False
+
+        # Additional checks for specific tool types
+        if tool_name == "browser_use":
+            action = tool_input.get("action", "")
+            # Only trigger on initial actions (start/open)
+            if action in ["start", "open"]:
+                return True
+            # Or if description contains browser-related keywords
+            if any(kw in rule.description.lower() for kw in ["browser", "browser_use", "网页", "页面"]):
+                return True
+
+        elif tool_name == "execute_shell_command":
+            command = tool_input.get("command", "")
+            # Check if command matches any keyword
+            command_lower = command.lower()
+            for keyword in rule.keywords:
+                if keyword.lower() in command_lower:
+                    return True
+
+        elif tool_name in ["read_file", "write_file", "edit_file"]:
+            # Check file extension matches description keywords
+            file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
+            if file_path:
+                file_lower = file_path.lower()
+                desc_lower = rule.description.lower()
+                # Check file extension matches skill domain
+                extensions = {
+                    ".pdf": ["pdf"],
+                    ".xlsx": ["xlsx", "excel", "spreadsheet"],
+                    ".xls": ["xlsx", "excel", "spreadsheet"],
+                    ".csv": ["xlsx", "excel", "spreadsheet", "csv"],
+                    ".docx": ["docx", "word", "document"],
+                    ".doc": ["docx", "word", "document"],
+                    ".pptx": ["pptx", "powerpoint", "presentation"],
+                    ".ppt": ["pptx", "powerpoint", "presentation"],
+                }
+                for ext, domain_kws in extensions.items():
+                    if ext in file_lower:
+                        if any(kw in desc_lower for kw in domain_kws):
+                            return True
+            return True  # General file tool match
+
+        else:
+            # For other tools, just check tool hint match
+            return True
+
+        return False
+
+    def _check_message_match(
+        self,
+        user_message: str,
+        rule: "SkillTriggerRule",
+    ) -> bool:
+        """Check if user message contains keywords from skill description.
+
+        Uses keywords from the rule for matching.
+
+        Args:
+            user_message: Recent user message
+            rule: Skill trigger rule
+
+        Returns:
+            True if matched
+        """
+        if not user_message:
+            return False
+
+        message_lower = user_message.lower()
+
+        # Check keywords extracted from description
+        for keyword in rule.keywords:
+            if keyword.lower() in message_lower:
+                return True
+
+        return False
+
+    def _get_recent_user_message(self) -> str:
+        """Get the most recent user message from memory.
+
+        Returns:
+            User message text or empty string
+        """
+        try:
+            if not hasattr(self, 'memory') or not self.memory:
+                return ""
+
+            # Iterate through memory to find the last user message
+            for msg, _marks in reversed(self.memory.content):
+                if msg.role == "user":
+                    return msg.get_text_content() if hasattr(msg, 'get_text_content') else str(msg.content)
+        except Exception as e:
+            logger.debug("Failed to get recent user message: %s", e)
+
+        return ""
 
     async def _emit_tool_start(
         self,
@@ -962,8 +1206,22 @@ class CoPawAgent(ReActAgent):
         tool_input: dict = tool_call.get("input", {}) or {}
         tool_call_id = tool_call.get("id")
 
-        # Detect if this is a skill call
+        # First, check if LLM declared a skill in its last response
+        declared_skill = self._parse_skill_declaration_from_last_message()
+        if declared_skill:
+            self._set_skill_context(declared_skill)
+
+        # Detect if this is a skill call (fallback to trigger rules if no declaration)
         is_skill, skill_name = self._detect_skill_call(tool_name, tool_input)
+
+        # If LLM declared a skill, use that as primary source
+        if declared_skill:
+            is_skill = True
+            skill_name = declared_skill
+
+        # Set skill context if this is a skill invocation
+        if is_skill and skill_name:
+            self._set_skill_context(skill_name)
 
         # Emit start event
         span_id = await self._emit_tool_start(
@@ -983,6 +1241,63 @@ class CoPawAgent(ReActAgent):
             await self._emit_tool_end(
                 span_id, result, error, tool_call_id, is_skill
             )
+
+    def _parse_skill_declaration_from_last_message(self) -> str | None:
+        """Parse skill declaration from LLM's last response.
+
+        Looks for <skill>skill_name</skill> pattern in the last
+        assistant message.
+
+        Returns:
+            Skill name if found, None otherwise
+        """
+        # Skip if already in skill context (declaration already processed)
+        if getattr(self, '_in_skill_context', False):
+            return None
+
+        try:
+            if not hasattr(self, 'memory') or not self.memory:
+                return None
+
+            # Find the last assistant message
+            for msg, _marks in reversed(self.memory.content):
+                if msg.role == "assistant":
+                    content = msg.get_text_content() if hasattr(msg, 'get_text_content') else str(msg.content)
+                    if content:
+                        import re
+                        match = re.search(r'<skill>(\w[\w\-]*)</skill>', content, re.IGNORECASE)
+                        if match:
+                            skill_name = match.group(1)
+                            # Verify it's a registered skill
+                            if skill_name in self._registered_skills:
+                                logger.debug("Parsed skill declaration: %s", skill_name)
+                                return skill_name
+                            else:
+                                logger.debug(
+                                    "Declared skill '%s' not in registered skills: %s",
+                                    skill_name,
+                                    self._registered_skills,
+                                )
+                    break
+        except Exception as e:
+            logger.debug("Failed to parse skill declaration: %s", e)
+
+        return None
+
+    def _set_skill_context(self, skill_name: str) -> None:
+        """Set skill context for multi-tool skill execution.
+
+        This marks the start of a skill's multi-tool execution.
+        The context will be cleared at the start of the next reasoning round.
+
+        Args:
+            skill_name: Name of the skill being executed
+        """
+        # Only set context if not already in a skill context
+        if not getattr(self, '_in_skill_context', False):
+            self._in_skill_context = True
+            self._current_skill_name = skill_name
+            logger.debug("Set skill context: %s", skill_name)
 
     async def reply(
         self,

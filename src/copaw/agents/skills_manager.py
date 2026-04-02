@@ -45,6 +45,144 @@ class SkillInfo(BaseModel):
     path: str
     references: dict[str, Any] = {}
     scripts: dict[str, Any] = {}
+    description: str = ""  # Extracted from SKILL.md YAML frontmatter
+
+
+class SkillTriggerRule(BaseModel):
+    """Skill trigger rule for detection.
+
+    Contains the skill name, description, and extracted patterns
+    for matching against tool calls and user messages.
+
+    The trigger conditions are automatically extracted from description:
+    - keywords: Domain-specific terms for message matching
+    - tool_hints: Tool names found in description
+    """
+
+    skill_name: str
+    description: str
+    keywords: list[str] = []  # Keywords for message matching
+    tool_hints: list[str] = []  # Tool names found in description
+
+
+def _parse_trigger_from_description(description: str) -> tuple[list[str], list[str]]:
+    """Parse trigger conditions from skill description.
+
+    Automatically extracts:
+    1. Keywords for user message matching (domain terms, file extensions, etc.)
+    2. Tool hints for tool matching (tool names found or inferred from description)
+
+    No hardcoded skill-specific rules - everything is derived from description.
+
+    Args:
+        description: Skill description text
+
+    Returns:
+        Tuple of (keywords, tool_hints)
+    """
+    import re
+
+    keywords = []
+    tool_hints = []
+
+    desc_lower = description.lower()
+
+    # 1. Extract tool names directly mentioned in description
+    TOOL_NAME_PATTERNS = [
+        "browser_use", "browser",
+        "execute_shell_command", "shell",
+        "read_file", "write_file", "edit_file",
+        "desktop_screenshot", "screenshot",
+        "send_file_to_user", "send_file",
+        "get_current_time",
+        "memory_search",
+    ]
+
+    for tool_name in TOOL_NAME_PATTERNS:
+        if tool_name in desc_lower:
+            # Normalize tool names
+            if tool_name in ["browser", "browser_use"]:
+                tool_hints.append("browser_use")
+            elif tool_name in ["shell", "execute_shell_command"]:
+                tool_hints.append("execute_shell_command")
+            elif tool_name in ["read_file", "write_file", "edit_file"]:
+                tool_hints.extend(["read_file", "write_file", "edit_file"])
+            elif tool_name in ["screenshot", "desktop_screenshot"]:
+                tool_hints.append("desktop_screenshot")
+            else:
+                tool_hints.append(tool_name)
+
+    # 2. Infer tools from general domain patterns (not skill-specific)
+    # These are generic associations that make sense for any skill
+    DOMAIN_TO_TOOLS = {
+        # Browser-related
+        "browser": "browser_use",
+        "web": "browser_use",
+        "网页": "browser_use",
+        "页面": "browser_use",
+        "网站": "browser_use",
+        "navigate": "browser_use",
+        "click": "browser_use",
+        # File-related (generic file operations)
+        "pdf": "read_file",
+        "xlsx": "read_file",
+        "excel": "read_file",
+        "spreadsheet": "read_file",
+        "docx": "read_file",
+        "word": "read_file",
+        "document": "read_file",
+        "pptx": "read_file",
+        "powerpoint": "read_file",
+        "文件": "read_file",
+        "file": "read_file",
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+        # Command/shell
+        "cli": "execute_shell_command",
+        "command": "execute_shell_command",
+        "命令": "execute_shell_command",
+        "shell": "execute_shell_command",
+        "terminal": "execute_shell_command",
+        "execute": "execute_shell_command",
+    }
+
+    for domain, tool in DOMAIN_TO_TOOLS.items():
+        if domain in desc_lower and tool not in tool_hints:
+            tool_hints.append(tool)
+
+    # 3. Extract keywords for message matching
+    # File extensions
+    extensions = re.findall(r'\.(\w{2,4})(?:\b|文件|file)', description, re.IGNORECASE)
+    keywords.extend(ext.lower() for ext in extensions if len(ext) >= 2)
+
+    # Quoted strings
+    quoted = re.findall(r'["\']([^"\']+)["\']', description)
+    keywords.extend(q for q in quoted if 2 <= len(q) <= 20)
+
+    # Chinese domain terms (extract meaningful words)
+    chinese_terms = re.findall(r'[\u4e00-\u9fa5]{2,6}', description)
+    keywords.extend(chinese_terms)
+
+    # English words (4+ chars to avoid common words)
+    english_words = re.findall(r'\b([a-z]{4,})\b', desc_lower)
+    keywords.extend(english_words)
+
+    # Remove duplicates and filter stop words
+    keywords = list(set(keywords))
+    stop_words = {
+        "the", "this", "that", "with", "from", "have", "will", "been", "were",
+        "they", "their", "would", "could", "should", "when", "which", "about",
+        "also", "more", "some", "into", "than", "then", "only", "very", "just",
+        "over", "such", "like", "your", "what", "know", "want", "need", "make",
+        "使用", "这个", "一个", "可以", "如果", "需要", "或者", "以及", "对于",
+        "都是", "不是", "没有", "已经", "还是", "但是", "因为", "所以", "而且",
+        "支持", "包含", "包括", "进行", "通过", "根据", "相关", "以下", "如下",
+    }
+    keywords = [kw for kw in keywords if kw.lower() not in stop_words]
+    tool_hints = list(set(tool_hints))
+
+    return keywords, tool_hints
 
 
 def get_builtin_skills_dir() -> Path:
@@ -327,6 +465,75 @@ def list_available_skills() -> list[str]:
     ]
 
 
+def get_skill_trigger_rules() -> list[SkillTriggerRule]:
+    """
+    Get skill trigger rules for detection.
+
+    Extracts trigger rules from all active skills, including
+    skill name, description, and keywords for matching.
+
+    Returns:
+        List of SkillTriggerRule objects.
+    """
+    active_skills = get_active_skills_dir()
+    rules: list[SkillTriggerRule] = []
+
+    if not active_skills.exists():
+        return rules
+
+    for skill_dir in active_skills.iterdir():
+        if not skill_dir.is_dir():
+            continue
+
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+
+        try:
+            content = skill_md.read_text(encoding="utf-8")
+
+            # Parse YAML frontmatter
+            skill_name = skill_dir.name
+            description = ""
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    try:
+                        import yaml
+                        frontmatter_dict = yaml.safe_load(parts[1])
+                        if frontmatter_dict:
+                            skill_name = frontmatter_dict.get("name", skill_name)
+                            description = frontmatter_dict.get("description", "")
+                    except Exception:
+                        pass
+
+            if description:
+                # Parse trigger conditions from description
+                keywords, tool_hints = _parse_trigger_from_description(description)
+                rules.append(
+                    SkillTriggerRule(
+                        skill_name=skill_name,
+                        description=description,
+                        keywords=keywords,
+                        tool_hints=tool_hints,
+                    )
+                )
+                logger.debug(
+                    "Loaded trigger rule for '%s': keywords=%s, tool_hints=%s",
+                    skill_name,
+                    keywords,
+                    tool_hints,
+                )
+        except Exception as e:
+            logger.debug(
+                "Failed to read skill trigger rule for '%s': %s",
+                skill_dir.name,
+                e,
+            )
+
+    return rules
+
+
 def ensure_skills_initialized() -> None:
     """
     Check if skills are initialized in active_skills directory.
@@ -382,6 +589,21 @@ def _read_skills_from_dir(
         try:
             content = skill_md.read_text(encoding="utf-8")
 
+            # Parse YAML frontmatter to extract name and description
+            skill_name = skill_dir.name
+            description = ""
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    try:
+                        import yaml
+                        frontmatter_dict = yaml.safe_load(parts[1])
+                        if frontmatter_dict:
+                            skill_name = frontmatter_dict.get("name", skill_name)
+                            description = frontmatter_dict.get("description", "")
+                    except Exception:
+                        pass
+
             # Build references directory tree
             references = {}
             references_dir = skill_dir / "references"
@@ -396,12 +618,13 @@ def _read_skills_from_dir(
 
             skills.append(
                 SkillInfo(
-                    name=skill_dir.name,
+                    name=skill_name,
                     content=content,
                     source=source,
                     path=str(skill_dir),
                     references=references,
                     scripts=scripts,
+                    description=description,
                 ),
             )
         except Exception as e:
