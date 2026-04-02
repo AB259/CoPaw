@@ -2,22 +2,6 @@
 -- Instance management database schema
 -- User instance allocation feature
 
--- 用户来源表
-CREATE TABLE IF NOT EXISTS swe_instance_source (
-    source_id VARCHAR(64) PRIMARY KEY COMMENT '来源ID',
-    source_name VARCHAR(128) NOT NULL COMMENT '来源名称',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) COMMENT '用户来源信息表';
-
--- 分行表
-CREATE TABLE IF NOT EXISTS swe_instance_bbk (
-    bbk_id VARCHAR(64) PRIMARY KEY COMMENT '分行ID',
-    bbk_name VARCHAR(128) NOT NULL COMMENT '分行名称',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) COMMENT '分行信息表';
-
 -- 实例表
 CREATE TABLE IF NOT EXISTS swe_instance_info (
     instance_id VARCHAR(64) PRIMARY KEY COMMENT '实例ID',

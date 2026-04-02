@@ -92,24 +92,6 @@ export const instanceApi = {
     return request("/instance/sources");
   },
 
-  createSource: async (data: { source_id: string; source_name: string }): Promise<{ success: boolean; data: Source }> => {
-    return request("/instance/sources", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-
-  updateSource: async (sourceId: string, data: { source_name: string }): Promise<{ success: boolean; data: Source }> => {
-    return request(`/instance/sources/${sourceId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-  },
-
-  deleteSource: async (sourceId: string): Promise<{ success: boolean }> => {
-    return request(`/instance/sources/${sourceId}`, { method: "DELETE" });
-  },
-
   // Instances
   getInstances: async (filters?: {
     source_id?: string;

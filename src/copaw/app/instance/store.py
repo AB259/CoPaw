@@ -55,40 +55,40 @@ class InstanceStore:
             self._use_db = False
             logger.info("InstanceStore initialized without database")
 
-    # ==================== Source operations ====================
-
-    async def create_source(self, source_id: str, source_name: str) -> Source:
-        """Create a new source."""
-        if self._use_db:
-            query = """
-                INSERT INTO swe_instance_source (source_id, source_name)
-                VALUES (%s, %s)
-            """
-            await self.db.execute(query, (source_id, source_name))
-        return Source(source_id=source_id, source_name=source_name)
+    # ==================== Source operations (从 swe_instance_info 聚合) ====================
 
     async def get_source(self, source_id: str) -> Optional[Source]:
-        """Get source by ID."""
+        """Get source by ID from instance table."""
         if self._use_db:
-            query = "SELECT * FROM swe_instance_source WHERE source_id = %s"
+            query = """
+                SELECT source_id, MIN(created_at) as created_at
+                FROM swe_instance_info
+                WHERE source_id = %s
+                GROUP BY source_id
+            """
             row = await self.db.fetch_one(query, (source_id,))
             if row:
                 return Source(
                     source_id=row["source_id"],
-                    source_name=row["source_name"],
+                    source_name=source_id,  # source_name 直接使用 source_id
                     created_at=row["created_at"],
                 )
         return None
 
     async def get_sources(self) -> list[Source]:
-        """Get all sources."""
+        """Get all sources from instance table."""
         if self._use_db:
-            query = "SELECT * FROM swe_instance_source ORDER BY created_at"
+            query = """
+                SELECT source_id, MIN(created_at) as created_at
+                FROM swe_instance_info
+                GROUP BY source_id
+                ORDER BY created_at
+            """
             rows = await self.db.fetch_all(query)
             return [
                 Source(
                     source_id=row["source_id"],
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     created_at=row["created_at"],
                 )
                 for row in rows
@@ -96,24 +96,24 @@ class InstanceStore:
         return []
 
     async def get_sources_with_stats(self) -> list[SourceWithStats]:
-        """Get all sources with statistics."""
+        """Get all sources with statistics from instance table."""
         if self._use_db:
             query = """
-                SELECT s.source_id, s.source_name, s.created_at,
+                SELECT i.source_id,
+                       MIN(i.created_at) as created_at,
                        COUNT(DISTINCT i.instance_id) as total_instances,
                        COUNT(DISTINCT CASE WHEN i.status = 'active' THEN i.instance_id END) as active_instances,
                        COUNT(DISTINCT u.id) as total_users
-                FROM swe_instance_source s
-                LEFT JOIN swe_instance_info i ON s.source_id = i.source_id
-                LEFT JOIN swe_instance_user u ON s.source_id = u.source_id
-                GROUP BY s.source_id, s.source_name, s.created_at
-                ORDER BY s.created_at
+                FROM swe_instance_info i
+                LEFT JOIN swe_instance_user u ON i.source_id = u.source_id
+                GROUP BY i.source_id
+                ORDER BY created_at
             """
             rows = await self.db.fetch_all(query)
             return [
                 SourceWithStats(
                     source_id=row["source_id"],
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     created_at=row["created_at"],
                     total_instances=row["total_instances"] or 0,
                     active_instances=row["active_instances"] or 0,
@@ -122,27 +122,6 @@ class InstanceStore:
                 for row in rows
             ]
         return []
-
-    async def update_source(self, source_id: str, source_name: str) -> bool:
-        """Update source name."""
-        if self._use_db:
-            query = "UPDATE swe_instance_source SET source_name = %s WHERE source_id = %s"
-            result = await self.db.execute(query, (source_name, source_id))
-            return result > 0
-        return False
-
-    async def delete_source(self, source_id: str) -> bool:
-        """Delete source."""
-        if self._use_db:
-            # Check if source has instances
-            query = "SELECT COUNT(*) as cnt FROM swe_instance_info WHERE source_id = %s"
-            row = await self.db.fetch_one(query, (source_id,))
-            if row and row["cnt"] > 0:
-                return False
-            query = "DELETE FROM swe_instance_source WHERE source_id = %s"
-            result = await self.db.execute(query, (source_id,))
-            return result > 0
-        return False
 
     # ==================== Instance operations ====================
 
@@ -195,10 +174,9 @@ class InstanceStore:
         """Get instance with usage statistics."""
         if self._use_db:
             query = """
-                SELECT i.*, s.source_name,
+                SELECT i.*,
                        (SELECT COUNT(*) FROM swe_instance_user WHERE instance_id = i.instance_id AND status = 'active') as current_users
                 FROM swe_instance_info i
-                LEFT JOIN swe_instance_source s ON i.source_id = s.source_id
                 WHERE i.instance_id = %s
             """
             row = await self.db.fetch_one(query, (instance_id,))
@@ -218,7 +196,7 @@ class InstanceStore:
                     current_users=current_users,
                     usage_percent=round(usage_percent, 2),
                     warning_level=calculate_warning_level(current_users, max_users),
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     bbk_name=row.get("bbk_name"),
                 )
         return None
@@ -243,10 +221,9 @@ class InstanceStore:
             where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
             query = f"""
-                SELECT i.*, s.source_name,
+                SELECT i.*,
                        (SELECT COUNT(*) FROM swe_instance_user WHERE instance_id = i.instance_id AND status = 'active') as current_users
                 FROM swe_instance_info i
-                LEFT JOIN swe_instance_source s ON i.source_id = s.source_id
                 WHERE {where_sql}
                 ORDER BY i.created_at
             """
@@ -269,7 +246,7 @@ class InstanceStore:
                         current_users=current_users,
                         usage_percent=round(usage_percent, 2),
                         warning_level=calculate_warning_level(current_users, max_users),
-                        source_name=row["source_name"],
+                        source_name=row["source_id"],  # source_name 直接使用 source_id
                         bbk_name=row.get("bbk_name"),
                     )
                 )
@@ -283,10 +260,9 @@ class InstanceStore:
         """Get available instances for allocation."""
         if self._use_db:
             query = """
-                SELECT i.*, s.source_name,
+                SELECT i.*,
                        (SELECT COUNT(*) FROM swe_instance_user WHERE instance_id = i.instance_id AND status = 'active') as current_users
                 FROM swe_instance_info i
-                LEFT JOIN swe_instance_source s ON i.source_id = s.source_id
                 WHERE i.source_id = %s AND i.status = 'active'
                 ORDER BY i.created_at
             """
@@ -314,7 +290,7 @@ class InstanceStore:
                     current_users=current_users,
                     usage_percent=round(usage_percent, 2),
                     warning_level=calculate_warning_level(current_users, max_users),
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     bbk_name=row.get("bbk_name"),
                 )
             )
@@ -397,9 +373,8 @@ class InstanceStore:
         """Get user allocation by user_id and source_id."""
         if self._use_db:
             query = """
-                SELECT u.*, s.source_name, i.instance_name, i.instance_url
+                SELECT u.*, i.instance_name, i.instance_url
                 FROM swe_instance_user u
-                LEFT JOIN swe_instance_source s ON u.source_id = s.source_id
                 LEFT JOIN swe_instance_info i ON u.instance_id = i.instance_id
                 WHERE u.user_id = %s AND u.source_id = %s AND u.status = 'active'
             """
@@ -413,7 +388,7 @@ class InstanceStore:
                     instance_id=row["instance_id"],
                     allocated_at=row["allocated_at"],
                     status=UserAllocationStatus(row["status"]),
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     instance_name=row["instance_name"],
                     instance_url=row["instance_url"],
                 )
@@ -454,9 +429,8 @@ class InstanceStore:
             # Data query
             offset = (page - 1) * page_size
             query = f"""
-                SELECT u.*, s.source_name, i.instance_name, i.instance_url
+                SELECT u.*, i.instance_name, i.instance_url
                 FROM swe_instance_user u
-                LEFT JOIN swe_instance_source s ON u.source_id = s.source_id
                 LEFT JOIN swe_instance_info i ON u.instance_id = i.instance_id
                 WHERE {where_sql}
                 ORDER BY u.allocated_at DESC
@@ -473,7 +447,7 @@ class InstanceStore:
                     instance_id=row["instance_id"],
                     allocated_at=row["allocated_at"],
                     status=UserAllocationStatus(row["status"]),
-                    source_name=row["source_name"],
+                    source_name=row["source_id"],  # source_name 直接使用 source_id
                     instance_name=row["instance_name"],
                     instance_url=row["instance_url"],
                 )

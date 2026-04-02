@@ -25,11 +25,6 @@ class UserAllocationStatus(str, Enum):
 class ActionType(str, Enum):
     """Action types for logging."""
 
-    # Source actions (保留用于日志记录)
-    CREATE_SOURCE = "create_source"
-    UPDATE_SOURCE = "update_source"
-    DELETE_SOURCE = "delete_source"
-
     # Instance actions
     CREATE_INSTANCE = "create_instance"
     UPDATE_INSTANCE = "update_instance"

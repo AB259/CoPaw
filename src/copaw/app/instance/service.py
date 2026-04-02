@@ -43,11 +43,6 @@ class InstanceService:
         if existing:
             raise ValueError(f"实例 {request.instance_id} 已存在")
 
-        # Check if source exists
-        source = await self.store.get_source(request.source_id)
-        if not source:
-            raise ValueError(f"来源 {request.source_id} 不存在")
-
         instance = await self.store.create_instance(
             instance_id=request.instance_id,
             source_id=request.source_id,
@@ -174,11 +169,6 @@ class InstanceService:
                 instance_url=existing.instance_url,
                 message=f"用户已分配到实例 {existing.instance_id}",
             )
-
-        # Check if source exists
-        source = await self.store.get_source(source_id)
-        if not source:
-            raise ValueError(f"来源 {source_id} 不存在")
 
         if instance_id:
             # Manual allocation

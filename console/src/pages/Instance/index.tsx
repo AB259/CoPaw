@@ -9,14 +9,15 @@ import {
   ReloadOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import api, {
+import api from "../../api";
+import type {
   InstanceWithUsage,
   UserAllocation,
   OperationLog,
   OverviewStats,
   AllocateUserRequest,
   SourceWithStats,
-} from "../../api";
+} from "../../api/modules/instance";
 
 const { TabPane } = Tabs;
 
