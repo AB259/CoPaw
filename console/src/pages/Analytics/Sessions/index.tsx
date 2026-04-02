@@ -242,13 +242,12 @@ export default function SessionsPage() {
         </div>
       </div>
 
-      <Card className={styles.tableCard}>
+      <Card>
         <Table
           dataSource={sessions}
           columns={columns}
           rowKey="session_id"
           loading={loading}
-          className={sessions.length === 0 ? styles.emptyTable : ''}
           pagination={{
             current: page,
             pageSize,

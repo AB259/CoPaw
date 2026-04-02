@@ -263,7 +263,7 @@ export default function MessagesPage() {
         </div>
       </div>
 
-      <Card className={styles.tableCard}>
+      <Card>
         <Table
           dataSource={messages}
           columns={columns}

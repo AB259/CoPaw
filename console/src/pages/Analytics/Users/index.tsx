@@ -195,14 +195,13 @@ export default function UsersPage() {
         </div>
       </div>
 
-      <Card className={styles.tableCard}>
+      <Card>
         <Table
           dataSource={users}
           columns={columns}
           rowKey="user_id"
           loading={loading}
           scroll={{ x: 700 }}
-          className={users.length === 0 ? styles.emptyTable : ''}
           pagination={{
             current: page,
             pageSize,
