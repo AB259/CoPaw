@@ -158,10 +158,12 @@ initializer.ensure_skill_pool()
 
 provider、channel、skill、env、heartbeat 的交互式配置保持不变，只是路径改为 tenant-scoped：
 
-- `configure_providers_interactive`：当前通过 `ProviderManager.get_instance()` 单例写入全局 `SECRET_DIR`。改造方式：传入 `secret_dir=tenant_dir / "secrets"` 参数，使 provider 配置（providers.json）写到租户目录下
+- `configure_providers_interactive`：**保持全局**。当前通过 `ProviderManager.get_instance()` 单例写入全局 `SECRET_DIR / "providers"`（默认 `~/.copaw.secret/providers/`）。本次迭代不改动 provider 存储位置，多租户共享同一套 provider 配置
 - `SkillService` / `SkillPoolService`：workspace 路径改为 `default_workspace`（基于 tenant_dir）
-- `configure_env_interactive()`：.env 文件写到 `tenant_dir / ".env"`，而非全局 `WORKING_DIR / ".env"`
+- `configure_env_interactive()`：**保持全局**。当前写入全局 `SECRET_DIR / "envs.json"`（默认 `~/.copaw.secret/envs.json`）。本次迭代不改动 env 存储位置，多租户共享同一套环境变量
 - `configure_channels_interactive`：config 已经通过 `config_path` 参数隔离，无需额外改动
+
+**注意**：Provider 和 env secret 存储在本次迭代中保持全局（`SECRET_DIR` 级别）。本次改动仅使 config.json、workspace、heartbeat、skill pool 实现租户隔离。未来如需租户级 provider/env 隔离，需单独设计。
 
 ### 6.5 telemetry
 
