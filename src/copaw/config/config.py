@@ -651,14 +651,6 @@ class AgentProfileConfig(BaseModel):
         default_factory=AgentsRunningConfig,
         description="Runtime configuration",
     )
-    llm_routing: AgentsLLMRoutingConfig = Field(
-        default_factory=AgentsLLMRoutingConfig,
-        description="LLM routing settings",
-    )
-    active_model: Optional["ModelSlotConfig"] = Field(
-        default=None,
-        description="Active model for this agent (provider_id + model)",
-    )
     language: str = Field(
         default="zh",
         description="Language setting for this agent",
