@@ -209,8 +209,8 @@ class InstanceService:
                     message="所有实例已达阈值，请扩容",
                 )
 
-            # Select instance with lowest current users (load balancing)
-            instance = min(available, key=lambda x: x.current_users)
+            # Select instance with most remaining capacity (best fit)
+            instance = max(available, key=lambda x: x.max_users - x.current_users)
             instance_id = instance.instance_id
 
         # Create allocation
