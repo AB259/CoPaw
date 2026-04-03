@@ -6,6 +6,7 @@ from copaw.tenant_models.exceptions import (
     TenantModelProviderError,
     TenantModelValidationError,
 )
+from copaw.tenant_models.manager import TenantModelManager
 from copaw.tenant_models.models import (
     ModelSlot,
     RoutingConfig,
@@ -19,6 +20,7 @@ __all__ = [
     "RoutingConfig",
     "TenantModelConfig",
     "TenantModelError",
+    "TenantModelManager",
     "TenantModelNotFoundError",
     "TenantModelProviderError",
     "TenantModelValidationError",
