@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Table, Card, Input, Drawer, Descriptions, Spin, Empty, Tag, DatePicker } from "antd";
 import { Search, User } from "lucide-react";
@@ -69,7 +69,24 @@ export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<UserStats | null>(null);
   const [userLoading, setUserLoading] = useState(false);
 
+  // 用于追踪筛选条件变化，避免 useEffect 重复触发
+  const filtersRef = useRef({ searchQuery: "", dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null });
+
   useEffect(() => {
+    // 检查筛选条件是否变化
+    const filtersChanged =
+      filtersRef.current.searchQuery !== searchQuery ||
+      filtersRef.current.dateRange !== dateRange;
+
+    // 更新 ref
+    filtersRef.current = { searchQuery, dateRange };
+
+    // 如果筛选条件变化且不是第一页，只重置页码不查询
+    if (filtersChanged && page !== 1) {
+      setPage(1);
+      return;
+    }
+
     fetchUsers();
   }, [page, pageSize, searchQuery, dateRange]);
 
@@ -175,20 +192,14 @@ export default function UsersPage() {
         <div style={{ display: "flex", gap: 12 }}>
           <RangePicker
             value={dateRange}
-            onChange={(dates) => {
-              setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-              setPage(1);
-            }}
+            onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
             allowClear
           />
           <Input
             placeholder={t("analytics.searchUser", "Search user...")}
             prefix={<Search size={16} />}
             value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setSearchQuery(e.target.value)}
             style={{ width: 250 }}
             allowClear
           />

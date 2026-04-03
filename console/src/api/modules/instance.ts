@@ -56,7 +56,6 @@ export interface OperationLog {
 }
 
 export interface OverviewStats {
-  total_sources: number;
   total_instances: number;
   total_users: number;
   active_instances: number;

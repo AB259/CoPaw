@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Tabs, Card, Row, Col, Statistic, Table, Button, Space, Tag, Progress, Drawer, Form, Input, Select, Modal, message } from "antd";
 import {
@@ -68,6 +68,11 @@ function InstancePage() {
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsPage, setLogsPage] = useState(1);
+  const [logsFilter, setLogsFilter] = useState<{ action?: string; target_type?: string }>({});
+
+  // 用于追踪筛选条件变化，避免 useEffect 重复触发
+  const allocationFiltersRef = useRef<{ user_id?: string; source_id?: string }>({});
+  const logsFiltersRef = useRef<{ action?: string; target_type?: string }>({});
 
   // Load overview
   const loadOverview = useCallback(async () => {
@@ -127,7 +132,11 @@ function InstancePage() {
   const loadLogs = useCallback(async () => {
     setLogsLoading(true);
     try {
-      const data = await api.getLogs({ page: logsPage, page_size: 10 });
+      const data = await api.getLogs({
+        ...logsFilter,
+        page: logsPage,
+        page_size: 10,
+      });
       setLogs(data.logs);
       setLogsTotal(data.total);
     } catch (error) {
@@ -135,7 +144,7 @@ function InstancePage() {
     } finally {
       setLogsLoading(false);
     }
-  }, [logsPage]);
+  }, [logsFilter, logsPage]);
 
   // Initial load
   useEffect(() => {
@@ -153,8 +162,41 @@ function InstancePage() {
 
   // Reload allocations when filter or page changes
   useEffect(() => {
+    // 检查筛选条件是否变化
+    const filtersChanged =
+      allocationFiltersRef.current.user_id !== allocationFilter.user_id ||
+      allocationFiltersRef.current.source_id !== allocationFilter.source_id;
+
+    // 更新 ref
+    allocationFiltersRef.current = { ...allocationFilter };
+
+    // 如果筛选条件变化且不是第一页，只重置页码不查询
+    if (filtersChanged && allocationPage !== 1) {
+      setAllocationPage(1);
+      return;
+    }
+
     loadAllocations();
   }, [allocationFilter, allocationPage, loadAllocations]);
+
+  // Reload logs when filter or page changes
+  useEffect(() => {
+    // 检查筛选条件是否变化
+    const filtersChanged =
+      logsFiltersRef.current.action !== logsFilter.action ||
+      logsFiltersRef.current.target_type !== logsFilter.target_type;
+
+    // 更新 ref
+    logsFiltersRef.current = { ...logsFilter };
+
+    // 如果筛选条件变化且不是第一页，只重置页码不查询
+    if (filtersChanged && logsPage !== 1) {
+      setLogsPage(1);
+      return;
+    }
+
+    loadLogs();
+  }, [logsFilter, logsPage, loadLogs]);
 
   // Instance CRUD
   const handleCreateInstance = () => {
@@ -469,12 +511,26 @@ function InstancePage() {
             title={t("instance.allocationList")}
             extra={
               <Space>
-                <Input.Search
+                <Input
                   placeholder={t("instance.searchUserId")}
                   style={{ width: 200 }}
-                  onSearch={(v) => setAllocationFilter({ ...allocationFilter, user_id: v })}
+                  value={allocationFilter.user_id || ""}
+                  onChange={(e) => setAllocationFilter({ ...allocationFilter, user_id: e.target.value || undefined })}
                   allowClear
                 />
+                <Select
+                  allowClear
+                  placeholder={t("instance.filterSource")}
+                  style={{ width: 150 }}
+                  onChange={(v) => setAllocationFilter({ ...allocationFilter, source_id: v })}
+                  value={allocationFilter.source_id}
+                >
+                  {sources.map((s) => (
+                    <Select.Option key={s.source_id} value={s.source_id}>
+                      {s.source_name}
+                    </Select.Option>
+                  ))}
+                </Select>
                 <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateAllocation}>
                   {t("instance.addAllocation")}
                 </Button>
@@ -490,6 +546,7 @@ function InstancePage() {
                 current: allocationPage,
                 total: allocationsTotal,
                 pageSize: 10,
+                showTotal: (total) => t("instance.totalItems", { total }),
                 onChange: setAllocationPage,
               }}
             />
@@ -497,7 +554,38 @@ function InstancePage() {
         </TabPane>
 
         <TabPane tab={t("instance.operationLogs")} key="logs">
-          <Card title={t("instance.operationLogs")}>
+          <Card
+            title={t("instance.operationLogs")}
+            extra={
+              <Space>
+                <Select
+                  allowClear
+                  placeholder={t("instance.filterAction", "Filter action")}
+                  style={{ width: 150 }}
+                  onChange={(v) => setLogsFilter({ ...logsFilter, action: v })}
+                  value={logsFilter.action}
+                >
+                  <Select.Option value="create_instance">{t("instance.createInstance", "Create Instance")}</Select.Option>
+                  <Select.Option value="update_instance">{t("instance.updateInstance", "Update Instance")}</Select.Option>
+                  <Select.Option value="delete_instance">{t("instance.deleteInstance", "Delete Instance")}</Select.Option>
+                  <Select.Option value="allocate">{t("instance.allocate", "Allocate")}</Select.Option>
+                  <Select.Option value="migrate">{t("instance.migrate", "Migrate")}</Select.Option>
+                  <Select.Option value="delete_allocation">{t("instance.deleteAllocation", "Delete Allocation")}</Select.Option>
+                </Select>
+                <Select
+                  allowClear
+                  placeholder={t("instance.filterTargetType", "Filter target type")}
+                  style={{ width: 120 }}
+                  onChange={(v) => setLogsFilter({ ...logsFilter, target_type: v })}
+                  value={logsFilter.target_type}
+                >
+                  <Select.Option value="instance">{t("instance.instance", "Instance")}</Select.Option>
+                  <Select.Option value="user">{t("instance.user", "User")}</Select.Option>
+                  <Select.Option value="source">{t("instance.source", "Source")}</Select.Option>
+                </Select>
+              </Space>
+            }
+          >
             <Table
               columns={logColumns}
               dataSource={logs}
@@ -507,6 +595,7 @@ function InstancePage() {
                 current: logsPage,
                 total: logsTotal,
                 pageSize: 10,
+                showTotal: (total) => t("instance.totalItems", { total }),
                 onChange: setLogsPage,
               }}
             />

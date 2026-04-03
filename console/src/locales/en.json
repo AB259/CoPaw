@@ -637,6 +637,16 @@
     "newValue": "New Value",
     "belongToSource": "Belong to Source",
     "belongToBranch": "Belong to Branch",
-    "required": "This field is required"
+    "required": "This field is required",
+    "filterAction": "Filter Action",
+    "filterTargetType": "Filter Target Type",
+    "createInstance": "Create Instance",
+    "updateInstance": "Update Instance",
+    "deleteInstance": "Delete Instance",
+    "allocate": "Allocate User",
+    "deleteAllocation": "Delete Allocation",
+    "instance": "Instance",
+    "user": "User",
+    "totalItems": "{{total}} items"
   }
 }
