@@ -21,6 +21,11 @@ import type {
 
 const { TabPane } = Tabs;
 
+// 来源配置 - 硬编码（可扩展）
+const SOURCES = [
+  { source_id: "rm_assistant", source_name: "RM小助" },
+];
+
 // 分行配置 - 硬编码
 const BRANCHES = [
   { bbk_id: "head_office", bbk_name: "总行" },
@@ -102,7 +107,13 @@ function InstancePage() {
     setInstancesLoading(true);
     try {
       const data = await api.getInstances(instanceFilter);
-      setInstances(data.instances);
+      // 映射 source_name 和 bbk_name
+      const instancesWithNames = data.instances.map((inst) => ({
+        ...inst,
+        source_name: SOURCES.find((s) => s.source_id === inst.source_id)?.source_name || inst.source_id,
+        bbk_name: BRANCHES.find((b) => b.bbk_id === inst.bbk_id)?.bbk_name || inst.bbk_id,
+      }));
+      setInstances(instancesWithNames);
     } catch (error) {
       console.error("Failed to load instances:", error);
     } finally {
@@ -119,7 +130,7 @@ function InstancePage() {
         page: allocationPage,
         page_size: 10,
       });
-      setAllocations(data.allocations);
+ 
       setAllocationsTotal(data.total);
     } catch (error) {
       console.error("Failed to load allocations:", error);
@@ -622,7 +633,7 @@ function InstancePage() {
           </Form.Item>
           <Form.Item name="source_id" label={t("instance.belongToSource")} rules={[{ required: true, message: t("instance.required") }]}>
             <Select disabled={!!editingInstance}>
-              {sources.map((s) => (
+              {SOURCES.map((s) => (
                 <Select.Option key={s.source_id} value={s.source_id}>
                   {s.source_name}
                 </Select.Option>
@@ -665,7 +676,7 @@ function InstancePage() {
           </Form.Item>
           <Form.Item name="source_id" label={t("instance.belongToSource")} rules={[{ required: true, message: t("instance.required") }]}>
             <Select>
-              {sources.map((s) => (
+              {SOURCES.map((s) => (
                 <Select.Option key={s.source_id} value={s.source_id}>
                   {s.source_name}
                 </Select.Option>
