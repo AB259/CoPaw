@@ -1,5 +1,6 @@
 """Tenant model configuration management module."""
 
+from copaw.tenant_models.context import TenantModelContext
 from copaw.tenant_models.exceptions import (
     TenantModelError,
     TenantModelNotFoundError,
@@ -19,6 +20,7 @@ __all__ = [
     "ModelSlot",
     "RoutingConfig",
     "TenantModelConfig",
+    "TenantModelContext",
     "TenantModelError",
     "TenantModelManager",
     "TenantModelNotFoundError",
