@@ -1,6 +1,7 @@
 """Configuration manager for tenant model configurations."""
 
 import json
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -18,9 +19,11 @@ class TenantModelManager:
 
     Attributes:
         _cache: Class-level dictionary storing cached configurations.
+        _lock: Thread-safe lock for cache access.
     """
 
     _cache: dict[str, TenantModelConfig] = {}
+    _lock: threading.Lock = threading.Lock()
 
     @classmethod
     def get_config_path(cls, tenant_id: str) -> Path:
@@ -52,15 +55,17 @@ class TenantModelManager:
             TenantModelNotFoundError: If neither the tenant's config nor
                 the default config exists.
         """
-        # Check cache first
-        if tenant_id in cls._cache:
-            return cls._cache[tenant_id]
+        # Check cache first (with lock for thread safety)
+        with cls._lock:
+            if tenant_id in cls._cache:
+                return cls._cache[tenant_id]
 
         # Try to load the tenant's config
         config_path = cls.get_config_path(tenant_id)
         if config_path.exists():
             config = cls._load_from_file(config_path)
-            cls._cache[tenant_id] = config
+            with cls._lock:
+                cls._cache[tenant_id] = config
             return config
 
         # Fall back to default tenant
@@ -68,7 +73,8 @@ class TenantModelManager:
             default_path = cls.get_config_path("default")
             if default_path.exists():
                 config = cls._load_from_file(default_path)
-                cls._cache[tenant_id] = config
+                with cls._lock:
+                    cls._cache[tenant_id] = config
                 return config
 
         # Neither tenant nor default exists
@@ -91,8 +97,9 @@ class TenantModelManager:
         with open(config_path, "w") as f:
             f.write(config.model_dump_json(indent=2))
 
-        # Update cache
-        cls._cache[tenant_id] = config
+        # Update cache (with lock for thread safety)
+        with cls._lock:
+            cls._cache[tenant_id] = config
 
     @classmethod
     def invalidate_cache(cls, tenant_id: Optional[str] = None) -> None:
@@ -102,10 +109,11 @@ class TenantModelManager:
             tenant_id: If provided, invalidate cache for this specific tenant.
                       If None, invalidate the entire cache.
         """
-        if tenant_id is None:
-            cls._cache.clear()
-        else:
-            cls._cache.pop(tenant_id, None)
+        with cls._lock:
+            if tenant_id is None:
+                cls._cache.clear()
+            else:
+                cls._cache.pop(tenant_id, None)
 
     @classmethod
     def exists(cls, tenant_id: str) -> bool:
