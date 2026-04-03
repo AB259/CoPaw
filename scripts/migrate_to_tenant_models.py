@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # pylint: disable=wrong-import-position
 from copaw.constant import SECRET_DIR, WORKING_DIR
+from copaw.tenant_models.manager import TenantModelManager
 from copaw.tenant_models.models import (
     ModelSlot,
     RoutingConfig,
@@ -136,7 +137,7 @@ def convert_active_llm_to_routing(
         RoutingConfig instance with default routing mode.
     """
     # Default routing mode
-    mode: Literal["local_first", "cloud_first"] = "cloud_first"
+    mode: Literal["local_first", "cloud_first"] = "local_first"
 
     # Create slots dictionary
     slots: Dict[str, ModelSlot] = {}
@@ -199,32 +200,9 @@ def create_default_config() -> TenantModelConfig:
     """
     return TenantModelConfig(
         version="1.0",
-        providers=[
-            # Add a default aliyun-codingplan provider
-            TenantProviderConfig(
-                id="aliyun-codingplan",
-                type="openai",
-                api_key=None,
-                base_url="https://coding.dashscope.aliyuncs.com/v1",
-                models=[
-                    "qwen3.5-plus",
-                    "glm-5",
-                    "glm-4.7",
-                    "MiniMax-M2.5",
-                    "kimi-k2.5",
-                    "qwen3-max-2026-01-23",
-                    "qwen3-coder-next",
-                    "qwen3-coder-plus",
-                ],
-                enabled=True,
-                extra={
-                    "name": "Aliyun Coding Plan",
-                    "is_builtin": True,
-                },
-            ),
-        ],
+        providers=[],
         routing=RoutingConfig(
-            mode="cloud_first",
+            mode="local_first",
             slots={
                 "local": ModelSlot(provider_id="", model=""),
                 "cloud": ModelSlot(provider_id="", model=""),
@@ -300,19 +278,8 @@ def save_tenant_config(config: TenantModelConfig) -> None:
     Args:
         config: TenantModelConfig to save.
     """
-    config_path = WORKING_DIR / "tenants" / "default" / "tenant_models.json"
-
-    # Create tenant directory if it doesn't exist
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Save configuration
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            f.write(config.model_dump_json(indent=2))
-        logger.info("Saved tenant configuration to %s", config_path)
-    except Exception as e:
-        logger.error("Failed to save tenant configuration: %s", e)
-        raise
+    TenantModelManager.save("default", config)
+    logger.info("Saved tenant configuration for default tenant")
 
 
 def verify_migration(config_path: Path) -> None:
@@ -372,6 +339,12 @@ def main() -> None:
     verify_migration(config_path)
 
     logger.info("Migration completed successfully!")
+
+    # Print user guidance
+    print("\nNext steps:")
+    print(f"1. Review the migrated config at: {config_path}")
+    print("2. Update API keys if needed")
+    print("3. Restart the application")
 
 
 if __name__ == "__main__":
