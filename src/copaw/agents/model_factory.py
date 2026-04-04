@@ -743,6 +743,7 @@ def create_model_and_formatter(
     # Try to get model from tenant-level configuration
     try:
         from copaw.tenant_models import TenantModelContext
+
         tenant_config = TenantModelContext.get_config()
         if tenant_config:
             model_slot = tenant_config.get_active_slot()

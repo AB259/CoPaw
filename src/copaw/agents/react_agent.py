@@ -144,6 +144,7 @@ class CoPawAgent(ToolGuardMixin, ReActAgent):
         # Get model info from tenant config if available
         try:
             from copaw.tenant_models import TenantModelContext
+
             tenant_config = TenantModelContext.get_config()
             if tenant_config:
                 active_slot = tenant_config.get_active_slot()

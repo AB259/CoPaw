@@ -1055,14 +1055,21 @@ def reconcile_workspace_manifest(workspace_dir: Path) -> dict[str, Any]:
     )
 
 
-def list_workspaces() -> list[dict[str, str]]:
-    """List configured workspaces with agent names."""
+def list_workspaces(tenant_id: str | None = None) -> list[dict[str, str]]:
+    """List configured workspaces with agent names.
+
+    Args:
+        tenant_id: Tenant ID. If None, uses current tenant from context.
+
+    Returns:
+        List of workspace info dicts with agent_id, agent_name, workspace_dir.
+    """
     workspaces: list[dict[str, str]] = []
     try:
-        from ..config.utils import load_config
+        from ..config.utils import load_config, get_tenant_config_path
         from ..config.config import load_agent_config
 
-        config = load_config()
+        config = load_config(get_tenant_config_path(tenant_id))
         # Only return agents that are still in the configuration
         # This ensures deleted agents are not included
         for agent_id, profile in sorted(config.agents.profiles.items()):
