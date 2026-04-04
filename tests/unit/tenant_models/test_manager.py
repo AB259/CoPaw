@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for TenantModelManager configuration management."""
 
 import json
@@ -36,7 +37,7 @@ def sample_config():
                 api_key="test-key",
                 models=["gpt-4"],
                 enabled=True,
-            )
+            ),
         ],
         routing=RoutingConfig(
             mode="cloud_first",
@@ -60,12 +61,14 @@ def default_config():
                 api_key="default-key",
                 models=["gpt-3.5-turbo"],
                 enabled=True,
-            )
+            ),
         ],
         routing=RoutingConfig(
             mode="cloud_first",
             slots={
-                "cloud": ModelSlot(provider_id="default-provider", model="gpt-3.5-turbo"),
+                "cloud": ModelSlot(
+                    provider_id="default-provider", model="gpt-3.5-turbo"
+                ),
             },
         ),
     )
@@ -76,10 +79,10 @@ class TestTenantModelManagerGetConfigPath:
 
     def test_get_config_path_returns_correct_path(self, tmp_path):
         """Test that get_config_path returns the expected file path."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
-            expected_path = tmp_path / "tenants" / tenant_id / "tenant_models.json"
+            expected_path = tmp_path / tenant_id / "tenant_models.json"
 
             result = manager.get_config_path(tenant_id)
 
@@ -87,7 +90,7 @@ class TestTenantModelManagerGetConfigPath:
 
     def test_get_config_path_with_different_tenants(self, tmp_path):
         """Test that different tenant IDs produce different paths."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
 
             path1 = manager.get_config_path("tenant1")
@@ -101,9 +104,11 @@ class TestTenantModelManagerGetConfigPath:
 class TestTenantModelManagerExists:
     """Tests for exists method."""
 
-    def test_exists_returns_true_for_existing_config(self, tmp_path, sample_config):
+    def test_exists_returns_true_for_existing_config(
+        self, tmp_path, sample_config
+    ):
         """Test exists returns True when config file exists."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -116,7 +121,7 @@ class TestTenantModelManagerExists:
 
     def test_exists_returns_false_for_missing_config(self, tmp_path):
         """Test exists returns False when config file doesn't exist."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "nonexistent-tenant"
 
@@ -126,9 +131,11 @@ class TestTenantModelManagerExists:
 class TestTenantModelManagerSave:
     """Tests for save method."""
 
-    def test_save_creates_directory_if_not_exists(self, tmp_path, sample_config):
+    def test_save_creates_directory_if_not_exists(
+        self, tmp_path, sample_config
+    ):
         """Test save creates the tenant directory if it doesn't exist."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -142,7 +149,7 @@ class TestTenantModelManagerSave:
 
     def test_save_writes_valid_json(self, tmp_path, sample_config):
         """Test save writes valid JSON that can be loaded."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -158,7 +165,7 @@ class TestTenantModelManagerSave:
 
     def test_save_overwrites_existing_config(self, tmp_path, sample_config):
         """Test save overwrites an existing config file."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -179,7 +186,7 @@ class TestTenantModelManagerLoad:
 
     def test_load_existing_config(self, tmp_path, sample_config):
         """Test load returns the config for an existing tenant."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -187,11 +194,13 @@ class TestTenantModelManagerLoad:
             loaded_config = manager.load(tenant_id)
 
             assert loaded_config.version == sample_config.version
-            assert loaded_config.providers[0].id == sample_config.providers[0].id
+            assert (
+                loaded_config.providers[0].id == sample_config.providers[0].id
+            )
 
     def test_load_caches_config(self, tmp_path, sample_config):
         """Test load caches the loaded config."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -206,7 +215,7 @@ class TestTenantModelManagerLoad:
 
     def test_load_fallback_to_default(self, tmp_path, default_config):
         """Test load falls back to 'default' tenant if requested tenant doesn't exist."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
 
             # Save default config
@@ -219,7 +228,7 @@ class TestTenantModelManagerLoad:
 
     def test_load_raises_error_if_no_default(self, tmp_path):
         """Test load raises TenantModelNotFoundError if neither tenant nor default exists."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
 
             with pytest.raises(TenantModelNotFoundError) as exc_info:
@@ -229,7 +238,7 @@ class TestTenantModelManagerLoad:
 
     def test_load_with_cache_invalidation(self, tmp_path, sample_config):
         """Test that cache invalidation forces a reload from disk."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -255,9 +264,11 @@ class TestTenantModelManagerLoad:
 class TestTenantModelManagerInvalidateCache:
     """Tests for invalidate_cache method."""
 
-    def test_invalidate_cache_for_specific_tenant(self, tmp_path, sample_config):
+    def test_invalidate_cache_for_specific_tenant(
+        self, tmp_path, sample_config
+    ):
         """Test invalidating cache for a specific tenant."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
 
             manager.save("tenant1", sample_config)
@@ -280,7 +291,7 @@ class TestTenantModelManagerInvalidateCache:
 
     def test_invalidate_cache_for_all_tenants(self, tmp_path, sample_config):
         """Test invalidating cache for all tenants when tenant_id is None."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
 
             manager.save("tenant1", sample_config)
@@ -312,7 +323,7 @@ class TestTenantModelManagerEdgeCases:
 
     def test_load_with_invalid_json(self, tmp_path):
         """Test load handles corrupt JSON file gracefully."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant"
 
@@ -321,12 +332,16 @@ class TestTenantModelManagerEdgeCases:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text("not valid json")
 
-            with pytest.raises(Exception):  # Could be JSON decode error or validation error
+            with pytest.raises(
+                Exception
+            ):  # Could be JSON decode error or validation error
                 manager.load(tenant_id)
 
-    def test_save_with_special_characters_in_tenant_id(self, tmp_path, sample_config):
+    def test_save_with_special_characters_in_tenant_id(
+        self, tmp_path, sample_config
+    ):
         """Test save handles tenant IDs with special characters."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager = TenantModelManager()
             tenant_id = "test-tenant_123"
 
@@ -338,7 +353,7 @@ class TestTenantModelManagerEdgeCases:
 
     def test_multiple_managers_share_cache(self, tmp_path, sample_config):
         """Test that cache is shared across manager instances (class-level cache)."""
-        with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+        with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
             manager1 = TenantModelManager()
             manager2 = TenantModelManager()
             tenant_id = "test-tenant"

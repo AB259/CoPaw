@@ -66,7 +66,9 @@ def test_convert_provider_config():
     }
 
     result = convert_provider_config(
-        "test-provider", legacy_config, is_builtin=True
+        "test-provider",
+        legacy_config,
+        is_builtin=True,
     )
 
     assert isinstance(result, TenantProviderConfig)
@@ -224,7 +226,8 @@ def test_save_and_verify_tenant_config():
             slots={
                 "local": ModelSlot(provider_id="", model=""),
                 "cloud": ModelSlot(
-                    provider_id="test-provider", model="model-1"
+                    provider_id="test-provider",
+                    model="model-1",
                 ),
             },
         ),
@@ -233,11 +236,12 @@ def test_save_and_verify_tenant_config():
     with tempfile.TemporaryDirectory() as tmpdir:
         working_dir = Path(tmpdir)
 
-        # Patch WORKING_DIR in both migration script and manager
+        # Patch WORKING_DIR in migration script and SECRET_DIR in manager
         with patch(
-            "scripts.migrate_to_tenant_models.WORKING_DIR", working_dir
+            "scripts.migrate_to_tenant_models.WORKING_DIR",
+            working_dir,
         ):
-            with patch("copaw.tenant_models.manager.WORKING_DIR", working_dir):
+            with patch("copaw.tenant_models.manager.SECRET_DIR", working_dir):
                 # Clear cache to ensure fresh load
                 from copaw.tenant_models.manager import TenantModelManager
 
@@ -247,9 +251,7 @@ def test_save_and_verify_tenant_config():
                 save_tenant_config(config)
 
                 # Verify file was created
-                config_path = (
-                    working_dir / "tenants" / "default" / "tenant_models.json"
-                )
+                config_path = working_dir / "default" / "tenant_models.json"
                 assert config_path.exists()
 
                 # Verify content
@@ -276,9 +278,10 @@ def test_full_migration_workflow_without_legacy():
         working_dir = Path(tmpdir)
 
         with patch(
-            "scripts.migrate_to_tenant_models.WORKING_DIR", working_dir
+            "scripts.migrate_to_tenant_models.WORKING_DIR",
+            working_dir,
         ):
-            with patch("copaw.tenant_models.manager.WORKING_DIR", working_dir):
+            with patch("copaw.tenant_models.manager.SECRET_DIR", working_dir):
                 # Clear cache
                 from copaw.tenant_models.manager import TenantModelManager
 
@@ -291,9 +294,7 @@ def test_full_migration_workflow_without_legacy():
                 save_tenant_config(config)
 
                 # Verify
-                config_path = (
-                    working_dir / "tenants" / "default" / "tenant_models.json"
-                )
+                config_path = working_dir / "default" / "tenant_models.json"
                 verify_migration(config_path)
 
                 assert config_path.exists()
@@ -324,9 +325,10 @@ def test_full_migration_workflow_with_legacy():
         working_dir = Path(tmpdir)
 
         with patch(
-            "scripts.migrate_to_tenant_models.WORKING_DIR", working_dir
+            "scripts.migrate_to_tenant_models.WORKING_DIR",
+            working_dir,
         ):
-            with patch("copaw.tenant_models.manager.WORKING_DIR", working_dir):
+            with patch("copaw.tenant_models.manager.SECRET_DIR", working_dir):
                 # Clear cache
                 from copaw.tenant_models.manager import TenantModelManager
 
@@ -339,9 +341,7 @@ def test_full_migration_workflow_with_legacy():
                 save_tenant_config(config)
 
                 # Verify
-                config_path = (
-                    working_dir / "tenants" / "default" / "tenant_models.json"
-                )
+                config_path = working_dir / "default" / "tenant_models.json"
                 verify_migration(config_path)
 
                 assert config_path.exists()

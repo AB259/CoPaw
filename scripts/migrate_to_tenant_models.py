@@ -335,7 +335,7 @@ def main() -> None:
     save_tenant_config(tenant_config)
 
     # Verify migration
-    config_path = WORKING_DIR / "tenants" / "default" / "tenant_models.json"
+    config_path = TenantModelManager.get_config_path("default")
     verify_migration(config_path)
 
     logger.info("Migration completed successfully!")

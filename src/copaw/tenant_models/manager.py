@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Configuration manager for tenant model configurations."""
 
 import json
@@ -5,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from copaw.constant import WORKING_DIR
+from copaw.constant import SECRET_DIR
 from copaw.tenant_models.exceptions import TenantModelNotFoundError
 from copaw.tenant_models.models import TenantModelConfig
 
@@ -34,8 +35,9 @@ class TenantModelManager:
 
         Returns:
             Path to the tenant's configuration file.
+            Path format: ~/.copaw.secret/{tenant_id}/tenant_models.json
         """
-        return WORKING_DIR / "tenants" / tenant_id / "tenant_models.json"
+        return SECRET_DIR / tenant_id / "tenant_models.json"
 
     @classmethod
     def load(cls, tenant_id: str) -> TenantModelConfig:
