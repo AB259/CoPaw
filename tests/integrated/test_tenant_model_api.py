@@ -54,13 +54,17 @@ def tenant1_config():
                 api_key="tenant1-key",
                 models=["gpt-4"],
                 enabled=True,
-            )
+            ),
         ],
         routing=RoutingConfig(
             mode="cloud_first",
             slots={
-                "cloud": ModelSlot(provider_id="tenant1-openai", model="gpt-4"),
-                "local": ModelSlot(provider_id="tenant1-ollama", model="llama2"),
+                "cloud": ModelSlot(
+                    provider_id="tenant1-openai", model="gpt-4"
+                ),
+                "local": ModelSlot(
+                    provider_id="tenant1-ollama", model="llama2"
+                ),
             },
         ),
     )
@@ -78,24 +82,29 @@ def tenant2_config():
                 api_key="tenant2-key",
                 models=["claude-3"],
                 enabled=True,
-            )
+            ),
         ],
         routing=RoutingConfig(
             mode="local_first",
             slots={
-                "local": ModelSlot(provider_id="tenant2-ollama", model="mistral"),
-                "cloud": ModelSlot(provider_id="tenant2-anthropic", model="claude-3"),
+                "local": ModelSlot(
+                    provider_id="tenant2-ollama", model="mistral"
+                ),
+                "cloud": ModelSlot(
+                    provider_id="tenant2-anthropic", model="claude-3"
+                ),
             },
         ),
     )
 
 
 def test_tenant_model_api_returns_tenant_specific_config(
-    tmp_path, tenant1_config
+    tmp_path,
+    tenant1_config,
 ) -> None:
     """Test that the API returns tenant-specific configuration."""
     # Setup tenant configuration
-    with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+    with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
         # Clear cache before test
         TenantModelManager.invalidate_cache()
 
@@ -151,7 +160,9 @@ def test_tenant_model_api_returns_tenant_specific_config(
                         )
 
                     try:
-                        response = client.get(f"http://{host}:{port}/api/version")
+                        response = client.get(
+                            f"http://{host}:{port}/api/version"
+                        )
                         if response.status_code == 200:
                             backend_ready = True
                             break
@@ -161,7 +172,8 @@ def test_tenant_model_api_returns_tenant_specific_config(
                 if not backend_ready:
                     logs = "".join(log_lines)[-4000:]
                     raise AssertionError(
-                        "Backend did not start within timeout period.\n" f"Logs:\n{logs}"
+                        "Backend did not start within timeout period.\n"
+                        f"Logs:\n{logs}",
                     )
 
                 # Test the tenant providers API endpoint
@@ -207,11 +219,13 @@ def test_tenant_model_api_returns_tenant_specific_config(
 
 
 def test_tenant_isolation_different_tenants_return_different_configs(
-    tmp_path, tenant1_config, tenant2_config
+    tmp_path,
+    tenant1_config,
+    tenant2_config,
 ) -> None:
     """Test that different tenants receive different configurations."""
     # Setup tenant configurations
-    with patch("copaw.tenant_models.manager.WORKING_DIR", tmp_path):
+    with patch("copaw.tenant_models.manager.SECRET_DIR", tmp_path):
         # Clear cache before test
         TenantModelManager.invalidate_cache()
 
@@ -268,7 +282,9 @@ def test_tenant_isolation_different_tenants_return_different_configs(
                         )
 
                     try:
-                        response = client.get(f"http://{host}:{port}/api/version")
+                        response = client.get(
+                            f"http://{host}:{port}/api/version"
+                        )
                         if response.status_code == 200:
                             backend_ready = True
                             break
@@ -278,7 +294,8 @@ def test_tenant_isolation_different_tenants_return_different_configs(
                 if not backend_ready:
                     logs = "".join(log_lines)[-4000:]
                     raise AssertionError(
-                        "Backend did not start within timeout period.\n" f"Logs:\n{logs}"
+                        "Backend did not start within timeout period.\n"
+                        f"Logs:\n{logs}",
                     )
 
                 # Request configuration for tenant1

@@ -5,8 +5,6 @@
 class TenantModelError(RuntimeError):
     """Base exception for tenant model configuration errors."""
 
-    pass
-
 
 class TenantModelNotFoundError(TenantModelError):
     """Raised when tenant model configuration is not found."""
@@ -43,5 +41,3 @@ class TenantModelProviderError(TenantModelError):
 
 class TenantModelValidationError(TenantModelError):
     """Raised when tenant model configuration validation fails."""
-
-    pass

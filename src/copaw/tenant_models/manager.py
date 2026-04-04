@@ -96,7 +96,7 @@ class TenantModelManager:
         config_path = cls.get_config_path(tenant_id)
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(config_path, "w") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             f.write(config.model_dump_json(indent=2))
 
         # Update cache (with lock for thread safety)
@@ -143,6 +143,6 @@ class TenantModelManager:
             ValidationError: If the configuration is invalid.
             JSONDecodeError: If the file contains invalid JSON.
         """
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
         return TenantModelConfig(**data)

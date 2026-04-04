@@ -12,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import pytest
 
-from copaw.app.workspace.tenant_pool import TenantWorkspacePool, TenantWorkspaceEntry
+from copaw.app.workspace.tenant_pool import (
+    TenantWorkspacePool,
+    TenantWorkspaceEntry,
+)
 
 
 class TestTenantWorkspacePoolBasics:
@@ -51,85 +54,87 @@ class TestTenantWorkspacePoolBasics:
 class TestTenantWorkspaceCreation:
     """Tests for workspace creation."""
 
-    def test_get_or_create_creates_workspace(self, tmp_path):
+    async def test_get_or_create_creates_workspace(self, tmp_path):
         """get_or_create creates a new workspace."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        workspace = pool.get_or_create("tenant-1")
+        workspace = await pool.get_or_create("tenant-1")
 
         assert workspace is not None
         assert workspace.agent_id == "default"
-        assert workspace.workspace_dir == pool._get_tenant_workspace_dir("tenant-1")
+        assert workspace.workspace_dir == pool._get_tenant_workspace_dir(
+            "tenant-1"
+        )
 
-    def test_get_or_create_with_custom_agent_id(self, tmp_path):
-        """get_or_create uses provided agent_id."""
+    async def test_get_or_create_uses_default_agent_id(self, tmp_path):
+        """get_or_create uses default agent_id."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        workspace = pool.get_or_create("tenant-1", agent_id="custom-agent")
+        workspace = await pool.get_or_create("tenant-1")
 
-        assert workspace.agent_id == "custom-agent"
+        assert workspace.agent_id == "default"
 
-    def test_get_or_create_creates_tenant_dir(self, tmp_path):
+    async def test_get_or_create_creates_tenant_dir(self, tmp_path):
         """get_or_create creates tenant workspace directory."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")
 
         tenant_dir = pool._get_tenant_workspace_dir("tenant-1")
         assert tenant_dir.exists()
         assert tenant_dir.is_dir()
 
-    def test_get_or_create_returns_existing_workspace(self, tmp_path):
+    async def test_get_or_create_returns_existing_workspace(self, tmp_path):
         """get_or_create returns existing workspace on second call."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        workspace1 = pool.get_or_create("tenant-1")
-        workspace2 = pool.get_or_create("tenant-1")
+        workspace1 = await pool.get_or_create("tenant-1")
+        workspace2 = await pool.get_or_create("tenant-1")
 
         assert workspace1 is workspace2  # Same instance
 
-    def test_get_or_create_increases_pool_size(self, tmp_path):
+    async def test_get_or_create_increases_pool_size(self, tmp_path):
         """get_or_create increases pool size."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
         assert len(pool) == 0
 
-        pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")
         assert len(pool) == 1
 
-        pool.get_or_create("tenant-2")
+        await pool.get_or_create("tenant-2")
         assert len(pool) == 2
 
         # Same tenant doesn't increase size
-        pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")
         assert len(pool) == 2
 
 
 class TestTenantWorkspaceGet:
     """Tests for get method."""
 
-    def test_get_returns_none_when_not_exists(self, tmp_path):
+    async def test_get_returns_none_when_not_exists(self, tmp_path):
         """get returns None when workspace doesn't exist."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        result = pool.get("tenant-1")
+        result = await pool.get("tenant-1")
 
         assert result is None
 
-    def test_get_returns_existing_workspace(self, tmp_path):
+    async def test_get_returns_existing_workspace(self, tmp_path):
         """get returns workspace if it exists."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        created = pool.get_or_create("tenant-1")
-        retrieved = pool.get("tenant-1")
+        created = await pool.get_or_create("tenant-1")
+        retrieved = await pool.get("tenant-1")
 
         assert retrieved is created
 
-    def test_get_does_not_create_workspace(self, tmp_path):
+    async def test_get_does_not_create_workspace(self, tmp_path):
         """get does not create workspace if not exists."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        result = pool.get("tenant-1")
+        result = await pool.get("tenant-1")
 
         assert result is None
         assert len(pool) == 0
@@ -138,51 +143,51 @@ class TestTenantWorkspaceGet:
 class TestTenantWorkspaceRemove:
     """Tests for remove method."""
 
-    def test_remove_returns_none_when_not_exists(self, tmp_path):
+    async def test_remove_returns_none_when_not_exists(self, tmp_path):
         """remove returns None when workspace doesn't exist."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        result = pool.remove("tenant-1")
+        result = await pool.remove("tenant-1")
 
         assert result is None
 
-    def test_remove_returns_workspace(self, tmp_path):
+    async def test_remove_returns_workspace(self, tmp_path):
         """remove returns workspace when it exists."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        created = pool.get_or_create("tenant-1")
-        removed = pool.remove("tenant-1")
+        created = await pool.get_or_create("tenant-1")
+        removed = await pool.remove("tenant-1")
 
         assert removed is created
 
-    def test_removes_from_pool(self, tmp_path):
+    async def test_removes_from_pool(self, tmp_path):
         """remove removes workspace from pool."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")
         assert "tenant-1" in pool
 
-        pool.remove("tenant-1")
+        await pool.remove("tenant-1")
         assert "tenant-1" not in pool
 
 
 class TestTenantWorkspaceStop:
     """Tests for stop method."""
 
-    def test_stop_returns_false_when_not_exists(self, tmp_path):
+    async def test_stop_returns_false_when_not_exists(self, tmp_path):
         """stop returns False when workspace doesn't exist."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        result = asyncio.run(pool.stop("tenant-1"))
+        result = await pool.stop("tenant-1")
 
         assert result is False
 
-    def test_stop_removes_from_pool(self, tmp_path):
+    async def test_stop_removes_from_pool(self, tmp_path):
         """stop removes workspace from pool."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
-        asyncio.run(pool.stop("tenant-1"))
+        await pool.get_or_create("tenant-1")
+        await pool.stop("tenant-1")
 
         assert "tenant-1" not in pool
 
@@ -190,25 +195,25 @@ class TestTenantWorkspaceStop:
 class TestTenantWorkspaceStopAll:
     """Tests for stop_all method."""
 
-    def test_stop_all_empty_pool(self, tmp_path):
+    async def test_stop_all_empty_pool(self, tmp_path):
         """stop_all handles empty pool."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        asyncio.run(pool.stop_all())
+        await pool.stop_all()
 
         assert len(pool) == 0
 
-    def test_stop_all_removes_all_workspaces(self, tmp_path):
+    async def test_stop_all_removes_all_workspaces(self, tmp_path):
         """stop_all removes all workspaces from pool."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
-        pool.get_or_create("tenant-2")
-        pool.get_or_create("tenant-3")
+        await pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-2")
+        await pool.get_or_create("tenant-3")
 
         assert len(pool) == 3
 
-        asyncio.run(pool.stop_all())
+        await pool.stop_all()
 
         assert len(pool) == 0
 
@@ -216,58 +221,59 @@ class TestTenantWorkspaceStopAll:
 class TestTenantWorkspaceAccessTracking:
     """Tests for access tracking."""
 
-    def test_mark_access_updates_timestamp(self, tmp_path):
+    async def test_mark_access_updates_timestamp(self, tmp_path):
         """mark_access updates last_accessed_at."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")
 
-        pool.mark_access("tenant-1")
+        await pool.mark_access("tenant-1")
 
         # Entry was updated (we can't easily test the exact timestamp)
-        assert pool.mark_access("tenant-1") is True
+        result = await pool.mark_access("tenant-1")
+        assert result is True
 
-    def test_mark_access_returns_false_when_not_exists(self, tmp_path):
+    async def test_mark_access_returns_false_when_not_exists(self, tmp_path):
         """mark_access returns False when workspace doesn't exist."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        result = pool.mark_access("tenant-1")
+        result = await pool.mark_access("tenant-1")
 
         assert result is False
 
-    def test_get_or_create_tracks_access(self, tmp_path):
+    async def test_get_or_create_tracks_access(self, tmp_path):
         """get_or_create tracks access count."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
-        pool.get_or_create("tenant-1")  # Second access
-        pool.get_or_create("tenant-1")  # Third access
+        await pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-1")  # Second access
+        await pool.get_or_create("tenant-1")  # Third access
 
         # Access should have been tracked (via get_or_create -> mark_access)
-        stats = pool.get_stats()
+        stats = await pool.get_stats()
         assert stats["tenants"]["tenant-1"]["access_count"] >= 1
 
 
 class TestTenantWorkspaceStats:
     """Tests for get_stats method."""
 
-    def test_get_stats_empty_pool(self, tmp_path):
+    async def test_get_stats_empty_pool(self, tmp_path):
         """get_stats returns empty info for empty pool."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        stats = pool.get_stats()
+        stats = await pool.get_stats()
 
         assert stats["tenant_count"] == 0
         assert stats["tenants"] == {}
 
-    def test_get_stats_with_tenants(self, tmp_path):
+    async def test_get_stats_with_tenants(self, tmp_path):
         """get_stats returns info for all tenants."""
         pool = TenantWorkspacePool(tmp_path / "tenants")
 
-        pool.get_or_create("tenant-1")
-        pool.get_or_create("tenant-2")
+        await pool.get_or_create("tenant-1")
+        await pool.get_or_create("tenant-2")
 
-        stats = pool.get_stats()
+        stats = await pool.get_stats()
 
         assert stats["tenant_count"] == 2
         assert "tenant-1" in stats["tenants"]
@@ -286,7 +292,7 @@ class TestTenantWorkspaceConcurrency:
 
         async def run_test():
             async def get_workspace():
-                return pool.get_or_create("tenant-1")
+                return await pool.get_or_create("tenant-1")
 
             return await asyncio.gather(*[get_workspace() for _ in range(10)])
 
@@ -302,10 +308,10 @@ class TestTenantWorkspaceConcurrency:
 
         async def run_test():
             async def get_workspace(tenant_id):
-                return pool.get_or_create(tenant_id)
+                return await pool.get_or_create(tenant_id)
 
             return await asyncio.gather(
-                *[get_workspace(f"tenant-{i}") for i in range(5)]
+                *[get_workspace(f"tenant-{i}") for i in range(5)],
             )
 
         workspaces = asyncio.run(run_test())
@@ -365,6 +371,7 @@ class TestTenantWorkspaceEntry:
 
     def test_entry_creation(self):
         """TenantWorkspaceEntry can be created."""
+
         # Create a mock workspace
         class MockWorkspace:
             pass

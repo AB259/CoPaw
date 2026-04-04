@@ -32,6 +32,7 @@ from .config import (
     load_agent_config,
     save_agent_config,
 )
+from .context import get_current_tenant_id, TenantContextError
 
 logger = logging.getLogger(__name__)
 
@@ -634,8 +635,6 @@ def get_chats_path() -> Path:
 # Tenant-aware path helpers
 # =============================================================================
 
-from .context import get_current_tenant_id, TenantContextError
-
 
 def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     """Get tenant-specific working directory.
@@ -749,8 +748,6 @@ def get_tenant_env(
     secrets_dir = get_tenant_secrets_dir(tenant_id)
     envs_path = secrets_dir / "envs.json"
     try:
-        import json
-
         if not envs_path.is_file():
             return default
         with open(envs_path, "r", encoding="utf-8") as fh:

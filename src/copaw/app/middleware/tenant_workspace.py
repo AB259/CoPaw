@@ -15,12 +15,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from ...config.context import (
+from copaw.config.context import (
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
-from ...tenant_models import TenantModelManager, TenantModelContext
-from ...tenant_models.exceptions import TenantModelNotFoundError
+from copaw.tenant_models import TenantModelManager, TenantModelContext
+from copaw.tenant_models.exceptions import TenantModelNotFoundError
 
 logger = logging.getLogger(__name__)
 
