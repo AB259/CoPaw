@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Context management for tenant model configuration.
 
 This module provides context variables to manage tenant-specific model configurations,
@@ -68,7 +69,7 @@ class TenantModelContext:
         if config is None:
             raise TenantContextError(
                 "TenantModelConfig is not set in context. "
-                "Ensure this code runs within a tenant-scoped request or context."
+                "Ensure this code runs within a tenant-scoped request or context.",
             )
         return config
 

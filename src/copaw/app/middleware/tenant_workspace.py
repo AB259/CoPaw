@@ -98,7 +98,9 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                     # Load and bind tenant model configuration
                     try:
                         model_config = TenantModelManager.load(tenant_id)
-                        model_config_token = TenantModelContext.set_config(model_config)
+                        model_config_token = TenantModelContext.set_config(
+                            model_config,
+                        )
                         logger.debug(
                             "TenantWorkspaceMiddleware: loaded model config for tenant=%s",
                             tenant_id,
@@ -187,7 +189,9 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             workspace = await pool.get_or_create(tenant_id)
             return workspace
         except Exception as e:
-            logger.error(f"Error loading workspace for tenant {tenant_id}: {e}")
+            logger.error(
+                f"Error loading workspace for tenant {tenant_id}: {e}",
+            )
             return None
 
     def _is_workspace_exempt(self, path: str) -> bool:
@@ -200,25 +204,27 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             True if the route is exempt, False otherwise.
         """
         # Same exemptions as tenant identity for consistency
-        exempt_paths = frozenset([
-            "/health",
-            "/healthz",
-            "/ready",
-            "/readyz",
-            "/alive",
-            "/api/version",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-            "/api/auth/login",
-            "/api/auth/register",
-            "/api/auth/refresh",
-            "/api/auth/logout",
-            "/logo.png",
-            "/dark-logo.png",
-            "/copaw-symbol.svg",
-            "/copaw-dark.png",
-        ])
+        exempt_paths = frozenset(
+            [
+                "/health",
+                "/healthz",
+                "/ready",
+                "/readyz",
+                "/alive",
+                "/api/version",
+                "/docs",
+                "/redoc",
+                "/openapi.json",
+                "/api/auth/login",
+                "/api/auth/register",
+                "/api/auth/refresh",
+                "/api/auth/logout",
+                "/logo.png",
+                "/dark-logo.png",
+                "/copaw-symbol.svg",
+                "/copaw-dark.png",
+            ],
+        )
 
         if path in exempt_paths:
             return True

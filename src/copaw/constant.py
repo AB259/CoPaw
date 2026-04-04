@@ -38,7 +38,10 @@ class EnvVarLoader:
         """Get a boolean environment variable,
         interpreting common truthy values."""
         overrides = _ENV_VAR_OVERRIDES.get()
-        val = overrides.get(env_var, os.environ.get(env_var, str(default))).lower()
+        val = overrides.get(
+            env_var,
+            os.environ.get(env_var, str(default)),
+        ).lower()
         return val in ("true", "1", "yes")
 
     @staticmethod
@@ -53,7 +56,9 @@ class EnvVarLoader:
         and infinity handling."""
         try:
             overrides = _ENV_VAR_OVERRIDES.get()
-            value = float(overrides.get(env_var, os.environ.get(env_var, str(default))))
+            value = float(
+                overrides.get(env_var, os.environ.get(env_var, str(default))),
+            )
             if min_value is not None and value < min_value:
                 return min_value
             if max_value is not None and value > max_value:
@@ -76,7 +81,9 @@ class EnvVarLoader:
         """Get an integer environment variable with optional bounds."""
         try:
             overrides = _ENV_VAR_OVERRIDES.get()
-            value = int(overrides.get(env_var, os.environ.get(env_var, str(default))))
+            value = int(
+                overrides.get(env_var, os.environ.get(env_var, str(default))),
+            )
             if min_value is not None and value < min_value:
                 return min_value
             if max_value is not None and value > max_value:

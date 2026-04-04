@@ -780,7 +780,7 @@ def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
         if tenant_id is None:
             raise TenantContextError(
                 "Tenant context required. "
-                "Ensure this code runs within a tenant-scoped request or context."
+                "Ensure this code runs within a tenant-scoped request or context.",
             )
 
     return WORKING_DIR / tenant_id

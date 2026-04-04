@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tenant model configuration management module."""
 
 from copaw.tenant_models.context import TenantModelContext

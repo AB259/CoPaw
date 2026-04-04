@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Data models for tenant model configuration."""
 
 from typing import Any, Dict, List, Literal, Optional

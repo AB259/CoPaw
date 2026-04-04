@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Exception classes for tenant model configuration management."""
 
 
@@ -18,7 +19,9 @@ class TenantModelNotFoundError(TenantModelError):
             tenant_id: The tenant ID for which configuration was not found.
         """
         self.tenant_id = tenant_id
-        super().__init__(f"Tenant model config not found for tenant: {tenant_id}")
+        super().__init__(
+            f"Tenant model config not found for tenant: {tenant_id}",
+        )
 
 
 class TenantModelProviderError(TenantModelError):
@@ -33,7 +36,9 @@ class TenantModelProviderError(TenantModelError):
             reason: The reason for the failure.
         """
         self.provider_id = provider_id
-        super().__init__(f"Failed to instantiate provider '{provider_id}': {reason}")
+        super().__init__(
+            f"Failed to instantiate provider '{provider_id}': {reason}",
+        )
 
 
 class TenantModelValidationError(TenantModelError):
