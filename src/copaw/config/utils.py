@@ -641,7 +641,7 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
 
     Args:
         tenant_id: Tenant ID. If None, uses current tenant from context
-            or falls back to global WORKING_DIR.
+            or falls back to "default" tenant.
 
     Returns:
         Path to tenant working directory.
@@ -649,10 +649,11 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     if tenant_id is None:
         tenant_id = get_current_tenant_id()
 
-    if tenant_id:
-        return WORKING_DIR / tenant_id
+    # Always use tenant subdirectory; default to "default" tenant
+    if not tenant_id:
+        tenant_id = "default"
 
-    return WORKING_DIR
+    return WORKING_DIR / tenant_id
 
 
 def get_tenant_config_path(tenant_id: str | None = None) -> Path:
