@@ -752,7 +752,7 @@ def create_model_and_formatter(
 
     # Create chat model from agent-specific or global config
     if model_slot and model_slot.provider_id and model_slot.model:
-        # Use agent-specific model
+        # Use agent-specific model (tenant-isolated)
         manager = ProviderManager.get_instance()
         provider = manager.get_provider(model_slot.provider_id)
         if provider is None:
@@ -763,16 +763,14 @@ def create_model_and_formatter(
         model = provider.get_chat_model_instance(model_slot.model)
         provider_id = model_slot.provider_id
     else:
-        # Fallback to global active model
-        model = ProviderManager.get_active_chat_model()
-        global_model = ProviderManager.get_instance().get_active_model()
-        if not global_model:
-            raise ValueError(
-                "No active model configured. "
-                "Please configure a model using 'copaw models config' "
-                "or set an agent-specific model.",
-            )
-        provider_id = global_model.provider_id
+        # [REMEDIATION] No longer fallback to global active model for isolation
+        # Tenant must have explicit model configuration
+        raise ValueError(
+            "No tenant model configuration found. "
+            "Please configure a model for this tenant using the admin panel "
+            "or ensure TenantModelContext is properly set. "
+            "Multi-tenant isolation requires explicit per-tenant model configuration.",
+        )
 
     # Create the formatter based on the real model class
     formatter = _create_formatter_instance(model.__class__)

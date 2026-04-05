@@ -21,6 +21,7 @@ from copaw.providers.provider import (
 from copaw.providers.models import ModelSlotConfig
 from copaw.providers.openai_provider import OpenAIProvider
 from copaw.providers.anthropic_provider import AnthropicProvider
+
 # from copaw.providers.gemini_provider import GeminiProvider
 from copaw.providers.ollama_provider import OllamaProvider
 from copaw.constant import SECRET_DIR
@@ -1143,7 +1144,21 @@ class ProviderManager:
 
     @staticmethod
     def get_active_chat_model() -> ChatModelBase:
-        """Get the currently active provider/model configuration."""
+        """Get the currently active provider/model configuration.
+
+        .. deprecated::
+            This method is deprecated in multi-tenant environments.
+            Use TenantModelContext.get_config() for tenant-isolated model selection.
+        """
+        import warnings
+
+        warnings.warn(
+            "get_active_chat_model() accesses global active model which is not "
+            "isolated per tenant. In multi-tenant environments, use "
+            "TenantModelContext.get_config() for proper tenant isolation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         manager = ProviderManager.get_instance()
         model = manager.get_active_model()
         if model is None or model.provider_id == "" or model.model == "":

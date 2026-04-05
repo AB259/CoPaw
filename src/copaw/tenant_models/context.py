@@ -69,9 +69,46 @@ class TenantModelContext:
         if config is None:
             raise TenantContextError(
                 "TenantModelConfig is not set in context. "
-                "Ensure this code runs within a tenant-scoped request or context.",
+                "This usually means:\n"
+                "1. You're running outside of a request context\n"
+                "2. The tenant workspace middleware is not configured\n"
+                "3. The tenant has no model configuration\n"
+                "Please ensure TenantModelContext.set_config() is called "
+                "before model selection, or configure a model for this tenant.",
             )
         return config
+
+    @staticmethod
+    def is_configured() -> bool:
+        """Check if a model configuration is set in context.
+
+        Returns:
+            True if a TenantModelConfig is set in context, False otherwise.
+
+        Example:
+            if TenantModelContext.is_configured():
+                config = TenantModelContext.get_config()
+            else:
+                # Handle unconfigured tenant
+                pass
+        """
+        return _current_model_config.get() is not None
+
+    @staticmethod
+    def get_config_or_raise() -> TenantModelConfig:
+        """Get the current tenant model configuration with detailed error.
+
+        This is an alias for get_config_strict() with improved error messages
+        for multi-tenant isolation debugging.
+
+        Returns:
+            The current TenantModelConfig.
+
+        Raises:
+            TenantContextError: If model configuration is not set in context,
+                with detailed troubleshooting information.
+        """
+        return TenantModelContext.get_config_strict()
 
     @staticmethod
     def reset_config(token: Token) -> None:
