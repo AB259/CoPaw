@@ -85,7 +85,6 @@ logs/
 
 # vibe coding
 .claude
-openspec
 *.tmp
 
 # Build cache
