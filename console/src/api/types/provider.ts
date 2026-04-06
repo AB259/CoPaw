@@ -53,10 +53,14 @@ export interface GetActiveModelsRequest {
   agent_id?: string;
 }
 
+export type ActiveModelWriteScope = "global" | "agent";
+
 export interface ModelSlotRequest {
   provider_id: string;
   model: string;
-  scope: Exclude<ActiveModelScope, "effective">;
+  /** @deprecated 'agent' scope is deprecated. Use 'global' for tenant-level active model. */
+  scope: ActiveModelWriteScope;
+  /** @deprecated agent_id is no longer used. Models are now tenant-scoped. */
   agent_id?: string;
 }
 

@@ -11,7 +11,6 @@ import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { providerApi } from "../../../api/modules/provider";
 import type { ProviderInfo, ActiveModelsInfo } from "../../../api/types";
-import { useAgentStore } from "../../../stores/agentStore";
 import styles from "./index.module.less";
 
 interface EligibleProvider {
@@ -31,17 +30,16 @@ export default function ModelSelector() {
   const [open, setOpen] = useState(false);
   const savingRef = useRef(false);
   const location = useLocation();
-  const { selectedAgent } = useAgentStore();
   const { message } = useAppMessage();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      // Use tenant-level scope (agent scope deprecated)
       const [provData, activeData] = await Promise.all([
         providerApi.listProviders(),
         providerApi.getActiveModels({
           scope: "effective",
-          agent_id: selectedAgent,
         }),
       ]);
       if (Array.isArray(provData)) setProviders(provData);
@@ -51,7 +49,7 @@ export default function ModelSelector() {
     } finally {
       setLoading(false);
     }
-  }, [selectedAgent]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -65,17 +63,17 @@ export default function ModelSelector() {
     prevPathRef.current = curr;
     const comingToChat = curr.startsWith("/chat") && !prev.startsWith("/chat");
     if (comingToChat) {
+      // Use tenant-level scope (agent scope deprecated)
       providerApi
         .getActiveModels({
           scope: "effective",
-          agent_id: selectedAgent,
         })
         .then((activeData) => {
           if (activeData) setActiveModels(activeData);
         })
         .catch(() => {});
     }
-  }, [location.pathname, selectedAgent]);
+  }, [location.pathname]);
 
   // Eligible providers: configured + has models
   const eligibleProviders: EligibleProvider[] = providers
@@ -115,10 +113,10 @@ export default function ModelSelector() {
       setOpen(next);
       if (next) {
         // Re-fetch active model every time the dropdown opens
+        // Use tenant-level scope (agent scope deprecated)
         try {
           const activeData = await providerApi.getActiveModels({
             scope: "effective",
-            agent_id: selectedAgent,
           });
           if (activeData) setActiveModels(activeData);
         } catch {
@@ -126,7 +124,7 @@ export default function ModelSelector() {
         }
       }
     },
-    [selectedAgent],
+    [],
   );
 
   const handleSelect = async (providerId: string, modelId: string) => {
@@ -139,11 +137,11 @@ export default function ModelSelector() {
     setSaving(true);
     setOpen(false);
     try {
+      // Use 'global' scope - tenant-level active model (agent scope deprecated)
       await providerApi.setActiveLlm({
         provider_id: providerId,
         model: modelId,
-        scope: "agent",
-        agent_id: selectedAgent,
+        scope: "global",
       });
       setActiveModels({
         active_llm: { provider_id: providerId, model: modelId },
