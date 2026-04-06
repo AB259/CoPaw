@@ -481,16 +481,13 @@ async def get_active_models(
 
     - effective: Returns tenant-level active model (agent-specific fallback removed)
     - global: ProviderManager global model (tenant-level model)
-    - agent: DEPRECATED - will raise error
+    - agent: DEPRECATED - treated as 'global' for backward compatibility
     """
+    # Short-term compatibility: normalize legacy 'agent' scope to 'global'
     if scope == "agent":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Agent-level model configuration is deprecated. "
-                "Models are now managed at tenant level. "
-                "Use 'global' scope to get tenant-level active model."
-            ),
+        logger.warning(
+            "Received deprecated scope='agent' for get_active_models. "
+            "Treating as 'global'. Client should be updated to use scope='global'.",
         )
 
     # For 'effective' and 'global', return the tenant-level active model
