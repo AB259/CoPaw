@@ -8,8 +8,10 @@ and binds workspace context for the duration of the request.
 Middleware ordering: Must come after TenantIdentityMiddleware and before
 AgentContextMiddleware.
 """
+import fcntl
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Callable, Awaitable, Optional
 
@@ -258,7 +260,7 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         """
         tenant_providers_dir = SECRET_DIR / tenant_id / "providers"
 
-        # Fast path: already exists
+        # Fast path: already exists (avoids lock overhead for 99% of calls)
         if tenant_providers_dir.exists():
             return
 
@@ -268,9 +270,9 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             # Create parent directory if needed
             tenant_providers_dir.parent.mkdir(parents=True, exist_ok=True)
 
-            # Simple file-based locking
-            import time
-            import fcntl
+            # Simple file-based locking with timeout
+            max_wait_seconds = 30.0
+            deadline = time.monotonic() + max_wait_seconds
 
             with open(lock_file, "w", encoding="utf-8") as f:
                 # Wait until we acquire the lock or another process initializes
@@ -279,7 +281,12 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                     try:
                         fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         break  # Acquired lock, proceed with initialization
-                    except (IOError, OSError):
+                    except (IOError, OSError) as exc:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(
+                                f"Timeout waiting for provider "
+                                f"initialization lock for tenant {tenant_id}",
+                            ) from exc
                         # Another process is initializing, wait and recheck
                         logger.debug(
                             "Waiting for concurrent provider initialization "
@@ -346,11 +353,9 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             # mask real issues and create an invalid state. Re-raise to
             # let the caller handle the failure.
             raise
-        finally:
-            # Keep lock file for reuse - frequent deletion/recreation can
-            # cause race conditions. The flock mechanism doesn't require
-            # the file to be deleted.
-            pass
+        # Lock file is kept for reuse - frequent deletion/recreation can
+        # cause race conditions. The flock mechanism doesn't require
+        # the file to be deleted.
 
     def _is_workspace_exempt(self, path: str) -> bool:
         """Check if a route is exempt from workspace requirements.

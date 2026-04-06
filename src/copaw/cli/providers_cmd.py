@@ -380,9 +380,9 @@ def configure_llm_slot_interactive(
                 fg="yellow",
             ),
         )
-        pid = configure_provider_api_key_interactive()
-        _add_models_interactive(pid)
-        manager = _manager()
+        pid = configure_provider_api_key_interactive(tenant_id=tenant_id)
+        _add_models_interactive(pid, tenant_id=tenant_id)
+        manager = _manager(tenant_id)
         current_slot = manager.get_active_model()
         eligible = _filter_eligible(_all_provider_objects(manager))
         if not eligible:
