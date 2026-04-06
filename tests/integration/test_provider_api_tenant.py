@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from copaw.app.routers.providers import router as providers_router
+from copaw.app.routers.providers import tenant_providers_router
 from copaw.providers.provider import ProviderInfo
 
 
@@ -30,6 +31,8 @@ def client():
 
     # Don't add prefix - the router already has /models prefix
     app.include_router(providers_router)
+    # Include deprecated /providers router
+    app.include_router(tenant_providers_router)
     return TestClient(app)
 
 
@@ -196,6 +199,55 @@ class TestProviderAPISetActiveModel:
             # Verify get_instance was called with tenant-e
             mock_pm_class.get_instance.assert_called_with("tenant-e")
 
+    def test_set_active_model_scope_agent_is_compatible(self, client):
+        """PUT /models/active with scope=agent is treated as global (backward compat)."""
+        with patch(
+            "copaw.app.routers.providers.ProviderManager",
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            mock_manager.activate_model = AsyncMock(return_value=None)
+            mock_manager.get_active_model.return_value = None
+            mock_pm_class.get_instance.return_value = mock_manager
+
+            # Use deprecated scope=agent
+            response = client.put(
+                "/models/active",
+                headers={"X-Tenant-Id": "tenant-compat"},
+                json={
+                    "provider_id": "openai",
+                    "model": "gpt-4",
+                    "scope": "agent",
+                },
+            )
+
+            # Should succeed (not return 400 error)
+            assert response.status_code == 200
+            # Should call activate_model (normalized to global scope)
+            mock_manager.activate_model.assert_called_once_with(
+                "openai", "gpt-4"
+            )
+
+    def test_set_active_model_invalid_scope_rejected(self, client):
+        """PUT /models/active with invalid scope fails validation."""
+        with patch(
+            "copaw.app.routers.providers.ProviderManager",
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            mock_pm_class.get_instance.return_value = mock_manager
+
+            response = client.put(
+                "/models/active",
+                headers={"X-Tenant-Id": "tenant-invalid"},
+                json={
+                    "provider_id": "openai",
+                    "model": "gpt-4",
+                    "scope": "invalid_scope",
+                },
+            )
+
+            # Pydantic validation rejects invalid enum values (422)
+            assert response.status_code == 422
+
 
 class TestProviderAPITenantIsolation:
     """Tests for tenant isolation in provider API."""
@@ -294,3 +346,64 @@ class TestProviderAPITenantIsolation:
             ]
             assert "tenant-x" in calls
             assert "tenant-y" in calls
+
+
+class TestDeprecatedProvidersEndpoint:
+    """Tests for deprecated /providers endpoint (provider-backed view)."""
+
+    def test_deprecated_providers_endpoint_returns_provider_data(self, client):
+        """GET /providers returns provider-backed data with deprecation flag."""
+        with patch(
+            "copaw.app.routers.providers.ProviderManager",
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            mock_manager.list_provider_info = AsyncMock(
+                return_value=[
+                    ProviderInfo(
+                        id="openai",
+                        name="OpenAI",
+                        base_url="https://api.openai.com/v1",
+                        is_custom=False,
+                    ),
+                ],
+            )
+            from copaw.providers.models import ModelSlotConfig
+
+            mock_manager.get_active_model.return_value = ModelSlotConfig(
+                provider_id="openai",
+                model="gpt-4",
+            )
+            mock_pm_class.get_instance.return_value = mock_manager
+
+            # Patch get_current_tenant_id which the endpoint uses
+            with patch(
+                "copaw.app.routers.providers.get_current_tenant_id",
+                return_value="tenant-deprecated",
+            ):
+                response = client.get("/providers")
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Verify provider-backed structure
+            assert data["tenant_id"] == "tenant-deprecated"
+            assert "providers" in data
+            assert "active_model" in data
+            assert data["active_model"]["provider_id"] == "openai"
+            assert data["active_model"]["model"] == "gpt-4"
+
+            # Verify deprecation flag
+            assert data["deprecated"] is True
+            assert "migration_note" in data
+            assert "/models" in data["migration_note"]
+
+    def test_deprecated_providers_endpoint_requires_tenant(self, client):
+        """GET /providers requires tenant ID."""
+        with patch(
+            "copaw.app.routers.providers.get_current_tenant_id",
+            return_value=None,
+        ):
+            response = client.get("/providers")
+
+            assert response.status_code == 400
+            assert "Tenant ID not set" in response.json()["detail"]

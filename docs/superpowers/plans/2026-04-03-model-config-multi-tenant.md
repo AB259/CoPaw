@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+---
+
+> **重要更新 (2026-04-06)**:
+>
+> 本计划已被 `unify-tenant-active-model-source` 变更取代。Active model 来源已统一为 `ProviderManager`
+> 管理的 `providers/active_model.json`，不再使用 `tenant_models.json` 作为运行时来源。
+>
+> **状态**: 本计划中的实现已完成，但架构已演进为统一 provider-backed 方案。
+> 如需了解当前实现，请参考 `openspec/changes/unify-tenant-active-model-source/`。
+
+---
+
 **Goal:** 实现模型配置的多租户隔离，每个租户拥有独立的模型配置文件，Agent 自动使用所属租户的配置
 
 **Architecture:** 基于配置文件存储（非数据库），创建独立的 tenant_models 模块处理租户级别模型配置，通过 ContextVar 绑定到请求上下文，API 自动返回当前租户的 provider 列表

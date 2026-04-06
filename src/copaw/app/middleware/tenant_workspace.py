@@ -21,8 +21,6 @@ from copaw.config.context import (
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
-from copaw.tenant_models import TenantModelManager, TenantModelContext
-from copaw.tenant_models.exceptions import TenantModelNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +96,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         tenant_id = getattr(request.state, "tenant_id", None)
         workspace = None
         workspace_token = None
-        model_config_token = None
 
         try:
             # Load workspace if tenant_id is available
@@ -120,29 +117,11 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                         f"tenant={tenant_id}, path={workspace.workspace_dir}",
                     )
 
-                    # Load and bind tenant model configuration
-                    try:
-                        model_config = TenantModelManager.load(tenant_id)
-                        model_config_token = TenantModelContext.set_config(
-                            model_config,
-                        )
-                        logger.debug(
-                            "TenantWorkspaceMiddleware: loaded model config for tenant=%s",
-                            tenant_id,
-                        )
-                    except TenantModelNotFoundError:
-                        # Config doesn't exist for tenant or default - will use system defaults
-                        logger.debug(
-                            "No model config found for tenant=%s, using system defaults",
-                            tenant_id,
-                        )
-                    except (OSError, ValueError) as e:
-                        # Config file read/parse error - log and continue
-                        logger.warning(
-                            "Failed to load model config for tenant %s: %s",
-                            tenant_id,
-                            e,
-                        )
+                    # Note: Tenant model configuration is now managed entirely
+                    # by ProviderManager. The old TenantModelContext loading
+                    # has been removed as part of active model source unification.
+                    # ProviderManager handles its own lazy initialization and
+                    # legacy migration from tenant_models.json when needed.
                 elif self._require_workspace:
                     # Workspace required but not found
                     logger.warning(
@@ -174,13 +153,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             return response
 
         finally:
-            # Reset model configuration context if set
-            if model_config_token:
-                try:
-                    TenantModelContext.reset_config(model_config_token)
-                except Exception as e:  # noqa: BLE001
-                    logger.error("Failed to reset model config context: %s", e)
-
             # Reset workspace context if set
             if workspace_token:
                 try:

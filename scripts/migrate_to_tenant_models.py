@@ -2,16 +2,18 @@
 # -*- coding: utf-8 -*-
 """Migration script for converting legacy providers.json to tenant model configuration.
 
-This script migrates from the old providers.json format to the new tenant-based
-model configuration format (TenantModelConfig).
+**DEPRECATED**: This script is deprecated and no longer needed for normal operation.
+The active model source has been unified to `providers/active_model.json` managed by
+ProviderManager. tenant_models.json is no longer used as a runtime source.
 
-Migration Logic:
-1. Load legacy providers.json (if exists)
-2. Convert legacy provider configs to TenantProviderConfig format
-3. Convert legacy routing config to RoutingConfig format (if exists)
-4. If no legacy config, create default empty configuration
-5. Save to default tenant (tenants/default/tenant_models.json)
+This script is kept for historical reference only. For migration from legacy
+configurations, ProviderManager now handles one-time recovery automatically
+when it detects a missing active_model.json but existing tenant_models.json.
+
+See: unify-tenant-active-model-source change for details.
 """
+
+# noqa: D400
 
 import json
 import logging

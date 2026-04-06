@@ -1159,16 +1159,80 @@ class ProviderManager:
             pass
 
     def load_active_model(self) -> ModelSlotConfig | None:
-        """Load the active provider/model configuration from disk."""
+        """Load the active provider/model configuration from disk.
+
+        If active_model.json doesn't exist but legacy tenant_models.json does,
+        recovers the active slot from the legacy config and migrates it.
+        """
         active_path = self.root_path / "active_model.json"
-        if not active_path.exists():
-            return None
+
+        # Try to load from new location first
+        if active_path.exists():
+            try:
+                with open(active_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return ModelSlotConfig.model_validate(data)
+            except Exception:
+                return None
+
+        # Recovery: migrate from legacy tenant_models.json if it exists
+        legacy_config = self._recover_from_legacy_tenant_models()
+        if legacy_config:
+            logger.info(
+                "Recovered active model from legacy tenant_models.json "
+                "for tenant %s: %s/%s",
+                self.tenant_id,
+                legacy_config.provider_id,
+                legacy_config.model,
+            )
+            # Save to new location for future reads
+            self.save_active_model(legacy_config)
+            return legacy_config
+
+        return None
+
+    def _recover_from_legacy_tenant_models(self) -> ModelSlotConfig | None:
+        """Recover active model from legacy tenant_models.json.
+
+        This provides one-time migration for tenants that have tenant_models.json
+        but don't yet have providers/active_model.json.
+
+        Returns:
+            ModelSlotConfig if recovery succeeded, None otherwise.
+        """
         try:
-            with open(active_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return ModelSlotConfig.model_validate(data)
-        except Exception:
-            return None
+            from copaw.tenant_models.manager import TenantModelManager
+
+            # Check if legacy config exists for this tenant
+            legacy_path = TenantModelManager.get_config_path(self.tenant_id)
+            if not legacy_path.exists():
+                # Try default tenant as fallback
+                if self.tenant_id != "default":
+                    legacy_path = TenantModelManager.get_config_path("default")
+                    if not legacy_path.exists():
+                        return None
+                else:
+                    return None
+
+            # Load and extract active slot from legacy config
+            legacy_config = TenantModelManager.load(self.tenant_id)
+            if not legacy_config:
+                return None
+
+            active_slot = legacy_config.get_active_slot()
+            if active_slot and active_slot.provider_id and active_slot.model:
+                return ModelSlotConfig(
+                    provider_id=active_slot.provider_id,
+                    model=active_slot.model,
+                )
+        except Exception as e:
+            logger.debug(
+                "Failed to recover from legacy tenant_models.json "
+                "for tenant %s: %s",
+                self.tenant_id,
+                e,
+            )
+        return None
 
     def _migrate_legacy_providers(self):
         """Migrate from legacy providers.json format to the new structure."""

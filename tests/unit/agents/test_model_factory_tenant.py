@@ -56,13 +56,18 @@ class TestFileBlockSupportFormatter:
 class TestCreateModelAndFormatterTenantIntegration:
     """Tests for tenant-aware model creation."""
 
-    def test_raises_when_no_tenant_config(self):
-        """Factory raises when no tenant configuration found."""
+    def test_raises_when_no_active_model(self):
+        """Factory raises when ProviderManager has no active model."""
         from copaw.agents.model_factory import create_model_and_formatter
 
-        # Patch where TenantModelContext is imported from
-        with patch("copaw.tenant_models.TenantModelContext") as mock_context:
-            mock_context.get_config.return_value = None
+        # Patch ProviderManager to return no active model
+        with patch(
+            "copaw.agents.model_factory.ProviderManager"
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            mock_manager.get_active_model.return_value = None
+            mock_pm_class.get_instance.return_value = mock_manager
+            mock_pm_class.ensure_tenant_provider_storage = MagicMock()
 
             with pytest.raises(
                 ValueError,
@@ -70,78 +75,119 @@ class TestCreateModelAndFormatterTenantIntegration:
             ):
                 create_model_and_formatter()
 
+    def test_uses_provider_manager_as_primary_source(self):
+        """Factory uses ProviderManager.get_active_model() as primary source."""
+        from copaw.agents.model_factory import create_model_and_formatter
+
+        # Patch ProviderManager with active model
+        with patch(
+            "copaw.agents.model_factory.ProviderManager"
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            from copaw.providers.models import ModelSlotConfig
+
+            mock_manager.get_active_model.return_value = ModelSlotConfig(
+                provider_id="openai",
+                model="gpt-4",
+            )
+            mock_pm_class.get_instance.return_value = mock_manager
+            mock_pm_class.ensure_tenant_provider_storage = MagicMock()
+
+            # Mock provider to return a model
+            mock_provider = MagicMock()
+            mock_model = MagicMock()
+            mock_model.__class__.__name__ = "OpenAIChatModel"
+            mock_provider.get_chat_model_instance.return_value = mock_model
+            mock_manager.get_provider.return_value = mock_provider
+
+            # Patch formatter creation and wrappers
+            with patch(
+                "copaw.agents.model_factory._create_formatter_instance"
+            ):
+                with patch(
+                    "copaw.agents.model_factory.TokenRecordingModelWrapper",
+                ):
+                    with patch("copaw.agents.model_factory.RetryChatModel"):
+                        model, _ = create_model_and_formatter()
+
+            # Verify ProviderManager.get_active_model was called (not TenantModelContext)
+            mock_manager.get_active_model.assert_called_once()
+            mock_manager.get_provider.assert_called_once_with("openai")
+
     def test_tenant_provider_manager_isolation(self):
         """Different tenants get different ProviderManager instances."""
         from copaw.agents.model_factory import create_model_and_formatter
 
-        # Patch where TenantModelContext is imported from
-        with patch("copaw.tenant_models.TenantModelContext") as mock_context:
-            mock_config = MagicMock()
-            mock_slot = MagicMock()
-            mock_slot.provider_id = "openai"
-            mock_slot.model = "gpt-4"
-            mock_config.get_active_slot.return_value = mock_slot
-            mock_context.get_config.return_value = mock_config
+        # Patch ProviderManager to track tenant IDs
+        with patch(
+            "copaw.agents.model_factory.ProviderManager",
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            from copaw.providers.models import ModelSlotConfig
 
-            # Patch where ProviderManager is used
+            mock_manager.get_active_model.return_value = ModelSlotConfig(
+                provider_id="openai",
+                model="gpt-4",
+            )
+            mock_pm_class.get_instance.return_value = mock_manager
+            mock_pm_class.ensure_tenant_provider_storage = MagicMock()
+
+            mock_provider = MagicMock()
+            mock_model = MagicMock()
+            mock_model.__class__.__name__ = "OpenAIChatModel"
+            mock_provider.get_chat_model_instance.return_value = mock_model
+            mock_manager.get_provider.return_value = mock_provider
+
+            # Patch formatter creation
             with patch(
-                "copaw.agents.model_factory.ProviderManager",
-            ) as mock_pm_class:
-                mock_manager = MagicMock()
-                mock_provider = MagicMock()
-                mock_model = MagicMock()
-                mock_model.__class__.__name__ = "OpenAIChatModel"
-                mock_provider.get_chat_model_instance.return_value = mock_model
-                mock_manager.get_provider.return_value = mock_provider
-                mock_pm_class.get_instance.return_value = mock_manager
-
-                # Patch formatter creation
+                "copaw.agents.model_factory._create_formatter_instance",
+            ):
                 with patch(
-                    "copaw.agents.model_factory._create_formatter_instance",
+                    "copaw.agents.model_factory.TokenRecordingModelWrapper",
                 ):
                     with patch(
-                        "copaw.agents.model_factory.TokenRecordingModelWrapper",
+                        "copaw.agents.model_factory.RetryChatModel",
                     ):
+                        # First call with tenant-a
                         with patch(
-                            "copaw.agents.model_factory.RetryChatModel",
+                            "copaw.config.context.get_current_tenant_id",
+                            return_value="tenant-a",
                         ):
-                            # First call with tenant-a
-                            with patch(
-                                "copaw.config.context.get_current_tenant_id",
-                                return_value="tenant-a",
-                            ):
-                                try:
-                                    create_model_and_formatter()
-                                except Exception:
-                                    pass
+                            try:
+                                create_model_and_formatter()
+                            except Exception:
+                                pass
 
-                # Verify get_instance was called with tenant-a
-                calls = [
-                    str(call)
-                    for call in mock_pm_class.get_instance.call_args_list
-                ]
-                assert any("tenant-a" in call for call in calls)
+            # Verify get_instance was called with tenant-a
+            calls = [
+                str(call) for call in mock_pm_class.get_instance.call_args_list
+            ]
+            assert any("tenant-a" in call for call in calls)
 
 
 class TestBackwardCompatibility:
     """Tests for backward compatibility with non-tenant mode."""
 
-    def test_no_agent_id_uses_context(self):
-        """When agent_id is None, tries to get from context."""
+    def test_raises_when_provider_manager_has_no_active_model(self):
+        """Factory raises when ProviderManager has no active model."""
         from copaw.agents.model_factory import create_model_and_formatter
 
-        # Patch where get_current_agent_id is imported from
+        # Patch ProviderManager to return no active model
         with patch(
-            "copaw.app.agent_context.get_current_agent_id",
-        ) as mock_get_agent:
-            mock_get_agent.side_effect = Exception("No context")
+            "copaw.agents.model_factory.ProviderManager"
+        ) as mock_pm_class:
+            mock_manager = MagicMock()
+            mock_manager.get_active_model.return_value = None
+            mock_pm_class.get_instance.return_value = mock_manager
+            mock_pm_class.ensure_tenant_provider_storage = MagicMock()
 
-            # When context fails and no tenant config, should raise
-            with pytest.raises(ValueError):
+            with pytest.raises(
+                ValueError, match="No tenant model configuration"
+            ):
                 create_model_and_formatter()
 
-    def test_agent_id_parameter_takes_precedence(self):
-        """agent_id parameter takes precedence over context."""
+    def test_agent_id_parameter_uses_retry_config(self):
+        """agent_id loads retry config from agent config."""
         from copaw.agents.model_factory import create_model_and_formatter
 
         with patch(
@@ -162,14 +208,23 @@ class TestBackwardCompatibility:
                 mock_config.running.llm_acquire_timeout = 30.0
                 mock_load.return_value = mock_config
 
-                with pytest.raises(
-                    ValueError,
-                    match="No tenant model configuration",
-                ):
-                    create_model_and_formatter(agent_id="param-agent")
+                # Also need to mock ProviderManager since it's the primary source
+                with patch(
+                    "copaw.agents.model_factory.ProviderManager",
+                ) as mock_pm_class:
+                    mock_manager = MagicMock()
+                    mock_manager.get_active_model.return_value = None
+                    mock_pm_class.get_instance.return_value = mock_manager
+                    mock_pm_class.ensure_tenant_provider_storage = MagicMock()
 
-                # load_agent_config should be called with param-agent
-                mock_load.assert_called_once_with("param-agent")
+                    with pytest.raises(
+                        ValueError,
+                        match="No tenant model configuration",
+                    ):
+                        create_model_and_formatter(agent_id="param-agent")
+
+                    # load_agent_config should be called with param-agent
+                    mock_load.assert_called_once_with("param-agent")
 
 
 class TestRetryConfigPropagation:

@@ -2,7 +2,21 @@
 
 **日期**: 2026-04-03
 **主题**: model-config-multi-tenant
-**状态**: 已批准，待实现
+**状态**: 已更新 - 部分实现已变更
+
+---
+
+> **重要更新 (2026-04-06)**:
+>
+> 本设计文档中描述的 `tenant_models.json` 方案已被 `unify-tenant-active-model-source` 变更取代。
+>
+> **当前状态**:
+> - `tenant_models.json` 不再是运行时 active model 的事实来源
+> - Active model 现在统一存储在 `~/.copaw.secret/{tenant}/providers/active_model.json`
+> - `ProviderManager` 是 active model 的唯一读取入口
+> - `tenant_models.json` 仅保留 legacy recovery 用途（自动迁移到 providers/active_model.json）
+>
+> 本文档保留作为历史参考，但运行时行为已按新的统一方案实现。
 
 ---
 

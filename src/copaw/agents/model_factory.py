@@ -716,10 +716,35 @@ def create_model_and_formatter(
         except Exception:
             pass
 
-    # Try to get tenant-level model configuration first
+    # Try to get model from tenant-aware ProviderManager
+    # This is the primary and only supported path for active model resolution
     model_slot = None
     retry_config = None
     rate_limit_config = None
+
+    # Get tenant_id for tenant-aware ProviderManager
+    try:
+        from copaw.config.context import get_current_tenant_id
+
+        tenant_id = get_current_tenant_id()
+    except Exception:
+        tenant_id = None
+
+    # Ensure tenant provider storage exists before accessing ProviderManager
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+    # Get active model from tenant-aware ProviderManager (primary source)
+    manager = ProviderManager.get_instance(tenant_id)
+    active_model = manager.get_active_model()
+    if active_model and active_model.provider_id and active_model.model:
+        from copaw.tenant_models.models import ModelSlot
+
+        model_slot = ModelSlot(
+            provider_id=active_model.provider_id,
+            model=active_model.model,
+        )
+
+    # Load agent-specific retry/rate limit config if agent_id provided
     if agent_id:
         try:
             agent_config = load_agent_config(agent_id)
@@ -740,55 +765,9 @@ def create_model_and_formatter(
         except Exception:
             pass
 
-    # Try to get model from tenant-level configuration
-    try:
-        from copaw.tenant_models import TenantModelContext
-
-        tenant_config = TenantModelContext.get_config()
-        if tenant_config:
-            model_slot = tenant_config.get_active_slot()
-    except Exception:
-        pass
-
-    # Fallback: Try to get active model from ProviderManager
-    # This supports backward compatibility when tenant_models.json doesn't exist
-    # but providers/active_model.json is configured
-    if not model_slot or not model_slot.provider_id or not model_slot.model:
-        try:
-            from copaw.config.context import get_current_tenant_id
-
-            tenant_id = get_current_tenant_id()
-        except Exception:
-            tenant_id = None
-
-        # Ensure tenant provider storage exists before accessing ProviderManager
-        ProviderManager.ensure_tenant_provider_storage(tenant_id)
-
-        manager = ProviderManager.get_instance(tenant_id)
-        active_model = manager.get_active_model()
-        if active_model and active_model.provider_id and active_model.model:
-            from copaw.tenant_models.models import ModelSlot
-
-            model_slot = ModelSlot(
-                provider_id=active_model.provider_id,
-                model=active_model.model,
-            )
-
-    # Create chat model from agent-specific or global config
+    # Create chat model from tenant-level active model configuration
     if model_slot and model_slot.provider_id and model_slot.model:
-        # Use agent-specific model (tenant-isolated)
-        # Get tenant-specific provider manager
-        try:
-            from copaw.config.context import get_current_tenant_id
-
-            tenant_id = get_current_tenant_id()
-        except Exception:
-            tenant_id = None
-
-        # Ensure tenant provider storage exists before accessing ProviderManager
-        ProviderManager.ensure_tenant_provider_storage(tenant_id)
-
-        manager = ProviderManager.get_instance(tenant_id)
+        # Use tenant-specific provider manager (already initialized above)
         provider = manager.get_provider(model_slot.provider_id)
         if provider is None:
             raise ValueError(
@@ -798,12 +777,11 @@ def create_model_and_formatter(
         model = provider.get_chat_model_instance(model_slot.model)
         provider_id = model_slot.provider_id
     else:
-        # [REMEDIATION] No longer fallback to global active model for isolation
-        # Tenant must have explicit model configuration
+        # Tenant must have explicit model configuration via ProviderManager
         raise ValueError(
             "No tenant model configuration found. "
             "Please configure a model for this tenant using the admin panel "
-            "or ensure TenantModelContext is properly set. "
+            "or ensure provider configuration is properly set. "
             "Multi-tenant isolation requires explicit per-tenant model configuration.",
         )
 
