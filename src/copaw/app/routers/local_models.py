@@ -34,6 +34,9 @@ def get_local_model_manager(request: Request) -> LocalModelManager:
 def get_provider_manager(request: Request) -> ProviderManager:
     """Get the tenant-specific ProviderManager instance (lazy initialization).
 
+    Ensures tenant provider storage is initialized before returning the manager.
+    This lazy-initializes provider storage on first provider API use.
+
     Uses tenant_id from request state for proper tenant isolation.
     Falls back to 'default' tenant if no tenant context available.
     """
@@ -41,6 +44,10 @@ def get_provider_manager(request: Request) -> ProviderManager:
     if tenant_id is None:
         tenant_id = "default"
         logger.debug("No tenant ID in request, using default tenant")
+
+    # Ensure tenant provider storage exists before accessing ProviderManager
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
     return ProviderManager.get_instance(tenant_id)
 
 

@@ -750,6 +750,30 @@ def create_model_and_formatter(
     except Exception:
         pass
 
+    # Fallback: Try to get active model from ProviderManager
+    # This supports backward compatibility when tenant_models.json doesn't exist
+    # but providers/active_model.json is configured
+    if not model_slot or not model_slot.provider_id or not model_slot.model:
+        try:
+            from copaw.config.context import get_current_tenant_id
+
+            tenant_id = get_current_tenant_id()
+        except Exception:
+            tenant_id = None
+
+        # Ensure tenant provider storage exists before accessing ProviderManager
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+        manager = ProviderManager.get_instance(tenant_id)
+        active_model = manager.get_active_model()
+        if active_model and active_model.provider_id and active_model.model:
+            from copaw.tenant_models.models import ModelSlot
+
+            model_slot = ModelSlot(
+                provider_id=active_model.provider_id,
+                model=active_model.model,
+            )
+
     # Create chat model from agent-specific or global config
     if model_slot and model_slot.provider_id and model_slot.model:
         # Use agent-specific model (tenant-isolated)
@@ -760,6 +784,9 @@ def create_model_and_formatter(
             tenant_id = get_current_tenant_id()
         except Exception:
             tenant_id = None
+
+        # Ensure tenant provider storage exists before accessing ProviderManager
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
 
         manager = ProviderManager.get_instance(tenant_id)
         provider = manager.get_provider(model_slot.provider_id)

@@ -8,10 +8,7 @@ and binds workspace context for the duration of the request.
 Middleware ordering: Must come after TenantIdentityMiddleware and before
 AgentContextMiddleware.
 """
-import fcntl
 import logging
-import shutil
-import time
 from pathlib import Path
 from typing import Callable, Awaitable, Optional
 
@@ -24,8 +21,6 @@ from copaw.config.context import (
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
-from copaw.constant import SECRET_DIR
-from copaw.providers.provider_manager import ProviderManager
 from copaw.tenant_models import TenantModelManager, TenantModelContext
 from copaw.tenant_models.exceptions import TenantModelNotFoundError
 
@@ -108,9 +103,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         try:
             # Load workspace if tenant_id is available
             if tenant_id:
-                # Ensure tenant provider config exists
-                await self._ensure_tenant_provider_config(tenant_id)
-
                 workspace = await self._get_workspace(request, tenant_id)
 
                 if workspace:
@@ -239,123 +231,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                 f"Error bootstrapping tenant {tenant_id}: {e}",
             )
             return None
-
-    async def _ensure_tenant_provider_config(
-        self,
-        tenant_id: str,
-    ) -> None:
-        """Ensure tenant provider configuration exists.
-
-        If the tenant's provider configuration does not exist, it will be
-        initialized by copying from the default tenant's configuration.
-        If the default tenant has no configuration, an empty directory
-        structure will be created.
-
-        Args:
-            tenant_id: The tenant ID to ensure configuration for.
-
-        Note:
-            This method is idempotent - calling it multiple times for the
-            same tenant is safe and will not overwrite existing configuration.
-        """
-        tenant_providers_dir = SECRET_DIR / tenant_id / "providers"
-
-        # Fast path: already exists (avoids lock overhead for 99% of calls)
-        if tenant_providers_dir.exists():
-            return
-
-        # Use lock file to handle concurrent initialization
-        lock_file = tenant_providers_dir.parent / ".provider_init.lock"
-        try:
-            # Create parent directory if needed
-            tenant_providers_dir.parent.mkdir(parents=True, exist_ok=True)
-
-            # Simple file-based locking with timeout
-            max_wait_seconds = 30.0
-            deadline = time.monotonic() + max_wait_seconds
-
-            with open(lock_file, "w", encoding="utf-8") as f:
-                # Wait until we acquire the lock or another process initializes
-                # Only lock holder may proceed with initialization
-                while True:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break  # Acquired lock, proceed with initialization
-                    except (IOError, OSError) as exc:
-                        if time.monotonic() > deadline:
-                            raise TimeoutError(
-                                f"Timeout waiting for provider "
-                                f"initialization lock for tenant {tenant_id}",
-                            ) from exc
-                        # Another process is initializing, wait and recheck
-                        logger.debug(
-                            "Waiting for concurrent provider initialization "
-                            "for tenant %s",
-                            tenant_id,
-                        )
-                        time.sleep(0.05)
-                        # Recheck after wait - if directory exists, another
-                        # process completed initialization
-                        if tenant_providers_dir.exists():
-                            return
-
-                # Double-check after acquiring lock (another process may have
-                # completed while we were waiting)
-                if tenant_providers_dir.exists():
-                    return
-
-                # Try to copy from default tenant
-                default_dir = SECRET_DIR / "default" / "providers"
-                if default_dir.exists() and any(default_dir.iterdir()):
-                    logger.info(
-                        "Initializing provider config for tenant %s "
-                        "from default tenant",
-                        tenant_id,
-                    )
-                    try:
-                        shutil.copytree(default_dir, tenant_providers_dir)
-                        logger.info(
-                            "Provider config initialized for tenant %s",
-                            tenant_id,
-                        )
-                    except Exception as copy_error:
-                        # Copy failed - log error and re-raise to prevent
-                        # silent degradation to empty config
-                        logger.error(
-                            "Failed to copy provider config from default "
-                            "for tenant %s: %s",
-                            tenant_id,
-                            copy_error,
-                        )
-                        raise
-                else:
-                    # Create empty directory structure (only when default
-                    # doesn't exist or is empty - this is expected behavior)
-                    logger.info(
-                        "Creating empty provider config structure "
-                        "for tenant %s (default has no config)",
-                        tenant_id,
-                    )
-                    tenant_providers_dir.mkdir(parents=True, exist_ok=True)
-                    (tenant_providers_dir / "builtin").mkdir(exist_ok=True)
-                    (tenant_providers_dir / "custom").mkdir(exist_ok=True)
-
-                # Release lock
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
-        except Exception as e:
-            logger.error(
-                "Failed to initialize provider config for tenant %s: %s",
-                tenant_id,
-                e,
-            )
-            # Don't create empty config on unexpected error - this would
-            # mask real issues and create an invalid state. Re-raise to
-            # let the caller handle the failure.
-            raise
-        # Lock file is kept for reuse - frequent deletion/recreation can
-        # cause race conditions. The flock mechanism doesn't require
-        # the file to be deleted.
 
     def _is_workspace_exempt(self, path: str) -> bool:
         """Check if a route is exempt from workspace requirements.

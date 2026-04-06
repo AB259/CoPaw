@@ -45,6 +45,9 @@ ActiveModelWriteScope = Literal["global", "agent"]
 def get_provider_manager(request: Request) -> ProviderManager:
     """Get the tenant-specific provider manager.
 
+    Ensures tenant provider storage is initialized before returning the manager.
+    This lazy-initializes provider storage on first provider API use.
+
     Args:
         request: FastAPI request object
 
@@ -61,6 +64,9 @@ def get_provider_manager(request: Request) -> ProviderManager:
         # For exempt routes or backward compatibility, use default tenant
         tenant_id = "default"
         logger.debug("No tenant ID in request, using default tenant")
+
+    # Ensure tenant provider storage exists before accessing ProviderManager
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
 
     # Return tenant-specific provider manager
     return ProviderManager.get_instance(tenant_id)

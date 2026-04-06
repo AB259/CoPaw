@@ -4,8 +4,11 @@ It provides a unified interface to manage providers, such as listing available
 providers, adding/removing custom providers, and fetching provider details."""
 
 import asyncio
+import fcntl
 import os
+import shutil
 import threading
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List
@@ -611,6 +614,124 @@ class ProviderManager:
             Path to the tenant's provider configuration directory.
         """
         return SECRET_DIR / tenant_id / "providers"
+
+    @staticmethod
+    def ensure_tenant_provider_storage(tenant_id: str | None) -> None:
+        """Ensure tenant provider storage exists, initializing if needed.
+
+        This method is idempotent and concurrency-safe. It initializes tenant
+        provider storage by copying from the default tenant's configuration
+        when it doesn't exist. If the default tenant has no configuration,
+        an empty directory structure is created.
+
+        Args:
+            tenant_id: The tenant ID to ensure storage for. If None, uses "default".
+
+        Raises:
+            TimeoutError: If unable to acquire initialization lock within timeout.
+            OSError: If initialization fails due to filesystem issues.
+
+        Note:
+            This method is called automatically at provider feature boundaries
+            (provider APIs, local model APIs, runtime model creation). It is safe
+            to call multiple times - subsequent calls are no-ops if storage exists.
+        """
+        tenant_id = tenant_id or "default"
+        tenant_providers_dir = SECRET_DIR / tenant_id / "providers"
+
+        # Fast path: already exists (avoids lock overhead for 99% of calls)
+        if tenant_providers_dir.exists():
+            return
+
+        # Use lock file to handle concurrent initialization
+        lock_file = tenant_providers_dir.parent / ".provider_init.lock"
+        try:
+            # Create parent directory if needed
+            tenant_providers_dir.parent.mkdir(parents=True, exist_ok=True)
+
+            # Simple file-based locking with timeout
+            max_wait_seconds = 30.0
+            deadline = time.monotonic() + max_wait_seconds
+
+            with open(lock_file, "w", encoding="utf-8") as f:
+                # Wait until we acquire the lock or another process initializes
+                # Only lock holder may proceed with initialization
+                while True:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break  # Acquired lock, proceed with initialization
+                    except (IOError, OSError) as exc:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(
+                                f"Timeout waiting for provider "
+                                f"initialization lock for tenant {tenant_id}",
+                            ) from exc
+                        # Another process is initializing, wait and recheck
+                        logger.debug(
+                            "Waiting for concurrent provider initialization "
+                            "for tenant %s",
+                            tenant_id,
+                        )
+                        time.sleep(0.05)
+                        # Recheck after wait - if directory exists, another
+                        # process completed initialization
+                        if tenant_providers_dir.exists():
+                            return
+
+                # Double-check after acquiring lock (another process may have
+                # completed while we were waiting)
+                if tenant_providers_dir.exists():
+                    return
+
+                # Try to copy from default tenant
+                default_dir = SECRET_DIR / "default" / "providers"
+                if default_dir.exists() and any(default_dir.iterdir()):
+                    logger.info(
+                        "Initializing provider config for tenant %s "
+                        "from default tenant",
+                        tenant_id,
+                    )
+                    try:
+                        shutil.copytree(default_dir, tenant_providers_dir)
+                        logger.info(
+                            "Provider config initialized for tenant %s",
+                            tenant_id,
+                        )
+                    except Exception as copy_error:
+                        # Copy failed - log error and re-raise to prevent
+                        # silent degradation to empty config
+                        logger.error(
+                            "Failed to copy provider config from default "
+                            "for tenant %s: %s",
+                            tenant_id,
+                            copy_error,
+                        )
+                        raise
+                else:
+                    # Create empty directory structure (only when default
+                    # doesn't exist or is empty - this is expected behavior)
+                    logger.info(
+                        "Creating empty provider config structure "
+                        "for tenant %s (default has no config)",
+                        tenant_id,
+                    )
+                    tenant_providers_dir.mkdir(parents=True, exist_ok=True)
+                    (tenant_providers_dir / "builtin").mkdir(exist_ok=True)
+                    (tenant_providers_dir / "custom").mkdir(exist_ok=True)
+
+                # Release lock
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        except Exception as e:
+            logger.error(
+                "Failed to initialize provider config for tenant %s: %s",
+                tenant_id,
+                e,
+            )
+            # Don't create empty config on unexpected error - this would
+            # mask real issues and create an invalid state. Re-raise to
+            # let the caller handle the failure.
+            raise
 
     @staticmethod
     def get_instance(tenant_id: str | None = None) -> "ProviderManager":
