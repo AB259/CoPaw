@@ -56,7 +56,6 @@ export interface OperationLog {
 }
 
 export interface OverviewStats {
-  total_sources: number;
   total_instances: number;
   total_users: number;
   active_instances: number;
@@ -90,24 +89,6 @@ export const instanceApi = {
   // Sources
   getSources: async (): Promise<{ sources: SourceWithStats[]; total: number }> => {
     return request("/instance/sources");
-  },
-
-  createSource: async (data: { source_id: string; source_name: string }): Promise<{ success: boolean; data: Source }> => {
-    return request("/instance/sources", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-
-  updateSource: async (sourceId: string, data: { source_name: string }): Promise<{ success: boolean; data: Source }> => {
-    return request(`/instance/sources/${sourceId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-  },
-
-  deleteSource: async (sourceId: string): Promise<{ success: boolean }> => {
-    return request(`/instance/sources/${sourceId}`, { method: "DELETE" });
   },
 
   // Instances
@@ -163,6 +144,10 @@ export const instanceApi = {
   },
 
   // Allocations
+  getUserIds: async (): Promise<string[]> => {
+    return request("/instance/user-ids");
+  },
+
   getAllocations: async (params?: {
     user_id?: string;
     source_id?: string;

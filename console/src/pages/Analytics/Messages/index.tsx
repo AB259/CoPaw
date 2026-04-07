@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -45,9 +45,28 @@ export default function MessagesPage() {
   ]);
   const [exporting, setExporting] = useState(false);
 
+  // 用于追踪筛选条件变化，避免 useEffect 重复触发
+  const filtersRef = useRef({ searchQuery: "", userIdFilter: "", sessionIdFilter: "", dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null });
+
   useEffect(() => {
+    // 检查筛选条件是否变化
+    const filtersChanged =
+      filtersRef.current.searchQuery !== searchQuery ||
+      filtersRef.current.userIdFilter !== userIdFilter ||
+      filtersRef.current.sessionIdFilter !== sessionIdFilter ||
+      filtersRef.current.dateRange !== dateRange;
+
+    // 更新 ref
+    filtersRef.current = { searchQuery, userIdFilter, sessionIdFilter, dateRange };
+
+    // 如果筛选条件变化且不是第一页，只重置页码不查询（等待 page 变化触发查询）
+    if (filtersChanged && page !== 1) {
+      setPage(1);
+      return;
+    }
+
     fetchMessages();
-  }, [page, pageSize, dateRange]);
+  }, [page, pageSize, searchQuery, userIdFilter, sessionIdFilter, dateRange]);
 
   const fetchMessages = async () => {
     setLoading(true);
@@ -66,11 +85,6 @@ export default function MessagesPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSearch = () => {
-    setPage(1);
-    fetchMessages();
   };
 
   const handleExport = async () => {
@@ -214,10 +228,7 @@ export default function MessagesPage() {
         <h2>{t("analytics.userMessages", "User Messages")}</h2>
         <RangePicker
           value={dateRange}
-          onChange={(dates) => {
-            setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-            setPage(1);
-          }}
+          onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
           allowClear
         />
       </div>
@@ -228,19 +239,14 @@ export default function MessagesPage() {
             placeholder={t("analytics.searchMessage", "Search messages...")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onPressEnter={handleSearch}
             allowClear
           />
-          <Button type="primary" icon={<Search size={16} />} onClick={handleSearch}>
-            {t("analytics.search", "Search")}
-          </Button>
         </div>
         <div className={styles.filters}>
           <Input
             placeholder={t("analytics.filterUser", "User ID")}
             value={userIdFilter}
             onChange={(e) => setUserIdFilter(e.target.value)}
-            onPressEnter={handleSearch}
             style={{ width: 150 }}
             allowClear
           />
@@ -248,7 +254,6 @@ export default function MessagesPage() {
             placeholder={t("analytics.filterSession", "Session ID")}
             value={sessionIdFilter}
             onChange={(e) => setSessionIdFilter(e.target.value)}
-            onPressEnter={handleSearch}
             style={{ width: 200 }}
             allowClear
           />
@@ -263,7 +268,7 @@ export default function MessagesPage() {
         </div>
       </div>
 
-      <Card className={styles.tableCard}>
+      <Card>
         <Table
           dataSource={messages}
           columns={columns}

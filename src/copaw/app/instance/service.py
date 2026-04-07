@@ -43,11 +43,6 @@ class InstanceService:
         if existing:
             raise ValueError(f"实例 {request.instance_id} 已存在")
 
-        # Check if source exists
-        source = await self.store.get_source(request.source_id)
-        if not source:
-            raise ValueError(f"来源 {request.source_id} 不存在")
-
         instance = await self.store.create_instance(
             instance_id=request.instance_id,
             source_id=request.source_id,
@@ -175,11 +170,6 @@ class InstanceService:
                 message=f"用户已分配到实例 {existing.instance_id}",
             )
 
-        # Check if source exists
-        source = await self.store.get_source(source_id)
-        if not source:
-            raise ValueError(f"来源 {source_id} 不存在")
-
         if instance_id:
             # Manual allocation
             instance = await self.store.get_instance_with_usage(instance_id)
@@ -219,8 +209,8 @@ class InstanceService:
                     message="所有实例已达阈值，请扩容",
                 )
 
-            # Select instance with lowest current users (load balancing)
-            instance = min(available, key=lambda x: x.current_users)
+            # Select instance with most remaining capacity (best fit)
+            instance = max(available, key=lambda x: x.max_users - x.current_users)
             instance_id = instance.instance_id
 
         # Create allocation

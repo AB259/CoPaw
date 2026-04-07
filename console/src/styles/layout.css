@@ -52,11 +52,10 @@ body {
   height: 100%;
 } */
 
-/* 移除全局 ant-card-body 样式，避免空数据时表格下方出现多余边框线 */
-/* .ant-card-body {
+.ant-card-body {
   height: 100%;
   padding: 0;
-} */
+}
 
 /* Welcome avatar: full tall SVG. Class is CoPaw-avatar (no "ant"). */
 [class*="chat-anywhere-welcome-default"] [class*="-avatar"],

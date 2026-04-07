@@ -1,16 +1,12 @@
 .messagesPage {
   padding: 24px;
-  height: calc(100vh - 128px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 
   h2 {
     margin: 0;
@@ -37,17 +33,6 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.tableCard {
-  flex: 1;
-  overflow: hidden;
-
-  :global(.ant-card-body) {
-    padding: 0;
-    height: 100%;
-    overflow: auto;
-  }
 }
 
 .userMessage {

@@ -638,6 +638,16 @@
     "newValue": "新值",
     "belongToSource": "所属来源",
     "belongToBranch": "所属分行",
-    "required": "此项为必填"
+    "required": "此项为必填",
+    "filterAction": "筛选操作",
+    "filterTargetType": "筛选目标类型",
+    "createInstance": "创建实例",
+    "updateInstance": "更新实例",
+    "deleteInstance": "删除实例",
+    "allocate": "分配用户",
+    "deleteAllocation": "删除分配",
+    "instance": "实例",
+    "user": "用户",
+    "totalItems": "共 {{total}} 条"
   }
 }

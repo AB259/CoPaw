@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -61,7 +61,24 @@ export default function SessionsPage() {
   const [traceDetail, setTraceDetail] = useState<TraceDetail | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
 
+  // 用于追踪筛选条件变化，避免 useEffect 重复触发
+  const filtersRef = useRef({ searchQuery: "", dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null });
+
   useEffect(() => {
+    // 检查筛选条件是否变化
+    const filtersChanged =
+      filtersRef.current.searchQuery !== searchQuery ||
+      filtersRef.current.dateRange !== dateRange;
+
+    // 更新 ref
+    filtersRef.current = { searchQuery, dateRange };
+
+    // 如果筛选条件变化且不是第一页，只重置页码不查询
+    if (filtersChanged && page !== 1) {
+      setPage(1);
+      return;
+    }
+
     fetchSessions();
   }, [page, pageSize, searchQuery, dateRange]);
 
@@ -222,33 +239,26 @@ export default function SessionsPage() {
         <div className={styles.filters}>
           <RangePicker
             value={dateRange}
-            onChange={(dates) => {
-              setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-              setPage(1);
-            }}
+            onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
             allowClear
           />
           <Input
             placeholder={t("analytics.searchUser", "Search user...")}
             prefix={<Search size={16} />}
             value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setSearchQuery(e.target.value)}
             style={{ width: 250 }}
             allowClear
           />
         </div>
       </div>
 
-      <Card className={styles.tableCard}>
+      <Card>
         <Table
           dataSource={sessions}
           columns={columns}
           rowKey="session_id"
           loading={loading}
-          className={sessions.length === 0 ? styles.emptyTable : ''}
           pagination={{
             current: page,
             pageSize,
