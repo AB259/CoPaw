@@ -146,7 +146,6 @@ def init_cmd(
     tenant_id: str,
 ) -> None:
     """Create working dir with config.json and HEARTBEAT.md (interactive)."""
-    from pathlib import Path
     from ..app.workspace.tenant_initializer import TenantInitializer
 
     tenant_dir = WORKING_DIR / tenant_id
@@ -201,13 +200,24 @@ def init_cmd(
     # --- Bootstrap tenant directory structure ---
     click.echo("\n=== Default Workspace Initialization ===")
     initializer = TenantInitializer(WORKING_DIR, tenant_id)
-    initializer.ensure_directory_structure()
-    initializer.ensure_default_agent()
+    init_result = initializer.initialize_full()
     click.echo("✓ Default workspace initialized")
-    initializer.ensure_qa_agent()
+    if init_result["pool_seed"]["source"] == "default":
+        click.echo(
+            f"✓ Skill pool seeded from default tenant "
+            f"({len(init_result['pool_seed']['skills'])} skills)",
+        )
+    else:
+        click.echo(
+            f"✓ Skill pool initialized with builtin skills "
+            f"({len(init_result['pool_seed']['skills'])} skills)",
+        )
+    if init_result["workspace_seed"]["seeded"]:
+        click.echo(
+            f"✓ Default workspace skills seeded "
+            f"({len(init_result['workspace_seed']['skills'])} skills)",
+        )
     click.echo("✓ Builtin QA agent workspace ensured")
-    initializer.ensure_skill_pool()
-    click.echo("✓ Skill pool initialized")
 
     # --- config.json ---
     write_config = True

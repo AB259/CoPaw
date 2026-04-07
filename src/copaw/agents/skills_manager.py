@@ -21,6 +21,7 @@ from typing import Any, TypeVar
 
 import frontmatter
 from pydantic import BaseModel, Field
+from ..constant import env_var_overrides
 from ..security.skill_scanner import scan_skill_directory
 from .utils.file_handling import read_text_file_with_encoding_fallback
 
@@ -615,9 +616,6 @@ def _build_skill_config_env_overrides(
     return overrides
 
 
-from copaw.constant import env_var_overrides
-
-
 @contextmanager
 def apply_skill_config_env_overrides(
     workspace_dir: Path,
@@ -901,7 +899,9 @@ def ensure_skill_pool_initialized(
     return created
 
 
-def reconcile_pool_manifest() -> dict[str, Any]:
+def reconcile_pool_manifest(
+    working_dir: Path | None = None,
+) -> dict[str, Any]:
     """Reconcile shared pool metadata with the filesystem.
 
     The pool manifest is not treated as the source of truth for content.
@@ -909,13 +909,17 @@ def reconcile_pool_manifest() -> dict[str, Any]:
     from the discovered skills. Manifest-only bookkeeping such as ``config``
     is preserved when possible.
 
+    Args:
+        working_dir: Target tenant working directory. If None, uses the
+            global WORKING_DIR from context.
+
     Example:
         if a user manually drops ``skill_pool/demo/SKILL.md`` onto disk,
         the next reconcile adds ``demo`` to ``skill_pool/skill.json``.
     """
-    pool_dir = get_skill_pool_dir()
+    pool_dir = get_skill_pool_dir(working_dir=working_dir)
     pool_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = get_pool_skill_manifest_path()
+    manifest_path = get_pool_skill_manifest_path(working_dir=working_dir)
     if not manifest_path.exists():
         _write_json_atomic(manifest_path, _default_pool_manifest())
 
@@ -1117,16 +1121,22 @@ def read_skill_manifest(
 def read_skill_pool_manifest(
     *,
     reconcile: bool = True,
+    working_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Return the pool skill manifest.
 
     When *reconcile* is ``True`` (default) the manifest is refreshed
     from disk first.  Pass ``reconcile=False`` in read-only list paths
     to skip the expensive reconciliation.
+
+    Args:
+        reconcile: Whether to reconcile manifest from disk first.
+        working_dir: Target tenant working directory. If None, uses the
+            global WORKING_DIR from context.
     """
     if reconcile:
-        return reconcile_pool_manifest()
-    path = get_pool_skill_manifest_path()
+        return reconcile_pool_manifest(working_dir=working_dir)
+    path = get_pool_skill_manifest_path(working_dir=working_dir)
     return _read_json_unlocked(path, _default_pool_manifest())
 
 
