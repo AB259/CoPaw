@@ -66,6 +66,9 @@ class TenantInitializer:
 
         Does NOT create the QA agent or start workspace runtime.
 
+        Raises:
+            RuntimeError: If skill pool seeding fails (including builtin fallback).
+
         Returns:
             Dict with bootstrap results:
             - "minimal": True if minimal init completed
@@ -83,26 +86,12 @@ class TenantInitializer:
         result["minimal"] = True
 
         # Step 2: Seed skill pool from default (or builtin fallback)
-        try:
-            result["pool_seed"] = self.seed_skill_pool_from_default()
-        except Exception as e:
-            logger.warning(
-                f"Skill pool seeding failed for tenant {self.tenant_id}: {e}. "
-                "Continuing with minimal bootstrap.",
-            )
-            result["pool_seed"] = {"seeded": False, "source": None, "skills": []}
+        # Note: This raises RuntimeError on complete failure (including builtin fallback)
+        result["pool_seed"] = self.seed_skill_pool_from_default()
 
         # Step 3: Seed default workspace skills from default tenant
-        try:
-            result["workspace_seed"] = (
-                self.seed_default_workspace_skills_from_default()
-            )
-        except Exception as e:
-            logger.warning(
-                f"Workspace skill seeding failed for tenant {self.tenant_id}: {e}. "
-                "Continuing with minimal bootstrap.",
-            )
-            result["workspace_seed"] = {"seeded": False, "skills": []}
+        # Note: This raises RuntimeError on failure
+        result["workspace_seed"] = self.seed_default_workspace_skills_from_default()
 
         return result
 
@@ -360,6 +349,34 @@ class TenantInitializer:
                 )
 
         # Fall back to builtin initialization
+        # First, check if target already has skill directories (partial copy scenario)
+        # and reconcile them to preserve existing skills
+        target_pool_dir = get_skill_pool_dir(working_dir=self.tenant_dir)
+        if target_pool_dir.exists():
+            existing_skills = [
+                item.name for item in target_pool_dir.iterdir()
+                if item.is_dir() and (item / "SKILL.md").exists()
+            ]
+            if existing_skills:
+                logger.info(
+                    f"Found {len(existing_skills)} existing skills in pool for tenant "
+                    f"{self.tenant_id}, reconciling before builtin fallback: "
+                    f"{existing_skills}",
+                )
+                try:
+                    reconcile_pool_manifest(working_dir=self.tenant_dir)
+                    # If reconcile succeeds, consider seeding successful with existing skills
+                    result["seeded"] = True
+                    result["source"] = "existing"
+                    result["skills"] = existing_skills
+                    return result
+                except Exception as reconcile_error:
+                    logger.warning(
+                        f"Failed to reconcile existing pool skills for tenant "
+                        f"{self.tenant_id}: {reconcile_error}. "
+                        f"Continuing with builtin fallback.",
+                    )
+
         try:
             import_builtin_skills(working_dir=self.tenant_dir)
             result["seeded"] = True
@@ -492,6 +509,29 @@ class TenantInitializer:
                     source_skill_names.append(item.name)
 
         if not source_skill_names:
+            # Source has no skills, but check if target has existing skills (partial copy)
+            target_workspace = self.tenant_dir / "workspaces" / "default"
+            target_skills_dir = get_workspace_skills_dir(target_workspace)
+            if target_skills_dir.exists():
+                existing_skills = [
+                    item.name for item in target_skills_dir.iterdir()
+                    if item.is_dir() and (item / "SKILL.md").exists()
+                ]
+                if existing_skills:
+                    logger.info(
+                        f"Found {len(existing_skills)} existing workspace skills for "
+                        f"tenant {self.tenant_id}, reconciling: {existing_skills}",
+                    )
+                    try:
+                        reconcile_workspace_manifest(target_workspace)
+                        result["seeded"] = True
+                        result["skills"] = existing_skills
+                        return result
+                    except Exception as reconcile_error:
+                        logger.warning(
+                            f"Failed to reconcile existing workspace skills for "
+                            f"tenant {self.tenant_id}: {reconcile_error}",
+                        )
             return result
 
         try:
