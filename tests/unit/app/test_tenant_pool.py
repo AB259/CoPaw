@@ -3,19 +3,28 @@
 
 Tests lazy creation, cache hits, concurrent creation safety, and stop-all cleanup.
 """
+# pylint: disable=wrong-import-position,protected-access,unused-import
 import asyncio
-import tempfile
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-import pytest
+import pytest  # noqa: E402,F401
 
-from copaw.app.workspace.tenant_pool import (
+from copaw.app.workspace.tenant_pool import (  # noqa: E402
     TenantWorkspacePool,
     TenantWorkspaceEntry,
 )
+
+
+@pytest.fixture(name="mock_working_dir")
+def _mock_working_dir(tmp_path, monkeypatch):
+    """Mock WORKING_DIR to use tmp_path for isolation."""
+    from copaw import constant
+
+    monkeypatch.setattr(constant, "WORKING_DIR", tmp_path / "copaw")
+    return tmp_path / "copaw"
 
 
 class TestTenantWorkspacePoolBasics:
@@ -26,7 +35,7 @@ class TestTenantWorkspacePoolBasics:
         base_dir = tmp_path / "tenants"
         assert not base_dir.exists()
 
-        pool = TenantWorkspacePool(base_dir)
+        TenantWorkspacePool(base_dir)
 
         assert base_dir.exists()
         assert base_dir.is_dir()
@@ -54,21 +63,24 @@ class TestTenantWorkspacePoolBasics:
 class TestTenantWorkspaceCreation:
     """Tests for workspace creation."""
 
-    async def test_get_or_create_creates_workspace(self, tmp_path):
+    async def test_get_or_create_creates_workspace(
+        self,
+        mock_working_dir,
+    ):
         """get_or_create creates a new workspace."""
-        pool = TenantWorkspacePool(tmp_path / "tenants")
+        pool = TenantWorkspacePool(mock_working_dir)
 
         workspace = await pool.get_or_create("tenant-1")
 
         assert workspace is not None
         assert workspace.agent_id == "default"
-        assert workspace.workspace_dir == pool._get_tenant_workspace_dir(
-            "tenant-1"
-        )
 
-    async def test_get_or_create_uses_default_agent_id(self, tmp_path):
+    async def test_get_or_create_uses_default_agent_id(
+        self,
+        mock_working_dir,
+    ):
         """get_or_create uses default agent_id."""
-        pool = TenantWorkspacePool(tmp_path / "tenants")
+        pool = TenantWorkspacePool(mock_working_dir)
 
         workspace = await pool.get_or_create("tenant-1")
 

@@ -314,7 +314,8 @@ def build_bootstrap_guidance(
 def _get_active_model_info():
     """Resolve the active model's ModelInfo and model name.
 
-    Tries agent-specific model first, then falls back to global.
+    Uses tenant-aware ProviderManager as the single source of truth
+    for active model resolution.
 
     Returns:
         A ``(ModelInfo, model_name)`` tuple.  Both elements are *None*
@@ -322,24 +323,13 @@ def _get_active_model_info():
     """
     try:
         from ..providers.provider_manager import ProviderManager
+        from ..config.context import get_current_tenant_id
 
-        manager = ProviderManager.get_instance()
+        # Get tenant-aware ProviderManager (primary source)
+        tenant_id = get_current_tenant_id()
+        manager = ProviderManager.get_instance(tenant_id)
 
-        # Try to get tenant-level model configuration first
-        active = None
-        try:
-            from copaw.tenant_models import TenantModelContext
-
-            tenant_config = TenantModelContext.get_config()
-            if tenant_config:
-                active = tenant_config.get_active_slot()
-        except Exception:
-            pass
-
-        # Fallback to global active model
-        if not active:
-            active = manager.get_active_model()
-
+        active = manager.get_active_model()
         if not active:
             return None, None
 

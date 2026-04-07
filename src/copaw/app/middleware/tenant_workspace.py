@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-import,too-many-branches
 """Tenant workspace middleware for multi-tenant isolation.
 
 Loads tenant workspace from TenantWorkspacePool, stores it in request.state,
@@ -8,7 +9,8 @@ Middleware ordering: Must come after TenantIdentityMiddleware and before
 AgentContextMiddleware.
 """
 import logging
-from typing import Callable, Awaitable
+from pathlib import Path
+from typing import Callable, Awaitable, Optional
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -19,10 +21,31 @@ from copaw.config.context import (
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
-from copaw.tenant_models import TenantModelManager, TenantModelContext
-from copaw.tenant_models.exceptions import TenantModelNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+class TenantWorkspaceContext:
+    """Lightweight context for tenant workspace.
+
+    This class provides a minimal workspace context without requiring
+    the full Workspace runtime to be started. It holds the tenant_id
+    and workspace_dir for request-scoped context binding.
+
+    Attributes:
+        tenant_id: The tenant identifier.
+        workspace_dir: Path to the tenant's workspace directory.
+    """
+
+    def __init__(self, tenant_id: str, workspace_dir: Path):
+        self.tenant_id = tenant_id
+        self.workspace_dir = Path(workspace_dir).expanduser().resolve()
+
+    def __repr__(self) -> str:
+        return (
+            f"TenantWorkspaceContext(tenant_id={self.tenant_id},"
+            f"workspace_dir={self.workspace_dir})"
+        )
 
 
 class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
@@ -73,7 +96,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         tenant_id = getattr(request.state, "tenant_id", None)
         workspace = None
         workspace_token = None
-        model_config_token = None
 
         try:
             # Load workspace if tenant_id is available
@@ -95,29 +117,11 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                         f"tenant={tenant_id}, path={workspace.workspace_dir}",
                     )
 
-                    # Load and bind tenant model configuration
-                    try:
-                        model_config = TenantModelManager.load(tenant_id)
-                        model_config_token = TenantModelContext.set_config(
-                            model_config,
-                        )
-                        logger.debug(
-                            "TenantWorkspaceMiddleware: loaded model config for tenant=%s",
-                            tenant_id,
-                        )
-                    except TenantModelNotFoundError:
-                        # Config doesn't exist for tenant or default - will use system defaults
-                        logger.debug(
-                            "No model config found for tenant=%s, using system defaults",
-                            tenant_id,
-                        )
-                    except (OSError, ValueError) as e:
-                        # Config file read/parse error - log and continue
-                        logger.warning(
-                            "Failed to load model config for tenant %s: %s",
-                            tenant_id,
-                            e,
-                        )
+                    # Note: Tenant model configuration is now managed entirely
+                    # by ProviderManager. The old TenantModelContext loading
+                    # has been removed as part of active model source unification.
+                    # ProviderManager handles its own lazy initialization and
+                    # legacy migration from tenant_models.json when needed.
                 elif self._require_workspace:
                     # Workspace required but not found
                     logger.warning(
@@ -149,13 +153,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             return response
 
         finally:
-            # Reset model configuration context if set
-            if model_config_token:
-                try:
-                    TenantModelContext.reset_config(model_config_token)
-                except Exception as e:  # noqa: BLE001
-                    logger.error("Failed to reset model config context: %s", e)
-
             # Reset workspace context if set
             if workspace_token:
                 try:
@@ -168,14 +165,16 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         request: Request,
         tenant_id: str,
     ):
-        """Get workspace for tenant from pool.
+        """Get workspace context for tenant.
 
         Args:
             request: The FastAPI request object.
             tenant_id: The tenant ID to get workspace for.
 
         Returns:
-            Workspace instance or None if not available.
+            TenantWorkspaceContext instance or None if not available.
+            Note: This returns a lightweight context, not a full Workspace runtime.
+            The Workspace runtime is started on-demand via MultiAgentManager.get_agent().
         """
         # Get tenant workspace pool from app state
         pool = getattr(request.app.state, "tenant_workspace_pool", None)
@@ -184,13 +183,24 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             return None
 
         try:
-            # Get or create workspace for tenant
-            # Note: This is now async and will start the workspace
-            workspace = await pool.get_or_create(tenant_id)
-            return workspace
+            # Ensure tenant is bootstrapped (minimal - directories only)
+            await pool.ensure_bootstrap(tenant_id)
+
+            # Create lightweight context without starting workspace runtime
+            # The full Workspace runtime is lazy-loaded via MultiAgentManager.get_agent()
+            workspace_dir = pool.get_tenant_workspace_dir(tenant_id)
+            context = TenantWorkspaceContext(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+            )
+            logger.debug(
+                f"Created TenantWorkspaceContext for tenant={tenant_id}, "
+                f"dir={workspace_dir}",
+            )
+            return context
         except Exception as e:
             logger.error(
-                f"Error loading workspace for tenant {tenant_id}: {e}",
+                f"Error bootstrapping tenant {tenant_id}: {e}",
             )
             return None
 

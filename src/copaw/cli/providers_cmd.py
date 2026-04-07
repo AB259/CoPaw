@@ -71,8 +71,16 @@ def _wait_for_local_model_download(
         raise click.Abort() from exc
 
 
-def _manager() -> ProviderManager:
-    return ProviderManager.get_instance()
+def _manager(tenant_id: str | None = None) -> ProviderManager:
+    """Get ProviderManager instance for a tenant.
+
+    Args:
+        tenant_id: Tenant ID for multi-tenant mode. If None, uses "default".
+
+    Returns:
+        ProviderManager instance for the specified tenant.
+    """
+    return ProviderManager.get_instance(tenant_id)
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -114,8 +122,8 @@ def _all_provider_objects(manager: ProviderManager) -> list[Provider]:
     return objs
 
 
-def _get_ollama_host() -> str:
-    manager = _manager()
+def _get_ollama_host(tenant_id: str | None = None) -> str:
+    manager = _manager(tenant_id)
     provider = manager.get_provider("ollama")
     if provider is None or not provider.base_url:
         return "http://127.0.0.1:11434"
@@ -126,9 +134,10 @@ def _select_provider_interactive(
     prompt_text: str = "Select provider:",
     *,
     default_pid: str = "",
+    tenant_id: str | None = None,
 ) -> str:
     """Prompt user to pick a provider. Returns provider_id."""
-    manager = _manager()
+    manager = _manager(tenant_id)
     all_providers = _all_provider_objects(manager)
 
     labels: list[str] = []
@@ -152,13 +161,16 @@ def _select_provider_interactive(
 
 def configure_provider_api_key_interactive(
     provider_id: str | None = None,
+    *,
+    tenant_id: str | None = None,
 ) -> str:
     """Interactively configure a provider's API key. Returns provider_id."""
-    manager = _manager()
+    manager = _manager(tenant_id)
 
     if provider_id is None:
         provider_id = _select_provider_interactive(
             "Select provider to configure API key:",
+            tenant_id=tenant_id,
         )
 
     defn = manager.get_provider(provider_id)
@@ -234,9 +246,13 @@ def configure_provider_api_key_interactive(
     return provider_id
 
 
-def _add_models_interactive(provider_id: str) -> None:
+def _add_models_interactive(
+    provider_id: str,
+    *,
+    tenant_id: str | None = None,
+) -> None:
     """Interactively add models to a provider after configuration."""
-    manager = _manager()
+    manager = _manager(tenant_id)
     defn = manager.get_provider(provider_id)
     if defn is None:
         click.echo(
@@ -339,9 +355,13 @@ def _select_llm_model(defn, pid, current_slot, *, use_defaults):
     )
 
 
-def configure_llm_slot_interactive(*, use_defaults: bool = False) -> None:
+def configure_llm_slot_interactive(
+    *,
+    use_defaults: bool = False,
+    tenant_id: str | None = None,
+) -> None:
     """Interactively configure the active LLM model slot."""
-    manager = _manager()
+    manager = _manager(tenant_id)
     all_providers = _all_provider_objects(manager)
     current_slot = manager.get_active_model()
 
@@ -360,9 +380,9 @@ def configure_llm_slot_interactive(*, use_defaults: bool = False) -> None:
                 fg="yellow",
             ),
         )
-        pid = configure_provider_api_key_interactive()
-        _add_models_interactive(pid)
-        manager = _manager()
+        pid = configure_provider_api_key_interactive(tenant_id=tenant_id)
+        _add_models_interactive(pid, tenant_id=tenant_id)
+        manager = _manager(tenant_id)
         current_slot = manager.get_active_model()
         eligible = _filter_eligible(_all_provider_objects(manager))
         if not eligible:
@@ -426,20 +446,24 @@ def configure_llm_slot_interactive(*, use_defaults: bool = False) -> None:
     click.echo(f"✓ LLM: {defn.name} / {model}")
 
 
-def configure_providers_interactive(*, use_defaults: bool = False) -> None:
+def configure_providers_interactive(
+    *,
+    use_defaults: bool = False,
+    tenant_id: str | None = None,
+) -> None:
     """Full interactive setup: configure provider → add models →
     activate LLM."""
     if use_defaults:
-        configure_llm_slot_interactive(use_defaults=True)
+        configure_llm_slot_interactive(use_defaults=True, tenant_id=tenant_id)
         return
 
     click.echo("\n--- Provider Configuration ---")
     while True:
-        pid = configure_provider_api_key_interactive()
+        pid = configure_provider_api_key_interactive(tenant_id=tenant_id)
 
         # For local providers (llamacpp, mlx, ollama),
         # skip to model activation directly
-        manager = _manager()
+        manager = _manager(tenant_id)
         defn = manager.get_provider(pid)
         if defn is None:
             click.echo(
@@ -451,26 +475,50 @@ def configure_providers_interactive(*, use_defaults: bool = False) -> None:
             raise SystemExit(1)
         if defn.is_local or pid == "ollama":
             click.echo(f"\n--- Activate {defn.name} Model ---")
-            configure_llm_slot_interactive()
+            configure_llm_slot_interactive(tenant_id=tenant_id)
             return
 
-        _add_models_interactive(pid)
+        _add_models_interactive(pid, tenant_id=tenant_id)
         if not click.confirm("Configure another provider?", default=False):
             break
 
     click.echo("\n--- Activate LLM Model ---")
-    configure_llm_slot_interactive()
+    configure_llm_slot_interactive(tenant_id=tenant_id)
 
 
 @click.group("models")
-def models_group() -> None:
+@click.option(
+    "--tenant-id",
+    "-t",
+    default=None,
+    help="Tenant ID for multi-tenant mode (default: 'default')",
+)
+@click.pass_context
+def models_group(ctx: click.Context, tenant_id: str | None) -> None:
     """Manage LLM models and provider configuration."""
+    # Store tenant_id in context for use by subcommands
+    ctx.ensure_object(dict)
+    ctx.obj["tenant_id"] = tenant_id
+
+
+def _get_tenant_id(ctx: click.Context) -> str | None:
+    """Get tenant ID from Click context.
+
+    Args:
+        ctx: Click context object.
+
+    Returns:
+        Tenant ID if set, None otherwise.
+    """
+    return ctx.obj.get("tenant_id") if ctx.obj else None
 
 
 @models_group.command("list")
-def list_cmd() -> None:
+@click.pass_context
+def list_cmd(ctx: click.Context) -> None:
     """Show all providers and their current configuration."""
-    manager = _manager()
+    tenant_id = _get_tenant_id(ctx)
+    manager = _manager(tenant_id)
 
     click.echo("\n=== Providers ===")
     for defn in _all_provider_objects(manager):
@@ -529,22 +577,34 @@ def list_cmd() -> None:
 
 
 @models_group.command("config")
-def config_cmd() -> None:
+@click.pass_context
+def config_cmd(ctx: click.Context) -> None:
     """Interactively configure providers and active models."""
-    configure_providers_interactive()
+    tenant_id = _get_tenant_id(ctx)
+    configure_providers_interactive(tenant_id=tenant_id)
 
 
 @models_group.command("config-key")
 @click.argument("provider_id", required=False, default=None)
-def config_key_cmd(provider_id: str | None) -> None:
+@click.pass_context
+def config_key_cmd(
+    ctx: click.Context,
+    provider_id: str | None,
+) -> None:
     """Configure a provider's API key."""
-    configure_provider_api_key_interactive(provider_id)
+    tenant_id = _get_tenant_id(ctx)
+    configure_provider_api_key_interactive(
+        provider_id,
+        tenant_id=tenant_id,
+    )
 
 
 @models_group.command("set-llm")
-def set_llm_cmd() -> None:
+@click.pass_context
+def set_llm_cmd(ctx: click.Context) -> None:
     """Interactively set the active LLM model."""
-    configure_llm_slot_interactive()
+    tenant_id = _get_tenant_id(ctx)
+    configure_llm_slot_interactive(tenant_id=tenant_id)
 
 
 @models_group.command("add-provider")
@@ -552,14 +612,17 @@ def set_llm_cmd() -> None:
 @click.option("--name", "-n", required=True, help="Human-readable name")
 @click.option("--base-url", "-u", default="", help="Default API base URL")
 @click.option("--api-key-prefix", default="", help="Expected API key prefix")
+@click.pass_context
 def add_provider_cmd(
+    ctx: click.Context,
     provider_id: str,
     name: str,
     base_url: str,
     api_key_prefix: str,
 ) -> None:
     """Add a new custom provider."""
-    manager = _manager()
+    tenant_id = _get_tenant_id(ctx)
+    manager = _manager(tenant_id)
     try:
         provider_info = asyncio.run(
             manager.add_custom_provider(
@@ -593,9 +656,15 @@ def add_provider_cmd(
 @models_group.command("remove-provider")
 @click.argument("provider_id")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-def remove_provider_cmd(provider_id: str, yes: bool) -> None:
+@click.pass_context
+def remove_provider_cmd(
+    ctx: click.Context,
+    provider_id: str,
+    yes: bool,
+) -> None:
     """Remove a custom provider."""
-    manager = _manager()
+    tenant_id = _get_tenant_id(ctx)
+    manager = _manager(tenant_id)
     if provider_id in manager.builtin_providers:
         click.echo(
             click.style(
@@ -624,9 +693,16 @@ def remove_provider_cmd(provider_id: str, yes: bool) -> None:
 @click.argument("provider_id")
 @click.option("--model-id", "-m", required=True, help="Model identifier")
 @click.option("--model-name", "-n", required=True, help="Model display name")
-def add_model_cmd(provider_id: str, model_id: str, model_name: str) -> None:
+@click.pass_context
+def add_model_cmd(
+    ctx: click.Context,
+    provider_id: str,
+    model_id: str,
+    model_name: str,
+) -> None:
     """Add a model to any provider (built-in or custom)."""
-    manager = _manager()
+    tenant_id = _get_tenant_id(ctx)
+    manager = _manager(tenant_id)
     # Prevent manual model addition for Ollama
     if provider_id == "ollama":
         click.echo(
@@ -657,9 +733,15 @@ def add_model_cmd(provider_id: str, model_id: str, model_name: str) -> None:
 @models_group.command("remove-model")
 @click.argument("provider_id")
 @click.option("--model-id", "-m", required=True, help="Model identifier")
-def remove_model_cmd(provider_id: str, model_id: str) -> None:
+@click.pass_context
+def remove_model_cmd(
+    ctx: click.Context,
+    provider_id: str,
+    model_id: str,
+) -> None:
     """Remove a user-added model from any provider."""
-    manager = _manager()
+    tenant_id = _get_tenant_id(ctx)
+    manager = _manager(tenant_id)
     # Prevent manual model removal for Ollama
     if provider_id == "ollama":
         click.echo(

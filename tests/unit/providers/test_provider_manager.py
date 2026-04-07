@@ -270,7 +270,9 @@ def test_migrate_legacy_file_and_persist_active_model(
     legacy_ollama = manager.get_provider("ollama")
     assert legacy_ollama.base_url == "http://myhost:11434"
 
-    active_model_file = isolated_secret_dir / "providers" / "active_model.json"
+    active_model_file = (
+        isolated_secret_dir / "default" / "providers" / "active_model.json"
+    )
     assert active_model_file.exists()
 
 
@@ -420,7 +422,7 @@ def test_provider_from_data_fallback_to_openai(isolated_secret_dir) -> None:
 def test_init_from_storage_migrates_with_different_provider(
     isolated_secret_dir,
 ) -> None:
-    builtin_path = isolated_secret_dir / "providers" / "builtin"
+    builtin_path = isolated_secret_dir / "default" / "providers" / "builtin"
     builtin_path.mkdir(parents=True, exist_ok=True)
 
     legacy_minimax_provider = {
@@ -471,3 +473,417 @@ def test_init_from_storage_migrates_with_different_provider(
     assert (
         manager.get_provider("ollama").base_url == "http://legacy-ollama:11434"
     )
+
+
+# =============================================================================
+# Tenant Isolation Tests
+# =============================================================================
+
+
+class TestProviderManagerTenantIsolation:
+    """Tests for ProviderManager tenant isolation functionality."""
+
+    def test_default_tenant_uses_default_path(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """Default tenant uses path with 'default' in it."""
+        manager = ProviderManager()
+
+        assert manager.tenant_id == "default"
+        assert "default" in str(manager.root_path)
+        assert (
+            manager.root_path == isolated_secret_dir / "default" / "providers"
+        )
+
+    def test_custom_tenant_uses_tenant_path(self, isolated_secret_dir) -> None:
+        """Custom tenant uses path with tenant_id in it."""
+        manager = ProviderManager(tenant_id="tenant-a")
+
+        assert manager.tenant_id == "tenant-a"
+        assert "tenant-a" in str(manager.root_path)
+        assert (
+            manager.root_path == isolated_secret_dir / "tenant-a" / "providers"
+        )
+
+    def test_get_instance_returns_default_without_args(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """get_instance() without args returns default tenant manager."""
+        manager = ProviderManager.get_instance()
+
+        assert manager.tenant_id == "default"
+
+    def test_get_instance_returns_specific_tenant(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """get_instance(tenant_id) returns specific tenant manager."""
+        manager_a = ProviderManager.get_instance("tenant-a")
+        manager_b = ProviderManager.get_instance("tenant-b")
+
+        assert manager_a.tenant_id == "tenant-a"
+        assert manager_b.tenant_id == "tenant-b"
+        assert manager_a is not manager_b
+
+    def test_get_instance_caches_instances(self, isolated_secret_dir) -> None:
+        """get_instance caches and returns same instance for same tenant."""
+        manager_1 = ProviderManager.get_instance("cached-tenant")
+        manager_2 = ProviderManager.get_instance("cached-tenant")
+
+        assert manager_1 is manager_2
+
+    def test_different_tenants_have_isolated_storage(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """Different tenants have isolated storage directories."""
+        manager_a = ProviderManager.get_instance("tenant-a")
+        manager_b = ProviderManager.get_instance("tenant-b")
+
+        # Update provider for tenant-a
+        manager_a.update_provider("openai", {"api_key": "sk-tenant-a"})
+
+        # Update provider for tenant-b
+        manager_b.update_provider("openai", {"api_key": "sk-tenant-b"})
+
+        # Verify isolation
+        assert manager_a.get_provider("openai").api_key == "sk-tenant-a"
+        assert manager_b.get_provider("openai").api_key == "sk-tenant-b"
+
+        # Verify files are in different directories
+        assert manager_a.root_path != manager_b.root_path
+        assert (manager_a.root_path / "builtin" / "openai.json").exists()
+        assert (manager_b.root_path / "builtin" / "openai.json").exists()
+
+    def test_active_model_isolated_per_tenant(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """Active model configuration is isolated per tenant."""
+        manager_a = ProviderManager.get_instance("active-a")
+        manager_b = ProviderManager.get_instance("active-b")
+
+        # Set different active models
+        manager_a.active_model = ModelSlotConfig(
+            provider_id="openai",
+            model="gpt-4",
+        )
+        manager_a.save_active_model(manager_a.active_model)
+
+        manager_b.active_model = ModelSlotConfig(
+            provider_id="anthropic",
+            model="claude-3",
+        )
+        manager_b.save_active_model(manager_b.active_model)
+
+        # Reload and verify isolation
+        reloaded_a = ProviderManager.get_instance("active-a")
+        reloaded_b = ProviderManager.get_instance("active-b")
+
+        assert reloaded_a.active_model.provider_id == "openai"
+        assert reloaded_a.active_model.model == "gpt-4"
+        assert reloaded_b.active_model.provider_id == "anthropic"
+        assert reloaded_b.active_model.model == "claude-3"
+
+    def test_get_tenant_root_path_static_method(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """_get_tenant_root_path returns correct path for tenant."""
+        path_default = ProviderManager._get_tenant_root_path("default")
+        path_tenant = ProviderManager._get_tenant_root_path("my-tenant")
+
+        assert path_default == isolated_secret_dir / "default" / "providers"
+        assert path_tenant == isolated_secret_dir / "my-tenant" / "providers"
+
+    def test_instances_dict_is_class_attribute(self) -> None:
+        """_instances is a class-level attribute shared across instances."""
+        assert hasattr(ProviderManager, "_instances")
+        assert isinstance(ProviderManager._instances, dict)
+
+    def test_instances_lock_is_class_attribute(self) -> None:
+        """_instances_lock is a class-level lock."""
+        assert hasattr(ProviderManager, "_instances_lock")
+        import threading
+
+        assert isinstance(
+            ProviderManager._instances_lock,
+            type(threading.Lock()),
+        )
+
+
+class TestLegacyTenantModelsRecovery:
+    """Tests for recovery from legacy tenant_models.json."""
+
+    def test_recover_active_model_from_legacy_tenant_models(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """ProviderManager recovers active model from legacy tenant_models.json."""
+        import json
+        from copaw.tenant_models.manager import TenantModelManager
+
+        # Create legacy tenant_models.json
+        tenant_id = "legacy-tenant"
+        tenant_dir = isolated_secret_dir / tenant_id
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+
+        legacy_config = {
+            "version": "1.0",
+            "providers": [
+                {
+                    "id": "test-openai",
+                    "type": "openai",
+                    "api_key": "test-key",
+                    "models": ["gpt-4"],
+                    "enabled": True,
+                },
+            ],
+            "routing": {
+                "mode": "cloud_first",
+                "slots": {
+                    "cloud": {"provider_id": "test-openai", "model": "gpt-4"},
+                    "local": {"provider_id": "ollama", "model": "llama2"},
+                },
+            },
+        }
+
+        legacy_path = TenantModelManager.get_config_path(tenant_id)
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            json.dumps(legacy_config, indent=2), encoding="utf-8"
+        )
+
+        # Create provider config for this tenant
+        provider_dir = (
+            isolated_secret_dir / tenant_id / "providers" / "builtin"
+        )
+        provider_dir.mkdir(parents=True, exist_ok=True)
+        provider_config = {
+            "id": "test-openai",
+            "name": "Test OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "models": [{"id": "gpt-4", "name": "GPT-4"}],
+        }
+        (provider_dir / "test-openai.json").write_text(
+            json.dumps(provider_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Initialize ProviderManager for this tenant
+        manager = ProviderManager(tenant_id=tenant_id)
+
+        # Active model should be recovered from legacy config
+        assert manager.active_model is not None
+        assert manager.active_model.provider_id == "test-openai"
+        assert manager.active_model.model == "gpt-4"
+
+        # Verify active_model.json was created
+        active_model_file = (
+            isolated_secret_dir / tenant_id / "providers" / "active_model.json"
+        )
+        assert active_model_file.exists()
+
+        # Reload and verify it's read from new location (not legacy)
+        reloaded = ProviderManager(tenant_id=tenant_id)
+        assert reloaded.active_model.provider_id == "test-openai"
+        assert reloaded.active_model.model == "gpt-4"
+
+    def test_no_recovery_when_active_model_exists(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """No recovery when active_model.json already exists."""
+        import json
+        from copaw.tenant_models.manager import TenantModelManager
+
+        tenant_id = "existing-tenant"
+
+        # Create provider directory structure
+        provider_dir = isolated_secret_dir / tenant_id / "providers"
+        provider_dir.mkdir(parents=True, exist_ok=True)
+        (provider_dir / "builtin").mkdir(exist_ok=True)
+
+        # Create existing active_model.json
+        active_config = {
+            "provider_id": "existing-provider",
+            "model": "existing-model",
+        }
+        (provider_dir / "active_model.json").write_text(
+            json.dumps(active_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Create legacy config with different values
+        legacy_config = {
+            "version": "1.0",
+            "providers": [],
+            "routing": {
+                "mode": "cloud_first",
+                "slots": {
+                    "cloud": {
+                        "provider_id": "legacy-provider",
+                        "model": "legacy-model",
+                    },
+                    "local": {"provider_id": "ollama", "model": "llama2"},
+                },
+            },
+        }
+        legacy_path = TenantModelManager.get_config_path(tenant_id)
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            json.dumps(legacy_config, indent=2), encoding="utf-8"
+        )
+
+        # Initialize ProviderManager
+        manager = ProviderManager(tenant_id=tenant_id)
+
+        # Should use existing active_model.json, not legacy
+        assert manager.active_model is not None
+        assert manager.active_model.provider_id == "existing-provider"
+        assert manager.active_model.model == "existing-model"
+
+    def test_recovery_fallback_to_default_tenant(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """Recovery falls back to default tenant if tenant-specific config missing."""
+        import json
+        from copaw.tenant_models.manager import TenantModelManager
+
+        # Create default tenant legacy config
+        default_tenant_id = "default"
+        default_legacy_config = {
+            "version": "1.0",
+            "providers": [],
+            "routing": {
+                "mode": "local_first",
+                "slots": {
+                    "local": {"provider_id": "ollama", "model": "llama3"},
+                    "cloud": {"provider_id": "openai", "model": "gpt-4"},
+                },
+            },
+        }
+        default_legacy_path = TenantModelManager.get_config_path(
+            default_tenant_id
+        )
+        default_legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        default_legacy_path.write_text(
+            json.dumps(default_legacy_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Create new tenant without its own config
+        new_tenant_id = "new-inherited-tenant"
+        provider_dir = isolated_secret_dir / new_tenant_id / "providers"
+        provider_dir.mkdir(parents=True, exist_ok=True)
+        (provider_dir / "builtin").mkdir(exist_ok=True)
+
+        # Create ollama provider
+        provider_config = {
+            "id": "ollama",
+            "name": "Ollama",
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "",
+            "models": [{"id": "llama3", "name": "Llama 3"}],
+        }
+        (provider_dir / "builtin" / "ollama.json").write_text(
+            json.dumps(provider_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Initialize ProviderManager for new tenant
+        manager = ProviderManager(tenant_id=new_tenant_id)
+
+        # Should recover from default tenant's legacy config
+        # (local slot from local_first mode = ollama/llama3)
+        assert manager.active_model is not None
+        assert manager.active_model.provider_id == "ollama"
+        assert manager.active_model.model == "llama3"
+
+        # Should save to new tenant's active_model.json
+        new_active_file = provider_dir / "active_model.json"
+        assert new_active_file.exists()
+
+
+class TestProviderManagerEnsureStorage:
+    """Tests for ensure_tenant_provider_storage."""
+
+    def test_ensure_storage_creates_directory_structure(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """ensure_tenant_provider_storage creates directory structure."""
+        tenant_id = "ensure-test-tenant"
+
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+        tenant_providers_dir = isolated_secret_dir / tenant_id / "providers"
+        assert tenant_providers_dir.exists()
+        assert (tenant_providers_dir / "builtin").exists()
+        assert (tenant_providers_dir / "custom").exists()
+
+    def test_ensure_storage_is_idempotent(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """ensure_tenant_provider_storage is safe to call multiple times."""
+        tenant_id = "idempotent-test-tenant"
+
+        # Call multiple times
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+        tenant_providers_dir = isolated_secret_dir / tenant_id / "providers"
+        assert tenant_providers_dir.exists()
+
+    def test_ensure_storage_with_none_uses_default(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """ensure_tenant_provider_storage with None uses default tenant."""
+        ProviderManager.ensure_tenant_provider_storage(None)
+
+        default_providers_dir = isolated_secret_dir / "default" / "providers"
+        assert default_providers_dir.exists()
+
+    def test_ensure_storage_copies_from_default_when_exists(
+        self,
+        isolated_secret_dir,
+    ) -> None:
+        """ensure_tenant_provider_storage copies config from default tenant."""
+        import json
+
+        # Create default tenant with config
+        default_dir = isolated_secret_dir / "default" / "providers"
+        default_dir.mkdir(parents=True)
+        (default_dir / "builtin").mkdir()
+        (default_dir / "custom").mkdir()
+
+        # Create a provider in default
+        provider_config = {"id": "test-provider", "name": "Test Provider"}
+        (default_dir / "builtin" / "test-provider.json").write_text(
+            json.dumps(provider_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Create active_model in default
+        active_config = {"provider_id": "test-provider", "model": "test-model"}
+        (default_dir / "active_model.json").write_text(
+            json.dumps(active_config, indent=2),
+            encoding="utf-8",
+        )
+
+        # Now ensure storage for new tenant
+        new_tenant_id = "copy-from-default"
+        ProviderManager.ensure_tenant_provider_storage(new_tenant_id)
+
+        # Should have copied the structure
+        new_dir = isolated_secret_dir / new_tenant_id / "providers"
+        assert new_dir.exists()
+        assert (new_dir / "builtin" / "test-provider.json").exists()
+        assert (new_dir / "active_model.json").exists()
