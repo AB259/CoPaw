@@ -1,0 +1,10 @@
+{
+  "SWE_LOG_LEVEL": "info",
+  "SWE_OPENAPI_DOCS": "false",
+  "SWE_CORS_ORIGINS": "",
+  "SWE_LLM_MAX_CONCURRENT": "10",
+  "SWE_LLM_MAX_QPM": "600",
+  "SWE_AUTH_ENABLED": "",
+  "SWE_ENABLED_CHANNELS": "",
+  "SWE_DISABLED_CHANNELS": ""
+}

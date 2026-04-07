@@ -7,11 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-import copaw.app.migration as migration_module
-import copaw.constant as constant_module
-from copaw.agents.skills_manager import ensure_skill_pool_initialized
-from copaw.app.migration import ensure_default_agent_exists, ensure_qa_agent_exists
-from copaw.constant import BUILTIN_QA_AGENT_ID
+import swe.app.migration as migration_module
+import swe.constant as constant_module
+from swe.agents.skills_manager import ensure_skill_pool_initialized
+from swe.app.migration import ensure_default_agent_exists, ensure_qa_agent_exists
+from swe.constant import BUILTIN_QA_AGENT_ID
 
 
 def test_ensure_default_agent_exists_uses_tenant_working_dir(

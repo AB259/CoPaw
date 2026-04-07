@@ -14,10 +14,10 @@ sys.path.insert(
 )
 
 # pylint: disable=wrong-import-position
-from copaw.app.workspace.tenant_initializer import (  # noqa: E402
+from swe.app.workspace.tenant_initializer import (  # noqa: E402
     TenantInitializer,
 )
-from copaw.agents.skills_manager import (  # noqa: E402
+from swe.agents.skills_manager import (  # noqa: E402
     get_skill_pool_dir,
     get_pool_skill_manifest_path,
     get_workspace_skills_dir,
