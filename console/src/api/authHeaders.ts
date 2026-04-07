@@ -1,10 +1,10 @@
 import { getApiToken } from "./config";
 
-// ==================== iframe 集成 (Kun He) ====================
-// 引入 iframe 上下文存储，用于获取父窗口传递的用户信息
-// 包括 userId (来自 sapId)、自定义 headers 等
+// ==================== userId 统一整改 (Kun He) ====================
+// 使用统一的 getUserId helper，遵循优先级：iframe > window > session > default
+import { getUserId } from "../utils/identity";
 import { getIframeContext } from "../stores/iframeStore";
-// ==================== iframe 集成结束 ====================
+// ==================== userId 统一整改结束 ====================
 
 /**
  * 构建认证和上下文相关的请求 headers
@@ -39,27 +39,31 @@ export function buildAuthHeaders(): Record<string, string> {
     console.warn("Failed to get selected agent from storage:", error);
   }
 
-  // 3. iframe 上下文参数（从父级 iframe 接收的参数）
-  // ==================== iframe 集成 (Kun He) ====================
-  // 用户 ID 和租户 ID：
-  // - iframe 内嵌时：使用父窗口传递的 userId (来自 sapId)
-  // - 非 iframe 模式：默认值为 "default"
+  // 3. 用户 ID 和租户 ID
+  // ==================== userId 统一整改 (Kun He) ====================
+  // 使用统一的 getUserId() 获取用户 ID
+  // 优先级：iframe userId > window.currentUserId > DEFAULT_USER_ID
   // X-Tenant-Id 与 X-User-Id 保持一致
-  const iframeContext = getIframeContext();
-  const userId = iframeContext.userId || "default";
+  const userId = getUserId();
   headers["X-User-Id"] = userId;
   headers["X-Tenant-Id"] = userId;
 
-  // 自定义 headers 数组（父窗口通过 auth 字段传递）
-  // 每项包含 headerName 和 headerValue
+  // 4. 自定义 headers 数组（父窗口通过 auth 字段传递）
+  // 注意：排除 X-User-Id，因为已由 getUserId() 处理
+  const iframeContext = getIframeContext();
   if (iframeContext.authHeaders?.length) {
     for (const item of iframeContext.authHeaders) {
-      if (item.headerName && item.headerValue !== undefined) {
+      // 跳过 X-User-Id，避免覆盖上面设置的值
+      if (
+        item.headerName &&
+        item.headerValue !== undefined &&
+        item.headerName !== "X-User-Id"
+      ) {
         headers[item.headerName] = item.headerValue;
       }
     }
   }
-  // ==================== iframe 集成结束 ====================
+  // ==================== userId 统一整改结束 ====================
 
   return headers;
 }
