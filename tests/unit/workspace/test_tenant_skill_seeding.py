@@ -157,6 +157,11 @@ class TestSkillPoolSeeding:
 
     def test_seed_skill_pool_skips_when_pool_exists(self, tmp_path):
         """Seeding is skipped when tenant already has skill pool state."""
+        from swe.agents.skills_manager import (
+            get_pool_skill_manifest_path,
+            _write_json_atomic,
+        )
+
         # Setup default tenant
         default_init = TenantInitializer(tmp_path, "default")
         default_init.ensure_directory_structure()
@@ -171,7 +176,7 @@ class TestSkillPoolSeeding:
             encoding="utf-8",
         )
 
-        # Create new tenant with existing skill pool
+        # Create new tenant with existing skill pool (with manifest)
         new_init = TenantInitializer(tmp_path, "new-tenant")
         new_init.ensure_directory_structure()
 
@@ -183,6 +188,13 @@ class TestSkillPoolSeeding:
         (existing_skill / "SKILL.md").write_text(
             "---\nname: existing-skill\ndescription: Existing\n---\n",
             encoding="utf-8",
+        )
+
+        # Create manifest to indicate "complete" pool state
+        manifest_path = get_pool_skill_manifest_path(working_dir=new_init.tenant_dir)
+        _write_json_atomic(
+            manifest_path,
+            {"skills": {"existing-skill": {"name": "existing-skill"}}},
         )
 
         # Try to seed - should be skipped
@@ -370,6 +382,11 @@ class TestDefaultWorkspaceSkillSeeding:
 
     def test_seed_workspace_skills_skips_when_skills_exist(self, tmp_path):
         """Seeding is skipped when workspace already has skills."""
+        from swe.agents.skills_manager import (
+            get_workspace_skill_manifest_path,
+            _write_json_atomic,
+        )
+
         # Setup default tenant
         default_init = TenantInitializer(tmp_path, "default")
         default_init.ensure_directory_structure()
@@ -385,7 +402,7 @@ class TestDefaultWorkspaceSkillSeeding:
             encoding="utf-8",
         )
 
-        # Create new tenant with existing workspace skills
+        # Create new tenant with existing workspace skills (with manifest)
         new_init = TenantInitializer(tmp_path, "new-tenant")
         new_init.ensure_directory_structure()
 
@@ -398,6 +415,13 @@ class TestDefaultWorkspaceSkillSeeding:
         (existing_skill / "SKILL.md").write_text(
             "---\nname: existing-skill\ndescription: Existing\n---\n",
             encoding="utf-8",
+        )
+
+        # Create manifest to indicate "complete" workspace skill state
+        manifest_path = get_workspace_skill_manifest_path(new_workspace)
+        _write_json_atomic(
+            manifest_path,
+            {"skills": {"existing-skill": {"name": "existing-skill"}}},
         )
 
         # Try to seed - should be skipped

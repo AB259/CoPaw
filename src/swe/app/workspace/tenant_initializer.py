@@ -120,8 +120,11 @@ class TenantInitializer:
     def _has_skill_pool_state(self) -> bool:
         """Check if tenant already has skill pool state.
 
+        Uses manifest as primary source of truth. Only falls back to
+        directory checking if manifest exists but is empty/corrupt.
+
         Returns:
-            True if skill pool exists and has content, False otherwise.
+            True if skill pool manifest exists with skills, False otherwise.
         """
         from ...agents.skills_manager import (
             get_skill_pool_dir,
@@ -133,7 +136,8 @@ class TenantInitializer:
             working_dir=self.tenant_dir,
         )
 
-        # Check if manifest exists and has skills
+        # Primary check: manifest exists and has skills
+        # If manifest doesn't exist, we need seeding (even if directories exist)
         if manifest_path.exists():
             try:
                 manifest = json.loads(
@@ -141,22 +145,31 @@ class TenantInitializer:
                 )
                 if manifest.get("skills"):
                     return True
+                # Manifest exists but is empty - check if skills were partially copied
+                # This handles the case where manifest was deleted but skills remain
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Check if pool directory has skill subdirectories
-        if pool_dir.exists():
-            for item in pool_dir.iterdir():
-                if item.is_dir() and (item / "SKILL.md").exists():
-                    return True
+            # Manifest exists (even if empty/corrupt), check for partial state
+            if pool_dir.exists():
+                for item in pool_dir.iterdir():
+                    if item.is_dir() and (item / "SKILL.md").exists():
+                        return True
+        else:
+            # No manifest - need seeding regardless of directory state
+            # This prevents partial copy from being considered "initialized"
+            pass
 
         return False
 
     def _has_default_workspace_skills(self) -> bool:
         """Check if default workspace already has skill state.
 
+        Uses manifest as primary source of truth. Only falls back to
+        directory checking if manifest exists but is empty/corrupt.
+
         Returns:
-            True if default workspace has skills, False otherwise.
+            True if default workspace has skill manifest with skills, False otherwise.
         """
         from ...agents.skills_manager import (
             get_workspace_skills_dir,
@@ -167,7 +180,8 @@ class TenantInitializer:
         skills_dir = get_workspace_skills_dir(default_workspace)
         manifest_path = get_workspace_skill_manifest_path(default_workspace)
 
-        # Check if manifest exists and has skills
+        # Primary check: manifest exists and has skills
+        # If manifest doesn't exist, we need seeding (even if directories exist)
         if manifest_path.exists():
             try:
                 manifest = json.loads(
@@ -175,14 +189,18 @@ class TenantInitializer:
                 )
                 if manifest.get("skills"):
                     return True
+                # Manifest exists but is empty - check if skills were partially copied
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Check if skills directory has skill subdirectories
-        if skills_dir.exists():
-            for item in skills_dir.iterdir():
-                if item.is_dir() and (item / "SKILL.md").exists():
-                    return True
+            # Manifest exists (even if empty/corrupt), check for partial state
+            if skills_dir.exists():
+                for item in skills_dir.iterdir():
+                    if item.is_dir() and (item / "SKILL.md").exists():
+                        return True
+        else:
+            # No manifest - need seeding regardless of directory state
+            pass
 
         return False
 
@@ -358,7 +376,10 @@ class TenantInitializer:
             logger.error(
                 f"Failed to initialize builtin skills for tenant {self.tenant_id}: {e}",
             )
-            result["seeded"] = False
+            raise RuntimeError(
+                f"Skill pool initialization failed for tenant {self.tenant_id}: "
+                f"both default tenant seeding and builtin fallback failed: {e}",
+            ) from e
 
         return result
 
@@ -500,10 +521,12 @@ class TenantInitializer:
             return result
 
         except Exception as e:
-            logger.warning(
+            logger.error(
                 f"Failed to seed workspace skills for tenant {self.tenant_id}: {e}",
             )
-            return result
+            raise RuntimeError(
+                f"Default workspace skill seeding failed for tenant {self.tenant_id}: {e}",
+            ) from e
 
     def _merge_workspace_manifest_state(
         self,
