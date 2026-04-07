@@ -10,7 +10,7 @@
 
 ## Project Structure & Module Organization
 
-Core Python code lives in `src/copaw/`. Key areas include `cli/` for the `copaw` entrypoints, `app/channels/` for channel adapters, `providers/` and `local_models/` for model integration, and `agents/skills/` for built-in skills. Tests live in `tests/`, with focused suites such as `tests/lock/`, `tests/store/`, and `tests/app/backup/`. Frontend apps are split into `console/` (main web UI) and `website/` (docs/site). Deployment helpers live under `deploy/` and `scripts/`; longer-form design notes are in `docs/superpowers/specs/`.
+Core Python code lives in `src/swe/`. Key areas include `cli/` for the `swe` entrypoints, `app/channels/` for channel adapters, `providers/` and `local_models/` for model integration, and `agents/skills/` for built-in skills. Tests live in `tests/`, with focused suites such as `tests/lock/`, `tests/store/`, and `tests/app/backup/`. Frontend apps are split into `console/` (main web UI) and `website/` (docs/site). Deployment helpers live under `deploy/` and `scripts/`; longer-form design notes are in `docs/superpowers/specs/`.
 
 ## Testing
 
@@ -35,7 +35,7 @@ venv/bin/python -m pytest tests/unit/tenant_models/ -v
 CoPaw supports serving multiple users concurrently with full data isolation. Each user's request is routed to their own directory:
 
 ```
-~/.copaw/
+~/.swe/
 ├── alice/
 │   ├── config.json
 │   ├── active_skills/
@@ -50,7 +50,7 @@ CoPaw supports serving multiple users concurrently with full data isolation. Eac
 ```
 
 **Implementation:**
-- `src/copaw/constant.py` provides `contextvars`-based request isolation
+- `src/swe/constant.py` provides `contextvars`-based request isolation
 - `set_request_user_id(user_id)` sets the current request's user context
 - `get_request_working_dir()` returns the user-specific working directory
 - `AgentRunner.query_handler()` automatically sets up request context per query
@@ -71,7 +71,7 @@ CoPaw supports serving multiple users concurrently with full data isolation. Eac
 Provider configurations (API keys, base URLs, active model selection) are now tenant-isolated:
 
 ```
-~/.copaw.secret/
+~/.swe.secret/
 ├── default/
 │   └── providers/          # Default tenant provider config
 │       ├── builtin/        # Built-in provider configs (openai.json, etc.)
