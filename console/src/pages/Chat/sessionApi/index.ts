@@ -1,8 +1,10 @@
+// ==================== 组件引入方式变更 (Kun He) ====================
 import {
   IAgentScopeRuntimeWebUISession,
   IAgentScopeRuntimeWebUISessionAPI,
   IAgentScopeRuntimeWebUIMessage,
 } from "@/components/agentscope-chat";
+// ==================== 组件引入方式变更结束 ====================
 import api, {
   type ChatSpec,
   type ChatHistory,

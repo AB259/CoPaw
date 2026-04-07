@@ -1,8 +1,10 @@
+// ==================== 组件引入方式变更 (Kun He) ====================
 import {
   AgentScopeRuntimeWebUI,
   IAgentScopeRuntimeWebUIOptions,
   type IAgentScopeRuntimeWebUIRef,
 } from "@/components/agentscope-chat";
+// ==================== 组件引入方式变更结束 ====================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
@@ -20,7 +22,9 @@ import type { ProviderInfo, ModelInfo } from "../../api/types";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
+// ==================== 组件引入方式变更 (Kun He) ====================
 import { useChatAnywhereInput } from "@/components/agentscope-chat";
+// ==================== 组件引入方式变更结束 ====================
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
 import ChatActionGroup from "./components/ChatActionGroup";
