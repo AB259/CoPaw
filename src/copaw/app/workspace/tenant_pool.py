@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Tenant workspace pool: registry and cache for tenant-scoped workspaces.
+"""Tenant workspace pool: registry for tenant-scoped workspace directories.
 
-Provides lazy creation, per-tenant locking, and lifecycle management
-for tenant workspaces. Ensures thread-safe access and prevents duplicate
-concurrent workspace creation.
+Provides lazy bootstrap and lifecycle management for tenant workspaces.
+Ensures thread-safe access and prevents duplicate concurrent bootstrap.
+
+Note: This pool tracks tenant bootstrap/registry state only. Workspace runtime
+creation and startup is handled by MultiAgentManager.get_agent() on demand.
 """
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+import time
 from typing import Optional
 
 from .tenant_initializer import TenantInitializer
@@ -26,23 +28,26 @@ class TenantWorkspaceEntry:
     """
 
     tenant_id: str
-    workspace: Workspace
-    created_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
-    last_accessed_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
+    workspace: Optional[Workspace] = None
+    created_at: float = field(default_factory=time.monotonic)
+    last_accessed_at: float = field(default_factory=time.monotonic)
     access_count: int = 0
 
 
 class TenantWorkspacePool:
-    """Pool of tenant workspaces with lazy creation and lifecycle management.
+    """Pool of tenant workspaces with lazy bootstrap and lifecycle management.
 
     Each tenant gets their own workspace directory under the base working dir:
         WORKING_DIR/<tenant_id>/
 
     Features:
-    - Lazy creation: Workspaces created on first access
-    - Per-tenant locking: Prevents duplicate concurrent creation
+    - Minimal bootstrap: Only directory structure and agent declarations
+    - Per-tenant locking: Prevents duplicate concurrent bootstrap
     - Access tracking: Tracks last access time and count
-    - Lifecycle management: stop_all for graceful shutdown
+    - Registry only: Does NOT create or start workspace runtimes
+
+    Note: Workspace runtime creation and startup is handled by
+    MultiAgentManager.get_agent() on demand.
     """
 
     def __init__(self, base_working_dir: Path):
@@ -58,11 +63,11 @@ class TenantWorkspacePool:
         # Tenant workspace registry: tenant_id -> TenantWorkspaceEntry
         self._workspaces: dict[str, TenantWorkspaceEntry] = {}
 
-        # Per-tenant creation locks to prevent duplicate concurrent creation
-        self._creation_locks: dict[str, Lock] = {}
+        # Per-tenant bootstrap locks to prevent duplicate concurrent bootstrap
+        self._bootstrap_locks: dict[str, asyncio.Lock] = {}
 
         # Global lock for registry operations
-        self._registry_lock = Lock()
+        self._registry_lock = asyncio.Lock()
 
         logger.info(
             f"TenantWorkspacePool initialized at {self._base_working_dir}",
@@ -79,93 +84,156 @@ class TenantWorkspacePool:
         """
         return self._base_working_dir / tenant_id
 
-    def _get_or_create_creation_lock(self, tenant_id: str) -> Lock:
-        """Get or create a creation lock for a tenant.
+    def get_tenant_workspace_dir(self, tenant_id: str) -> Path:
+        """Get the workspace directory for a tenant (public).
+
+        This is a public method to compute the tenant's workspace directory
+        path without requiring the workspace runtime to be started.
 
         Args:
             tenant_id: The tenant identifier.
 
         Returns:
-            Lock for the tenant's creation.
+            Path to the tenant's workspace directory.
         """
-        with self._registry_lock:
-            if tenant_id not in self._creation_locks:
-                self._creation_locks[tenant_id] = Lock()
-            return self._creation_locks[tenant_id]
+        return self._get_tenant_workspace_dir(tenant_id)
 
-    def get_or_create(
+    async def _get_or_create_bootstrap_lock(
+        self,
+        tenant_id: str,
+    ) -> asyncio.Lock:
+        """Get or create a bootstrap lock for a tenant.
+
+        Args:
+            tenant_id: The tenant identifier.
+
+        Returns:
+            Lock for the tenant's bootstrap.
+        """
+        async with self._registry_lock:
+            if tenant_id not in self._bootstrap_locks:
+                self._bootstrap_locks[tenant_id] = asyncio.Lock()
+            return self._bootstrap_locks[tenant_id]
+
+    async def ensure_bootstrap(self, tenant_id: str) -> None:
+        """Ensure tenant directory is bootstrapped (minimal).
+
+        Thread-safe: Uses per-tenant locking to prevent duplicate bootstrap.
+
+        Args:
+            tenant_id: The tenant identifier.
+
+        Raises:
+            RuntimeError: If bootstrap fails.
+        """
+        # Fast path: check if already bootstrapped
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None:
+                self._mark_access(entry)
+                return
+
+        # Slow path: need to bootstrap (with per-tenant lock)
+        bootstrap_lock = await self._get_or_create_bootstrap_lock(tenant_id)
+        async with bootstrap_lock:
+            # Double-check after acquiring lock
+            async with self._registry_lock:
+                entry = self._workspaces.get(tenant_id)
+                if entry is not None:
+                    self._mark_access(entry)
+                    return
+
+            # Perform minimal bootstrap (outside registry lock to avoid blocking)
+            workspace_dir = self._get_tenant_workspace_dir(tenant_id)
+            logger.info(
+                f"Bootstrapping tenant directory: {tenant_id} at {workspace_dir}",
+            )
+
+            try:
+                # Bootstrap tenant directory structure and default agent only
+                initializer = TenantInitializer(
+                    self._base_working_dir,
+                    tenant_id,
+                )
+                initializer.initialize_minimal()
+
+                # Register in pool (no workspace runtime created)
+                async with self._registry_lock:
+                    entry = TenantWorkspaceEntry(
+                        tenant_id=tenant_id,
+                        workspace=None,  # Runtime not started
+                    )
+                    self._workspaces[tenant_id] = entry
+
+                logger.info(f"Tenant bootstrapped: {tenant_id}")
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to bootstrap tenant {tenant_id}: {e}",
+                )
+                raise RuntimeError(
+                    f"Failed to bootstrap tenant {tenant_id}: {e}",
+                ) from e
+
+    async def get_or_create(
         self,
         tenant_id: str,
         agent_id: str = "default",
     ) -> Workspace:
         """Get existing workspace or create new one for tenant.
 
-        Thread-safe: Uses per-tenant locking to prevent duplicate creation.
-        If creation fails, the half-started workspace is not cached.
+        DEPRECATED: This method is deprecated and no longer provides caching.
+        Each call creates a new MultiAgentManager instance, which means:
+        - No caching: repeated calls do not guarantee the same workspace instance
+        - No lifecycle management: workspaces created via this method are not
+          tracked by stop_all() or other pool lifecycle methods
+
+        Use ensure_bootstrap() + MultiAgentManager.get_agent() instead for
+        proper lazy loading and caching.
+
+        This method is kept temporarily for backward compatibility but will be
+        removed in a future version.
 
         Args:
             tenant_id: The tenant identifier.
             agent_id: The agent ID to use for the workspace (default: "default").
 
         Returns:
-            Workspace instance for the tenant.
+            Workspace instance for the tenant (already started).
 
         Raises:
-            RuntimeError: If workspace creation fails.
+            RuntimeError: If workspace creation or startup fails.
         """
-        # Fast path: check if already exists
-        with self._registry_lock:
-            entry = self._workspaces.get(tenant_id)
-            if entry is not None:
-                self._mark_access(entry)
-                return entry.workspace
+        import warnings
 
-        # Slow path: need to create (with per-tenant lock)
-        creation_lock = self._get_or_create_creation_lock(tenant_id)
-        with creation_lock:
-            # Double-check after acquiring lock
-            with self._registry_lock:
-                entry = self._workspaces.get(tenant_id)
-                if entry is not None:
-                    self._mark_access(entry)
-                    return entry.workspace
+        warnings.warn(
+            "TenantWorkspacePool.get_or_create() is deprecated and no longer "
+            "provides caching semantics. Use ensure_bootstrap() + "
+            "MultiAgentManager.get_agent() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(
+            "TenantWorkspacePool.get_or_create() is deprecated for tenant=%s. "
+            "Use ensure_bootstrap() + MultiAgentManager.get_agent() instead.",
+            tenant_id,
+        )
 
-            # Create workspace (outside registry lock to avoid blocking)
-            workspace_dir = self._get_tenant_workspace_dir(tenant_id)
-            logger.info(
-                f"Creating workspace for tenant: {tenant_id} at {workspace_dir}",
-            )
+        from ..multi_agent_manager import MultiAgentManager
 
-            try:
-                # Bootstrap tenant directory structure and agents
-                initializer = TenantInitializer(
-                    self._base_working_dir, tenant_id,
-                )
-                initializer.initialize()
+        # Ensure tenant is bootstrapped first
+        await self.ensure_bootstrap(tenant_id)
 
-                workspace = Workspace(agent_id, str(workspace_dir))
+        # Delegate workspace creation and startup to MultiAgentManager
+        # Note: This creates a new MultiAgentManager instance each time,
+        # which breaks caching semantics. This is why the method is deprecated.
+        multi_agent_manager = MultiAgentManager()
+        return await multi_agent_manager.get_agent(
+            agent_id,
+            tenant_id=tenant_id,
+        )
 
-                # Register in pool
-                with self._registry_lock:
-                    entry = TenantWorkspaceEntry(
-                        tenant_id=tenant_id,
-                        workspace=workspace,
-                    )
-                    self._workspaces[tenant_id] = entry
-
-                logger.info(f"Workspace created for tenant: {tenant_id}")
-                return workspace
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to create workspace for tenant {tenant_id}: {e}",
-                )
-                # Failed initialization does not leave cached half-started workspace
-                raise RuntimeError(
-                    f"Failed to create workspace for tenant {tenant_id}: {e}",
-                ) from e
-
-    def get(self, tenant_id: str) -> Optional[Workspace]:
+    async def get(self, tenant_id: str) -> Optional[Workspace]:
         """Get existing workspace for tenant if it exists.
 
         Args:
@@ -174,14 +242,14 @@ class TenantWorkspacePool:
         Returns:
             Workspace instance if found, None otherwise.
         """
-        with self._registry_lock:
+        async with self._registry_lock:
             entry = self._workspaces.get(tenant_id)
             if entry is not None:
                 self._mark_access(entry)
                 return entry.workspace
             return None
 
-    def remove(self, tenant_id: str) -> Optional[Workspace]:
+    async def remove(self, tenant_id: str) -> Optional[Workspace]:
         """Remove workspace from pool without stopping it.
 
         The caller is responsible for stopping the workspace if needed.
@@ -193,7 +261,7 @@ class TenantWorkspacePool:
         Returns:
             The removed workspace if it existed, None otherwise.
         """
-        with self._registry_lock:
+        async with self._registry_lock:
             entry = self._workspaces.pop(tenant_id, None)
             if entry is not None:
                 logger.info(f"Removed workspace from pool: {tenant_id}")
@@ -210,19 +278,22 @@ class TenantWorkspacePool:
         Returns:
             True if workspace was found and stopped, False otherwise.
         """
-        workspace = self.remove(tenant_id)
+        workspace = await self.remove(tenant_id)
         if workspace is None:
             return False
 
         try:
-            await workspace.stop(final=final)
+            # workspace is not None here due to the check above
+            await workspace.stop(final=final)  # type: ignore[union-attr]
             logger.info(f"Stopped workspace for tenant: {tenant_id}")
             return True
         except Exception as e:
-            logger.error(f"Error stopping workspace for tenant {tenant_id}: {e}")
+            logger.error(
+                f"Error stopping workspace for tenant {tenant_id}: {e}",
+            )
             raise
 
-    def mark_access(self, tenant_id: str) -> bool:
+    async def mark_access(self, tenant_id: str) -> bool:
         """Mark access time for a tenant's workspace.
 
         Args:
@@ -231,7 +302,7 @@ class TenantWorkspacePool:
         Returns:
             True if workspace exists and was marked, False otherwise.
         """
-        with self._registry_lock:
+        async with self._registry_lock:
             entry = self._workspaces.get(tenant_id)
             if entry is not None:
                 self._mark_access(entry)
@@ -244,16 +315,20 @@ class TenantWorkspacePool:
         Args:
             entry: The tenant workspace entry to mark.
         """
-        entry.last_accessed_at = asyncio.get_event_loop().time()
+        entry.last_accessed_at = time.monotonic()
         entry.access_count += 1
 
     async def stop_all(self, final: bool = True) -> None:
         """Stop all workspaces in the pool.
 
+        Note: This only stops workspaces that were registered with a
+        non-None workspace instance. Workspaces created by MultiAgentManager
+        should be stopped via MultiAgentManager.stop_all().
+
         Args:
             final: If True, stop all services including reusable ones.
         """
-        with self._registry_lock:
+        async with self._registry_lock:
             entries = list(self._workspaces.values())
             self._workspaces.clear()
 
@@ -261,16 +336,31 @@ class TenantWorkspacePool:
             logger.debug("No workspaces to stop")
             return
 
-        logger.info(f"Stopping {len(entries)} tenant workspaces")
+        # Filter entries that have a workspace instance
+        entries_with_workspace = [
+            e for e in entries if e.workspace is not None
+        ]
+        if not entries_with_workspace:
+            logger.debug("No workspace instances to stop")
+            return
+
+        logger.info(
+            f"Stopping {len(entries_with_workspace)} tenant workspaces",
+        )
 
         # Stop all workspaces concurrently
         exceptions = []
-        for entry in entries:
+        for entry in entries_with_workspace:
+            # Skip entries without a workspace instance (shouldn't happen due to filter)
+            if entry.workspace is None:
+                continue
             try:
                 await entry.workspace.stop(final=final)
                 logger.debug(f"Stopped workspace: {entry.tenant_id}")
             except Exception as e:
-                logger.error(f"Error stopping workspace {entry.tenant_id}: {e}")
+                logger.error(
+                    f"Error stopping workspace {entry.tenant_id}: {e}",
+                )
                 exceptions.append((entry.tenant_id, e))
 
         if exceptions:
@@ -281,13 +371,13 @@ class TenantWorkspacePool:
 
         logger.info("All tenant workspaces stopped")
 
-    def get_stats(self) -> dict:
+    async def get_stats(self) -> dict:
         """Get statistics about the pool.
 
         Returns:
             Dictionary with pool statistics.
         """
-        with self._registry_lock:
+        async with self._registry_lock:
             return {
                 "tenant_count": len(self._workspaces),
                 "tenants": {
@@ -309,8 +399,7 @@ class TenantWorkspacePool:
         Returns:
             True if the tenant has a workspace, False otherwise.
         """
-        with self._registry_lock:
-            return tenant_id in self._workspaces
+        return tenant_id in self._workspaces
 
     def __len__(self) -> int:
         """Return the number of workspaces in the pool.
@@ -318,14 +407,12 @@ class TenantWorkspacePool:
         Returns:
             Number of tenant workspaces.
         """
-        with self._registry_lock:
-            return len(self._workspaces)
+        return len(self._workspaces)
 
     def __repr__(self) -> str:
         """String representation of the pool."""
-        with self._registry_lock:
-            count = len(self._workspaces)
-            tenants = list(self._workspaces.keys())
+        count = len(self._workspaces)
+        tenants = list(self._workspaces.keys())
         return (
             f"TenantWorkspacePool("
             f"base={self._base_working_dir}, "

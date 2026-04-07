@@ -12,7 +12,6 @@ from ..config.config import (
     AgentProfileConfig,
     AgentProfileRef,
     AgentsConfig,
-    AgentsLLMRoutingConfig,
     AgentsRunningConfig,
     ChannelConfig,
     HeartbeatConfig,
@@ -135,12 +134,7 @@ def _do_migrate_legacy_workspace() -> bool:
             if hasattr(legacy_agents, "running") and legacy_agents.running
             else AgentsRunningConfig()
         ),
-        llm_routing=(
-            legacy_agents.llm_routing
-            if hasattr(legacy_agents, "llm_routing")
-            and legacy_agents.llm_routing
-            else AgentsLLMRoutingConfig()
-        ),
+        # llm_routing removed - now managed at tenant level
         system_prompt_files=(
             legacy_agents.system_prompt_files
             if hasattr(legacy_agents, "system_prompt_files")
@@ -199,7 +193,6 @@ def _do_migrate_legacy_workspace() -> bool:
         },
         # Preserve legacy fields with values from migrated agent config
         running=default_agent_config.running,
-        llm_routing=default_agent_config.llm_routing,
         language=default_agent_config.language,
         system_prompt_files=default_agent_config.system_prompt_files,
     )
@@ -668,9 +661,7 @@ def _do_ensure_default_agent(
             is_under_tenant = False
         if working_dir is not None and not is_under_tenant:
             # Stale global default -- override with tenant-scoped path
-            default_workspace = (
-                wd / "workspaces" / "default"
-            ).expanduser()
+            default_workspace = (wd / "workspaces" / "default").expanduser()
             agent_existed = False
         else:
             agent_existed = True

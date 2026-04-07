@@ -4,7 +4,13 @@ It provides a unified interface to manage providers, such as listing available
 providers, adding/removing custom providers, and fetching provider details."""
 
 import asyncio
+import fcntl
 import os
+import shutil
+import threading
+import time
+from copy import deepcopy
+from pathlib import Path
 from typing import Dict, List
 import logging
 import json
@@ -21,6 +27,7 @@ from copaw.providers.provider import (
 from copaw.providers.models import ModelSlotConfig
 from copaw.providers.openai_provider import OpenAIProvider
 from copaw.providers.anthropic_provider import AnthropicProvider
+
 # from copaw.providers.gemini_provider import GeminiProvider
 from copaw.providers.ollama_provider import OllamaProvider
 from copaw.constant import SECRET_DIR
@@ -569,14 +576,22 @@ class ProviderManager:
     including built-in and custom ones."""
 
     _instance = None
+    _instances: dict[str, "ProviderManager"] = {}
+    _instances_lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(self, tenant_id: str = "default") -> None:
+        """Initialize provider manager for a specific tenant.
+
+        Args:
+            tenant_id: The tenant ID for isolated storage. Defaults to "default".
+        """
         # Initialize provider manager, load providers from registry and store
         # any necessary state (e.g., cached models).
+        self.tenant_id = tenant_id
         self.builtin_providers: Dict[str, Provider] = {}
         self.custom_providers: Dict[str, Provider] = {}
         self.active_model: ModelSlotConfig | None = None
-        self.root_path = SECRET_DIR / "providers"
+        self.root_path = self._get_tenant_root_path(tenant_id)
         self.builtin_path = self.root_path / "builtin"
         self.custom_path = self.root_path / "custom"
         self._prepare_disk_storage()
@@ -588,6 +603,192 @@ class ProviderManager:
         self._init_from_storage()
         self._apply_default_annotations()
 
+    @staticmethod
+    def _get_tenant_root_path(tenant_id: str) -> Path:
+        """Get the root path for a tenant's provider configuration.
+
+        Args:
+            tenant_id: The tenant ID.
+
+        Returns:
+            Path to the tenant's provider configuration directory.
+        """
+        return SECRET_DIR / tenant_id / "providers"
+
+    @staticmethod
+    def ensure_tenant_provider_storage(tenant_id: str | None) -> None:
+        """Ensure tenant provider storage exists, initializing if needed.
+
+        This method is idempotent and concurrency-safe. It initializes tenant
+        provider storage by copying from the default tenant's configuration
+        when it doesn't exist. If the default tenant has no configuration,
+        an empty directory structure is created.
+
+        Args:
+            tenant_id: The tenant ID to ensure storage for. If None, uses "default".
+
+        Raises:
+            TimeoutError: If unable to acquire initialization lock within timeout.
+            OSError: If initialization fails due to filesystem issues.
+
+        Note:
+            This method is called automatically at provider feature boundaries
+            (provider APIs, local model APIs, runtime model creation). It is safe
+            to call multiple times - subsequent calls are no-ops if storage exists.
+        """
+        tenant_id = tenant_id or "default"
+        tenant_providers_dir = SECRET_DIR / tenant_id / "providers"
+
+        # Fast path: already exists (avoids lock overhead for 99% of calls)
+        if tenant_providers_dir.exists():
+            return
+
+        # Use lock file to handle concurrent initialization
+        lock_file = tenant_providers_dir.parent / ".provider_init.lock"
+        try:
+            # Create parent directory if needed
+            tenant_providers_dir.parent.mkdir(parents=True, exist_ok=True)
+
+            # Simple file-based locking with timeout
+            max_wait_seconds = 30.0
+            deadline = time.monotonic() + max_wait_seconds
+
+            with open(lock_file, "w", encoding="utf-8") as f:
+                # Wait until we acquire the lock or another process initializes
+                # Only lock holder may proceed with initialization
+                while True:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break  # Acquired lock, proceed with initialization
+                    except (IOError, OSError) as exc:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(
+                                f"Timeout waiting for provider "
+                                f"initialization lock for tenant {tenant_id}",
+                            ) from exc
+                        # Another process is initializing, wait and recheck
+                        logger.debug(
+                            "Waiting for concurrent provider initialization "
+                            "for tenant %s",
+                            tenant_id,
+                        )
+                        time.sleep(0.05)
+                        # Recheck after wait - if directory exists, another
+                        # process completed initialization
+                        if tenant_providers_dir.exists():
+                            return
+
+                # Double-check after acquiring lock (another process may have
+                # completed while we were waiting)
+                if tenant_providers_dir.exists():
+                    return
+
+                # Try to copy from default tenant
+                default_dir = SECRET_DIR / "default" / "providers"
+                if default_dir.exists() and any(default_dir.iterdir()):
+                    logger.info(
+                        "Initializing provider config for tenant %s "
+                        "from default tenant",
+                        tenant_id,
+                    )
+                    try:
+                        shutil.copytree(default_dir, tenant_providers_dir)
+                        logger.info(
+                            "Provider config initialized for tenant %s",
+                            tenant_id,
+                        )
+                    except Exception as copy_error:
+                        # Copy failed - log error and re-raise to prevent
+                        # silent degradation to empty config
+                        logger.error(
+                            "Failed to copy provider config from default "
+                            "for tenant %s: %s",
+                            tenant_id,
+                            copy_error,
+                        )
+                        raise
+                else:
+                    # Create empty directory structure (only when default
+                    # doesn't exist or is empty - this is expected behavior)
+                    logger.info(
+                        "Creating empty provider config structure "
+                        "for tenant %s (default has no config)",
+                        tenant_id,
+                    )
+                    tenant_providers_dir.mkdir(parents=True, exist_ok=True)
+                    (tenant_providers_dir / "builtin").mkdir(exist_ok=True)
+                    (tenant_providers_dir / "custom").mkdir(exist_ok=True)
+
+                # Release lock
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        except Exception as e:
+            logger.error(
+                "Failed to initialize provider config for tenant %s: %s",
+                tenant_id,
+                e,
+            )
+            # Don't create empty config on unexpected error - this would
+            # mask real issues and create an invalid state. Re-raise to
+            # let the caller handle the failure.
+            raise
+
+    @staticmethod
+    def get_instance(tenant_id: str | None = None) -> "ProviderManager":
+        """Get a ProviderManager instance for a specific tenant.
+
+        This method implements a multi-instance singleton pattern where
+        each tenant has its own isolated ProviderManager instance.
+
+        Args:
+            tenant_id: The tenant ID. If None, uses "default" tenant.
+
+        Returns:
+            ProviderManager instance for the specified tenant.
+        """
+        tenant_id = tenant_id or "default"
+
+        # Fast path: check if instance exists without lock
+        if tenant_id in ProviderManager._instances:
+            return ProviderManager._instances[tenant_id]
+
+        # Slow path: create instance with lock
+        with ProviderManager._instances_lock:
+            # Double-check after acquiring lock
+            if tenant_id not in ProviderManager._instances:
+                ProviderManager._instances[tenant_id] = ProviderManager(
+                    tenant_id,
+                )
+            return ProviderManager._instances[tenant_id]
+
+    @staticmethod
+    def get_active_chat_model() -> ChatModelBase:
+        """Get the currently active provider/model configuration.
+
+        .. deprecated::
+            This method is deprecated in multi-tenant environments.
+            Use TenantModelContext.get_config() for tenant-isolated model selection.
+        """
+        import warnings
+
+        warnings.warn(
+            "get_active_chat_model() accesses global active model which is not "
+            "isolated per tenant. In multi-tenant environments, use "
+            "TenantModelContext.get_config() for proper tenant isolation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        manager = ProviderManager.get_instance()
+        model = manager.get_active_model()
+        if model is None or model.provider_id == "" or model.model == "":
+            raise ValueError("No active model configured.")
+        provider = manager.get_provider(model.provider_id)
+        if provider is None:
+            raise ValueError(
+                f"Active provider '{model.provider_id}' not found.",
+            )
+        return provider.get_chat_model_instance(model.model)
+
     def _prepare_disk_storage(self):
         """Prepare directory structure"""
         for path in [self.root_path, self.builtin_path, self.custom_path]:
@@ -598,21 +799,22 @@ class ProviderManager:
                 pass
 
     def _init_builtins(self):
-        self._add_builtin(PROVIDER_COPAW)
-        self._add_builtin(PROVIDER_MODELSCOPE)
-        self._add_builtin(PROVIDER_DASHSCOPE)
-        self._add_builtin(PROVIDER_ALIYUN_CODINGPLAN)
-        self._add_builtin(PROVIDER_OPENAI)
-        self._add_builtin(PROVIDER_AZURE_OPENAI)
-        self._add_builtin(PROVIDER_KIMI_CN)
-        self._add_builtin(PROVIDER_KIMI_INTL)
-        self._add_builtin(PROVIDER_DEEPSEEK)
-        self._add_builtin(PROVIDER_ANTHROPIC)
-        # self._add_builtin(PROVIDER_GEMINI)
-        self._add_builtin(PROVIDER_MINIMAX_CN)
-        self._add_builtin(PROVIDER_MINIMAX)
-        self._add_builtin(PROVIDER_OLLAMA)
-        self._add_builtin(PROVIDER_LMSTUDIO)
+        # Deep copy builtin providers to ensure per-tenant isolation
+        self._add_builtin(deepcopy(PROVIDER_COPAW))
+        self._add_builtin(deepcopy(PROVIDER_MODELSCOPE))
+        self._add_builtin(deepcopy(PROVIDER_DASHSCOPE))
+        self._add_builtin(deepcopy(PROVIDER_ALIYUN_CODINGPLAN))
+        self._add_builtin(deepcopy(PROVIDER_OPENAI))
+        self._add_builtin(deepcopy(PROVIDER_AZURE_OPENAI))
+        self._add_builtin(deepcopy(PROVIDER_KIMI_CN))
+        self._add_builtin(deepcopy(PROVIDER_KIMI_INTL))
+        self._add_builtin(deepcopy(PROVIDER_DEEPSEEK))
+        self._add_builtin(deepcopy(PROVIDER_ANTHROPIC))
+        # self._add_builtin(deepcopy(PROVIDER_GEMINI))
+        self._add_builtin(deepcopy(PROVIDER_MINIMAX_CN))
+        self._add_builtin(deepcopy(PROVIDER_MINIMAX))
+        self._add_builtin(deepcopy(PROVIDER_OLLAMA))
+        self._add_builtin(deepcopy(PROVIDER_LMSTUDIO))
 
     def _add_builtin(self, provider: Provider):
         self.builtin_providers[provider.id] = provider
@@ -957,16 +1159,80 @@ class ProviderManager:
             pass
 
     def load_active_model(self) -> ModelSlotConfig | None:
-        """Load the active provider/model configuration from disk."""
+        """Load the active provider/model configuration from disk.
+
+        If active_model.json doesn't exist but legacy tenant_models.json does,
+        recovers the active slot from the legacy config and migrates it.
+        """
         active_path = self.root_path / "active_model.json"
-        if not active_path.exists():
-            return None
+
+        # Try to load from new location first
+        if active_path.exists():
+            try:
+                with open(active_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return ModelSlotConfig.model_validate(data)
+            except Exception:
+                return None
+
+        # Recovery: migrate from legacy tenant_models.json if it exists
+        legacy_config = self._recover_from_legacy_tenant_models()
+        if legacy_config:
+            logger.info(
+                "Recovered active model from legacy tenant_models.json "
+                "for tenant %s: %s/%s",
+                self.tenant_id,
+                legacy_config.provider_id,
+                legacy_config.model,
+            )
+            # Save to new location for future reads
+            self.save_active_model(legacy_config)
+            return legacy_config
+
+        return None
+
+    def _recover_from_legacy_tenant_models(self) -> ModelSlotConfig | None:
+        """Recover active model from legacy tenant_models.json.
+
+        This provides one-time migration for tenants that have tenant_models.json
+        but don't yet have providers/active_model.json.
+
+        Returns:
+            ModelSlotConfig if recovery succeeded, None otherwise.
+        """
         try:
-            with open(active_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return ModelSlotConfig.model_validate(data)
-        except Exception:
-            return None
+            from copaw.tenant_models.manager import TenantModelManager
+
+            # Check if legacy config exists for this tenant
+            legacy_path = TenantModelManager.get_config_path(self.tenant_id)
+            if not legacy_path.exists():
+                # Try default tenant as fallback
+                if self.tenant_id != "default":
+                    legacy_path = TenantModelManager.get_config_path("default")
+                    if not legacy_path.exists():
+                        return None
+                else:
+                    return None
+
+            # Load and extract active slot from legacy config
+            legacy_config = TenantModelManager.load(self.tenant_id)
+            if not legacy_config:
+                return None
+
+            active_slot = legacy_config.get_active_slot()
+            if active_slot and active_slot.provider_id and active_slot.model:
+                return ModelSlotConfig(
+                    provider_id=active_slot.provider_id,
+                    model=active_slot.model,
+                )
+        except Exception as e:
+            logger.debug(
+                "Failed to recover from legacy tenant_models.json "
+                "for tenant %s: %s",
+                self.tenant_id,
+                e,
+            )
+        return None
 
     def _migrate_legacy_providers(self):
         """Migrate from legacy providers.json format to the new structure."""
@@ -1133,24 +1399,3 @@ class ProviderManager:
                 "extra_models": [ModelInfo(id=model_id, name=model_id)],
             },
         )
-
-    @staticmethod
-    def get_instance() -> "ProviderManager":
-        """Get the singleton instance of ProviderManager."""
-        if ProviderManager._instance is None:
-            ProviderManager._instance = ProviderManager()
-        return ProviderManager._instance
-
-    @staticmethod
-    def get_active_chat_model() -> ChatModelBase:
-        """Get the currently active provider/model configuration."""
-        manager = ProviderManager.get_instance()
-        model = manager.get_active_model()
-        if model is None or model.provider_id == "" or model.model == "":
-            raise ValueError("No active model configured.")
-        provider = manager.get_provider(model.provider_id)
-        if provider is None:
-            raise ValueError(
-                f"Active provider '{model.provider_id}' not found.",
-            )
-        return provider.get_chat_model_instance(model.model)

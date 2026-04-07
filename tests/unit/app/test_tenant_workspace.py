@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# flake8: noqa: E402
+# pylint: disable=wrong-import-position,redefined-outer-name,reimported,unused-argument,unused-variable,unused-import,protected-access
 """Unit tests for tenant workspace middleware.
 
 Tests workspace loading from pool, request.state binding,
@@ -6,11 +8,19 @@ and context reset after response.
 """
 import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from unittest.mock import Mock, AsyncMock
+from fastapi import HTTPException, Request
+from starlette.responses import Response
+
+from copaw.tenant_models.models import (
+    TenantModelConfig,
+    TenantProviderConfig,
+    RoutingConfig,
+    ModelSlot,
+)
+from copaw.tenant_models.context import TenantModelContext
 
 
 class TestTenantWorkspaceMiddlewareOrdering:
@@ -63,7 +73,12 @@ class TestTenantWorkspaceExemptions:
     def test_auth_routes_exempt(self):
         """Auth routes don't require workspace."""
         # Auth routes should be exempt
-        exempt_routes = ["/login", "/register", "/auth/login", "/auth/register"]
+        exempt_routes = [
+            "/login",
+            "/register",
+            "/auth/login",
+            "/auth/register",
+        ]
         for route in exempt_routes:
             assert "login" in route or "register" in route or "auth" in route
 
@@ -113,3 +128,505 @@ class TestTenantWorkspaceContextReset:
     def test_context_reset_on_exception(self):
         """Workspace context is reset even if exception occurs."""
         raise AssertionError("Test requires full app dependencies")
+
+
+class TestTenantModelConfigLoading:
+    """Tests for tenant model configuration loading in middleware."""
+
+    @pytest.fixture
+    def sample_model_config(self):
+        """Create a sample TenantModelConfig for testing."""
+        return TenantModelConfig(
+            version="1.0",
+            providers=[
+                TenantProviderConfig(
+                    id="openai-main",
+                    type="openai",
+                    api_key="test-key",
+                    models=["gpt-4"],
+                    enabled=True,
+                ),
+            ],
+            routing=RoutingConfig(
+                mode="cloud_first",
+                slots={
+                    "cloud": ModelSlot(
+                        provider_id="openai-main",
+                        model="gpt-4",
+                    ),
+                },
+            ),
+        )
+
+    @pytest.fixture
+    def mock_request(self):
+        """Create a mock FastAPI request."""
+        mock_req = MagicMock(spec=Request)
+        mock_req.state = MagicMock()
+        mock_req.state.tenant_id = "test-tenant"
+        mock_req.url = MagicMock()
+        mock_req.url.path = "/api/test"
+        mock_req.app = MagicMock()
+        mock_req.app.state = MagicMock()
+        return mock_req
+
+    @pytest.mark.asyncio
+    async def test_model_config_loaded_and_bound(
+        self,
+        mock_request,
+        sample_model_config,
+    ):
+        """Model configuration is loaded and bound to context during request."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Mock workspace
+        mock_workspace = MagicMock()
+        mock_workspace.workspace_dir = "/test/workspace"
+
+        # Mock pool
+        mock_pool = AsyncMock()
+        mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+        mock_request.app.state.tenant_workspace_pool = mock_pool
+
+        # Mock TenantModelManager.load
+        with patch(
+            "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+        ) as mock_load:
+            mock_load.return_value = sample_model_config
+
+            # Track context state
+            config_token = None
+            original_get_config = TenantModelContext.get_config
+
+            def mock_set_config(config):
+                nonlocal config_token
+                config_token = object()  # Mock token
+                return config_token
+
+            def mock_get_config():
+                return sample_model_config
+
+            def mock_reset_config(token):
+                nonlocal config_token
+                assert token is config_token, "Token mismatch in reset"
+
+            with patch.object(
+                TenantModelContext,
+                "set_config",
+                side_effect=mock_set_config,
+            ):
+                with patch.object(
+                    TenantModelContext,
+                    "get_config",
+                    side_effect=mock_get_config,
+                ):
+                    with patch.object(
+                        TenantModelContext,
+                        "reset_config",
+                        side_effect=mock_reset_config,
+                    ):
+                        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+                        # Mock call_next
+                        async def call_next(request):
+                            # Verify config is set during request handling
+                            current_config = TenantModelContext.get_config()
+                            assert current_config is sample_model_config
+                            return Response(content=b"OK", status_code=200)
+
+                        response = await middleware.dispatch(
+                            mock_request,
+                            call_next,
+                        )
+
+                        assert response.status_code == 200
+                        mock_load.assert_called_once_with("test-tenant")
+
+    @pytest.mark.asyncio
+    async def test_model_config_reset_after_request(
+        self,
+        mock_request,
+        sample_model_config,
+    ):
+        """Model configuration is reset from context after request completes."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Mock workspace
+        mock_workspace = MagicMock()
+        mock_workspace.workspace_dir = "/test/workspace"
+
+        # Mock pool
+        mock_pool = AsyncMock()
+        mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+        mock_request.app.state.tenant_workspace_pool = mock_pool
+
+        reset_called = []
+
+        with patch(
+            "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+        ) as mock_load:
+            mock_load.return_value = sample_model_config
+
+            def mock_reset_config(token):
+                reset_called.append(token)
+
+            with patch.object(
+                TenantModelContext,
+                "set_config",
+                return_value="mock-token",
+            ):
+                with patch.object(
+                    TenantModelContext,
+                    "reset_config",
+                    side_effect=mock_reset_config,
+                ):
+                    middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+                    async def call_next(request):
+                        return Response(content=b"OK", status_code=200)
+
+                    response = await middleware.dispatch(
+                        mock_request,
+                        call_next,
+                    )
+
+                    # Verify reset was called
+                    assert len(reset_called) == 1
+                    assert reset_called[0] == "mock-token"
+
+    @pytest.mark.asyncio
+    async def test_model_config_reset_on_exception(
+        self,
+        mock_request,
+        sample_model_config,
+    ):
+        """Model configuration is reset even if request raises exception."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Mock workspace
+        mock_workspace = MagicMock()
+        mock_workspace.workspace_dir = "/test/workspace"
+
+        # Mock pool
+        mock_pool = AsyncMock()
+        mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+        mock_request.app.state.tenant_workspace_pool = mock_pool
+
+        reset_called = []
+
+        with patch(
+            "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+        ) as mock_load:
+            mock_load.return_value = sample_model_config
+
+            def mock_reset_config(token):
+                reset_called.append(token)
+
+            with patch.object(
+                TenantModelContext,
+                "set_config",
+                return_value="mock-token",
+            ):
+                with patch.object(
+                    TenantModelContext,
+                    "reset_config",
+                    side_effect=mock_reset_config,
+                ):
+                    middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+                    async def call_next(request):
+                        raise ValueError("Test exception")
+
+                    with pytest.raises(ValueError, match="Test exception"):
+                        await middleware.dispatch(mock_request, call_next)
+
+                    # Verify reset was still called despite exception
+                    assert len(reset_called) == 1
+
+    @pytest.mark.asyncio
+    async def test_model_config_load_failure_continues(self, mock_request):
+        """Request continues if model config fails to load (with warning log)."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Mock workspace
+        mock_workspace = MagicMock()
+        mock_workspace.workspace_dir = "/test/workspace"
+
+        # Mock pool
+        mock_pool = AsyncMock()
+        mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+        mock_request.app.state.tenant_workspace_pool = mock_pool
+
+        with patch(
+            "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+        ) as mock_load:
+            # Simulate config load failure (OSError for file read error)
+            mock_load.side_effect = OSError("Config file not readable")
+
+            middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+            request_processed = []
+
+            async def call_next(request):
+                request_processed.append(True)
+                return Response(content=b"OK", status_code=200)
+
+            response = await middleware.dispatch(mock_request, call_next)
+
+            # Request should still succeed
+            assert response.status_code == 200
+            assert len(request_processed) == 1
+            mock_load.assert_called_once_with("test-tenant")
+
+    @pytest.mark.asyncio
+    async def test_no_model_config_without_tenant(self, mock_request):
+        """No model config is loaded when tenant_id is not set."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Remove tenant_id
+        delattr(mock_request.state, "tenant_id")
+
+        with patch(
+            "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+        ) as mock_load:
+            middleware = TenantWorkspaceMiddleware(
+                app=MagicMock(),
+                require_workspace=False,
+            )
+
+            async def call_next(request):
+                return Response(content=b"OK", status_code=200)
+
+            response = await middleware.dispatch(mock_request, call_next)
+
+            # Load should not be called
+            mock_load.assert_not_called()
+            assert response.status_code == 200
+
+
+class TestTenantProviderConfigInitialization:
+    """Tests for tenant provider config auto-initialization in middleware."""
+
+    @pytest.fixture
+    def mock_request_with_tenant(self):
+        """Create a mock FastAPI request with tenant_id."""
+        mock_req = MagicMock(spec=Request)
+        mock_req.state = MagicMock()
+        mock_req.state.tenant_id = "new-tenant"
+        mock_req.url = MagicMock()
+        mock_req.url.path = "/api/test"
+        mock_req.app = MagicMock()
+        mock_req.app.state = MagicMock()
+        return mock_req
+
+    @pytest.mark.asyncio
+    async def test_ensure_tenant_provider_config_creates_from_default(
+        self,
+        mock_request_with_tenant,
+        tmp_path,
+    ):
+        """Provider config is initialized from default tenant when missing."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+        from copaw.constant import SECRET_DIR
+
+        # Setup: Create default tenant with config
+        default_providers = (
+            tmp_path / ".copaw.secret" / "default" / "providers"
+        )
+        default_providers.mkdir(parents=True)
+        (default_providers / "builtin").mkdir()
+        (default_providers / "custom").mkdir()
+
+        # Create a provider config in default
+        provider_config = {
+            "id": "openai",
+            "name": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-default",
+        }
+        import json
+
+        (default_providers / "builtin" / "openai.json").write_text(
+            json.dumps(provider_config),
+        )
+
+        # Temporarily override SECRET_DIR
+        with patch(
+            "copaw.app.middleware.tenant_workspace.SECRET_DIR",
+            tmp_path / ".copaw.secret",
+        ):
+            middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+            # Verify new tenant doesn't have config yet
+            new_tenant_dir = (
+                tmp_path / ".copaw.secret" / "new-tenant" / "providers"
+            )
+            assert not new_tenant_dir.exists()
+
+            # Mock workspace pool
+            mock_workspace = MagicMock()
+            mock_workspace.workspace_dir = "/test/workspace"
+            mock_pool = AsyncMock()
+            mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+            mock_request_with_tenant.app.state.tenant_workspace_pool = (
+                mock_pool
+            )
+
+            with patch(
+                "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+            ) as mock_load:
+                mock_load.side_effect = Exception("No config")
+
+                async def call_next(request):
+                    return Response(content=b"OK", status_code=200)
+
+                response = await middleware.dispatch(
+                    mock_request_with_tenant,
+                    call_next,
+                )
+
+                # Verify config was copied (even though model config fails)
+                assert new_tenant_dir.exists()
+                assert (new_tenant_dir / "builtin" / "openai.json").exists()
+                assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_ensure_tenant_provider_config_creates_empty_fallback(
+        self,
+        mock_request_with_tenant,
+        tmp_path,
+    ):
+        """Empty provider structure created when default has no config."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Temporarily override SECRET_DIR (no default config exists)
+        with patch(
+            "copaw.app.middleware.tenant_workspace.SECRET_DIR",
+            tmp_path / ".copaw.secret",
+        ):
+            middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+            # Verify new tenant doesn't have config yet
+            new_tenant_dir = (
+                tmp_path / ".copaw.secret" / "new-tenant" / "providers"
+            )
+            assert not new_tenant_dir.exists()
+
+            # Mock workspace pool
+            mock_workspace = MagicMock()
+            mock_workspace.workspace_dir = "/test/workspace"
+            mock_pool = AsyncMock()
+            mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+            mock_request_with_tenant.app.state.tenant_workspace_pool = (
+                mock_pool
+            )
+
+            with patch(
+                "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+            ) as mock_load:
+                mock_load.side_effect = Exception("No config")
+
+                async def call_next(request):
+                    return Response(content=b"OK", status_code=200)
+
+                response = await middleware.dispatch(
+                    mock_request_with_tenant,
+                    call_next,
+                )
+
+                # Verify empty structure was created
+                assert new_tenant_dir.exists()
+                assert (new_tenant_dir / "builtin").exists()
+                assert (new_tenant_dir / "custom").exists()
+                assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_ensure_tenant_provider_config_is_idempotent(
+        self,
+        mock_request_with_tenant,
+        tmp_path,
+    ):
+        """Provider config initialization is idempotent - doesn't overwrite existing."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        # Create existing config for tenant
+        tenant_providers = (
+            tmp_path / ".copaw.secret" / "new-tenant" / "providers"
+        )
+        tenant_providers.mkdir(parents=True)
+        import json
+
+        existing_config = {"id": "openai", "api_key": "sk-existing"}
+        (tenant_providers / "openai.json").write_text(
+            json.dumps(existing_config),
+        )
+
+        with patch(
+            "copaw.app.middleware.tenant_workspace.SECRET_DIR",
+            tmp_path / ".copaw.secret",
+        ):
+            middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+            # Mock workspace pool
+            mock_workspace = MagicMock()
+            mock_workspace.workspace_dir = "/test/workspace"
+            mock_pool = AsyncMock()
+            mock_pool.get_or_create = AsyncMock(return_value=mock_workspace)
+            mock_request_with_tenant.app.state.tenant_workspace_pool = (
+                mock_pool
+            )
+
+            with patch(
+                "copaw.app.middleware.tenant_workspace.TenantModelManager.load",
+            ) as mock_load:
+                mock_load.side_effect = Exception("No config")
+
+                async def call_next(request):
+                    return Response(content=b"OK", status_code=200)
+
+                # First call
+                await middleware.dispatch(mock_request_with_tenant, call_next)
+
+                # Verify existing config not overwritten
+                content = (tenant_providers / "openai.json").read_text()
+                assert "sk-existing" in content
+
+    def test_is_workspace_exempt_for_health_routes(self):
+        """Health routes are exempt from workspace requirements."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        exempt_routes = ["/health", "/healthz", "/ready", "/alive"]
+        for route in exempt_routes:
+            assert middleware._is_workspace_exempt(route) is True
+
+    def test_is_workspace_exempt_for_api_routes(self):
+        """API routes are not exempt from workspace requirements."""
+        from copaw.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        api_routes = ["/api/agents", "/api/models", "/api/chat"]
+        for route in api_routes:
+            assert middleware._is_workspace_exempt(route) is False

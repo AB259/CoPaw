@@ -141,12 +141,21 @@ class CoPawAgent(ToolGuardMixin, ReActAgent):
 
         # Create model and formatter using factory method
         model, formatter = create_model_and_formatter(agent_id=agent_config.id)
-        model_info = (
-            f"{agent_config.active_model.provider_id}/"
-            f"{agent_config.active_model.model}"
-            if agent_config.active_model
-            else "global-fallback"
-        )
+
+        # Get model info from ProviderManager (single source of truth)
+        try:
+            from copaw.config.context import get_current_tenant_id
+            from copaw.providers.provider_manager import ProviderManager
+
+            tenant_id = get_current_tenant_id()
+            manager = ProviderManager.get_instance(tenant_id)
+            active = manager.get_active_model()
+            if active:
+                model_info = f"{active.provider_id}/{active.model}"
+            else:
+                model_info = "not-configured"
+        except Exception:
+            model_info = "unknown"
         logger.info(
             f"Agent '{agent_config.id}' initialized with model: "
             f"{model_info} (class: {model.__class__.__name__})",

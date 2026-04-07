@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import logging
-import os
 import re
 import shutil
 import tempfile
@@ -22,6 +21,7 @@ from typing import Any, TypeVar
 
 import frontmatter
 from pydantic import BaseModel, Field
+from ..constant import env_var_overrides
 from ..security.skill_scanner import scan_skill_directory
 from .utils.file_handling import read_text_file_with_encoding_fallback
 
@@ -83,9 +83,6 @@ class SkillRequirements(BaseModel):
     require_bins: list[str] = Field(default_factory=list)
     require_envs: list[str] = Field(default_factory=list)
 
-
-_ACTIVE_SKILL_ENV_ENTRIES: dict[str, dict[str, Any]] = {}
-_ENV_LOCK = threading.Lock()
 
 _BUILTIN_SIGNATURES: dict[str, str] = {}
 _BUILTIN_SIG_LOCK = threading.Lock()
@@ -619,90 +616,48 @@ def _build_skill_config_env_overrides(
     return overrides
 
 
-def _acquire_skill_env_key(key: str, value: str) -> bool:
-    with _ENV_LOCK:
-        active = _ACTIVE_SKILL_ENV_ENTRIES.get(key)
-        if active is not None:
-            if active["value"] != value:
-                return False
-            active["count"] += 1
-            if os.environ.get(key) is None:
-                os.environ[key] = value
-            return True
-
-        if os.environ.get(key) is not None:
-            return False
-
-        _ACTIVE_SKILL_ENV_ENTRIES[key] = {
-            "baseline": None,
-            "value": value,
-            "count": 1,
-        }
-        os.environ[key] = value
-        return True
-
-
-def _release_skill_env_key(key: str) -> None:
-    with _ENV_LOCK:
-        active = _ACTIVE_SKILL_ENV_ENTRIES.get(key)
-        if active is None:
-            return
-
-        active["count"] -= 1
-        if active["count"] > 0:
-            if os.environ.get(key) is None:
-                os.environ[key] = active["value"]
-            return
-
-        _ACTIVE_SKILL_ENV_ENTRIES.pop(key, None)
-        os.environ.pop(key, None)
-
-
 @contextmanager
 def apply_skill_config_env_overrides(
     workspace_dir: Path,
     channel_name: str,
 ) -> Iterator[None]:
-    """Inject effective skill config into env for one agent turn.
+    """Inject effective skill config into request-scoped env overrides.
 
-    Config keys matching ``metadata.requires.env`` entries are injected
-    as environment variables.  The full config is always available as
-    ``COPAW_SKILL_CONFIG_<SKILL_NAME>`` (JSON string).
+    Config keys matching ``metadata.requires.env`` entries are exposed via
+    ``EnvVarLoader`` for the current agent turn only. The full config is also
+    available as ``COPAW_SKILL_CONFIG_<SKILL_NAME>`` within the same scope.
     """
     manifest = reconcile_workspace_manifest(workspace_dir)
     entries = manifest.get("skills", {})
-    active_keys: list[str] = []
+    overrides: dict[str, str] = {}
 
-    try:
-        for skill_name in resolve_effective_skills(
-            workspace_dir,
-            channel_name,
-        ):
-            entry = entries.get(skill_name) or {}
-            config = entry.get("config") or {}
-            if not isinstance(config, dict) or not config:
+    for skill_name in resolve_effective_skills(
+        workspace_dir,
+        channel_name,
+    ):
+        entry = entries.get(skill_name) or {}
+        config = entry.get("config") or {}
+        if not isinstance(config, dict) or not config:
+            continue
+
+        requirements = entry.get("requirements") or {}
+        require_envs = requirements.get("require_envs") or []
+        for env_key, env_value in _build_skill_config_env_overrides(
+            skill_name,
+            config,
+            list(require_envs),
+        ).items():
+            if env_key in overrides and overrides[env_key] != env_value:
+                logger.warning(
+                    "Skipped env override '%s' for skill '%s'",
+                    env_key,
+                    skill_name,
+                )
                 continue
+            overrides[env_key] = env_value
 
-            requirements = entry.get("requirements") or {}
-            require_envs = requirements.get("require_envs") or []
-            overrides = _build_skill_config_env_overrides(
-                skill_name,
-                config,
-                list(require_envs),
-            )
-            for env_key, env_value in overrides.items():
-                if not _acquire_skill_env_key(env_key, env_value):
-                    logger.warning(
-                        "Skipped env override '%s' for skill '%s'",
-                        env_key,
-                        skill_name,
-                    )
-                    continue
-                active_keys.append(env_key)
+    with env_var_overrides(overrides):
         yield
-    finally:
-        for env_key in reversed(active_keys):
-            _release_skill_env_key(env_key)
 
 
 def _build_skill_metadata(
@@ -944,7 +899,9 @@ def ensure_skill_pool_initialized(
     return created
 
 
-def reconcile_pool_manifest() -> dict[str, Any]:
+def reconcile_pool_manifest(
+    working_dir: Path | None = None,
+) -> dict[str, Any]:
     """Reconcile shared pool metadata with the filesystem.
 
     The pool manifest is not treated as the source of truth for content.
@@ -952,13 +909,17 @@ def reconcile_pool_manifest() -> dict[str, Any]:
     from the discovered skills. Manifest-only bookkeeping such as ``config``
     is preserved when possible.
 
+    Args:
+        working_dir: Target tenant working directory. If None, uses the
+            global WORKING_DIR from context.
+
     Example:
         if a user manually drops ``skill_pool/demo/SKILL.md`` onto disk,
         the next reconcile adds ``demo`` to ``skill_pool/skill.json``.
     """
-    pool_dir = get_skill_pool_dir()
+    pool_dir = get_skill_pool_dir(working_dir=working_dir)
     pool_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = get_pool_skill_manifest_path()
+    manifest_path = get_pool_skill_manifest_path(working_dir=working_dir)
     if not manifest_path.exists():
         _write_json_atomic(manifest_path, _default_pool_manifest())
 
@@ -1098,14 +1059,21 @@ def reconcile_workspace_manifest(workspace_dir: Path) -> dict[str, Any]:
     )
 
 
-def list_workspaces() -> list[dict[str, str]]:
-    """List configured workspaces with agent names."""
+def list_workspaces(tenant_id: str | None = None) -> list[dict[str, str]]:
+    """List configured workspaces with agent names.
+
+    Args:
+        tenant_id: Tenant ID. If None, uses current tenant from context.
+
+    Returns:
+        List of workspace info dicts with agent_id, agent_name, workspace_dir.
+    """
     workspaces: list[dict[str, str]] = []
     try:
-        from ..config.utils import load_config
+        from ..config.utils import load_config, get_tenant_config_path
         from ..config.config import load_agent_config
 
-        config = load_config()
+        config = load_config(get_tenant_config_path(tenant_id))
         # Only return agents that are still in the configuration
         # This ensures deleted agents are not included
         for agent_id, profile in sorted(config.agents.profiles.items()):
@@ -1153,16 +1121,22 @@ def read_skill_manifest(
 def read_skill_pool_manifest(
     *,
     reconcile: bool = True,
+    working_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Return the pool skill manifest.
 
     When *reconcile* is ``True`` (default) the manifest is refreshed
     from disk first.  Pass ``reconcile=False`` in read-only list paths
     to skip the expensive reconciliation.
+
+    Args:
+        reconcile: Whether to reconcile manifest from disk first.
+        working_dir: Target tenant working directory. If None, uses the
+            global WORKING_DIR from context.
     """
     if reconcile:
-        return reconcile_pool_manifest()
-    path = get_pool_skill_manifest_path()
+        return reconcile_pool_manifest(working_dir=working_dir)
+    path = get_pool_skill_manifest_path(working_dir=working_dir)
     return _read_json_unlocked(path, _default_pool_manifest())
 
 

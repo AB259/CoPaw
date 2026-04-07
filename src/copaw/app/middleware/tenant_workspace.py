@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-import,too-many-branches
 """Tenant workspace middleware for multi-tenant isolation.
 
 Loads tenant workspace from TenantWorkspacePool, stores it in request.state,
@@ -8,19 +9,43 @@ Middleware ordering: Must come after TenantIdentityMiddleware and before
 AgentContextMiddleware.
 """
 import logging
-from typing import Callable, Awaitable
+from pathlib import Path
+from typing import Callable, Awaitable, Optional
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from ...config.context import (
+from copaw.config.context import (
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TenantWorkspaceContext:
+    """Lightweight context for tenant workspace.
+
+    This class provides a minimal workspace context without requiring
+    the full Workspace runtime to be started. It holds the tenant_id
+    and workspace_dir for request-scoped context binding.
+
+    Attributes:
+        tenant_id: The tenant identifier.
+        workspace_dir: Path to the tenant's workspace directory.
+    """
+
+    def __init__(self, tenant_id: str, workspace_dir: Path):
+        self.tenant_id = tenant_id
+        self.workspace_dir = Path(workspace_dir).expanduser().resolve()
+
+    def __repr__(self) -> str:
+        return (
+            f"TenantWorkspaceContext(tenant_id={self.tenant_id},"
+            f"workspace_dir={self.workspace_dir})"
+        )
 
 
 class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
@@ -91,6 +116,12 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
                         f"TenantWorkspaceMiddleware: loaded workspace for "
                         f"tenant={tenant_id}, path={workspace.workspace_dir}",
                     )
+
+                    # Note: Tenant model configuration is now managed entirely
+                    # by ProviderManager. The old TenantModelContext loading
+                    # has been removed as part of active model source unification.
+                    # ProviderManager handles its own lazy initialization and
+                    # legacy migration from tenant_models.json when needed.
                 elif self._require_workspace:
                     # Workspace required but not found
                     logger.warning(
@@ -124,35 +155,53 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         finally:
             # Reset workspace context if set
             if workspace_token:
-                reset_current_workspace_dir(workspace_token)
+                try:
+                    reset_current_workspace_dir(workspace_token)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("Failed to reset workspace context: %s", e)
 
     async def _get_workspace(
         self,
         request: Request,
         tenant_id: str,
     ):
-        """Get workspace for tenant from pool.
+        """Get workspace context for tenant.
 
         Args:
             request: The FastAPI request object.
             tenant_id: The tenant ID to get workspace for.
 
         Returns:
-            Workspace instance or None if not available.
+            TenantWorkspaceContext instance or None if not available.
+            Note: This returns a lightweight context, not a full Workspace runtime.
+            The Workspace runtime is started on-demand via MultiAgentManager.get_agent().
         """
         # Get tenant workspace pool from app state
         pool = getattr(request.app.state, "tenant_workspace_pool", None)
-        if not pool:
+        if pool is None:
             logger.warning("TenantWorkspacePool not available in app.state")
             return None
 
         try:
-            # Get or create workspace for tenant
-            # Note: This is synchronous in the pool but thread-safe
-            workspace = pool.get_or_create(tenant_id)
-            return workspace
+            # Ensure tenant is bootstrapped (minimal - directories only)
+            await pool.ensure_bootstrap(tenant_id)
+
+            # Create lightweight context without starting workspace runtime
+            # The full Workspace runtime is lazy-loaded via MultiAgentManager.get_agent()
+            workspace_dir = pool.get_tenant_workspace_dir(tenant_id)
+            context = TenantWorkspaceContext(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+            )
+            logger.debug(
+                f"Created TenantWorkspaceContext for tenant={tenant_id}, "
+                f"dir={workspace_dir}",
+            )
+            return context
         except Exception as e:
-            logger.error(f"Error loading workspace for tenant {tenant_id}: {e}")
+            logger.error(
+                f"Error bootstrapping tenant {tenant_id}: {e}",
+            )
             return None
 
     def _is_workspace_exempt(self, path: str) -> bool:
@@ -165,25 +214,27 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             True if the route is exempt, False otherwise.
         """
         # Same exemptions as tenant identity for consistency
-        exempt_paths = frozenset([
-            "/health",
-            "/healthz",
-            "/ready",
-            "/readyz",
-            "/alive",
-            "/api/version",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-            "/api/auth/login",
-            "/api/auth/register",
-            "/api/auth/refresh",
-            "/api/auth/logout",
-            "/logo.png",
-            "/dark-logo.png",
-            "/copaw-symbol.svg",
-            "/copaw-dark.png",
-        ])
+        exempt_paths = frozenset(
+            [
+                "/health",
+                "/healthz",
+                "/ready",
+                "/readyz",
+                "/alive",
+                "/api/version",
+                "/docs",
+                "/redoc",
+                "/openapi.json",
+                "/api/auth/login",
+                "/api/auth/register",
+                "/api/auth/refresh",
+                "/api/auth/logout",
+                "/logo.png",
+                "/dark-logo.png",
+                "/copaw-symbol.svg",
+                "/copaw-dark.png",
+            ],
+        )
 
         if path in exempt_paths:
             return True

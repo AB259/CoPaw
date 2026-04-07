@@ -716,14 +716,39 @@ def create_model_and_formatter(
         except Exception:
             pass
 
-    # Try to get agent-specific model first
+    # Try to get model from tenant-aware ProviderManager
+    # This is the primary and only supported path for active model resolution
     model_slot = None
     retry_config = None
     rate_limit_config = None
+
+    # Get tenant_id for tenant-aware ProviderManager
+    try:
+        from copaw.config.context import get_current_tenant_id
+
+        tenant_id = get_current_tenant_id()
+    except Exception:
+        tenant_id = None
+
+    # Ensure tenant provider storage exists before accessing ProviderManager
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+    # Get active model from tenant-aware ProviderManager (primary source)
+    manager = ProviderManager.get_instance(tenant_id)
+    active_model = manager.get_active_model()
+    if active_model and active_model.provider_id and active_model.model:
+        from copaw.tenant_models.models import ModelSlot
+
+        model_slot = ModelSlot(
+            provider_id=active_model.provider_id,
+            model=active_model.model,
+        )
+
+    # Load agent-specific retry/rate limit config if agent_id provided
     if agent_id:
         try:
             agent_config = load_agent_config(agent_id)
-            model_slot = agent_config.active_model
+            # Use running config for retry/rate limit settings
             retry_config = RetryConfig(
                 enabled=agent_config.running.llm_retry_enabled,
                 max_retries=agent_config.running.llm_max_retries,
@@ -740,10 +765,9 @@ def create_model_and_formatter(
         except Exception:
             pass
 
-    # Create chat model from agent-specific or global config
+    # Create chat model from tenant-level active model configuration
     if model_slot and model_slot.provider_id and model_slot.model:
-        # Use agent-specific model
-        manager = ProviderManager.get_instance()
+        # Use tenant-specific provider manager (already initialized above)
         provider = manager.get_provider(model_slot.provider_id)
         if provider is None:
             raise ValueError(
@@ -753,16 +777,13 @@ def create_model_and_formatter(
         model = provider.get_chat_model_instance(model_slot.model)
         provider_id = model_slot.provider_id
     else:
-        # Fallback to global active model
-        model = ProviderManager.get_active_chat_model()
-        global_model = ProviderManager.get_instance().get_active_model()
-        if not global_model:
-            raise ValueError(
-                "No active model configured. "
-                "Please configure a model using 'copaw models config' "
-                "or set an agent-specific model.",
-            )
-        provider_id = global_model.provider_id
+        # Tenant must have explicit model configuration via ProviderManager
+        raise ValueError(
+            "No tenant model configuration found. "
+            "Please configure a model for this tenant using the admin panel "
+            "or ensure provider configuration is properly set. "
+            "Multi-tenant isolation requires explicit per-tenant model configuration.",
+        )
 
     # Create the formatter based on the real model class
     formatter = _create_formatter_instance(model.__class__)

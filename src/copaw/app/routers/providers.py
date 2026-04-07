@@ -18,12 +18,9 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from ..agent_context import get_agent_for_request
-from ..utils import schedule_agent_reload
-from ...config.config import load_agent_config, save_agent_config
+from ...config.context import get_current_tenant_id
 from ...providers.provider import ProviderInfo, ModelInfo
 from ...providers.provider_manager import ActiveModelsInfo, ProviderManager
-from ...providers.models import ModelSlotConfig
 
 
 logger = logging.getLogger(__name__)
@@ -44,15 +41,33 @@ ActiveModelWriteScope = Literal["global", "agent"]
 
 
 def get_provider_manager(request: Request) -> ProviderManager:
-    """Get the provider manager from app state.
+    """Get the tenant-specific provider manager.
+
+    Ensures tenant provider storage is initialized before returning the manager.
+    This lazy-initializes provider storage on first provider API use.
 
     Args:
         request: FastAPI request object
+
+    Returns:
+        ProviderManager instance for the current tenant.
+
+    Raises:
+        HTTPException: If tenant ID is not available in request context.
     """
-    provider_manager = getattr(request.app.state, "provider_manager", None)
-    if provider_manager is None:
-        provider_manager = ProviderManager.get_instance()
-    return provider_manager
+    # Get tenant ID from request state (set by TenantIdentityMiddleware)
+    tenant_id: str | None = getattr(request.state, "tenant_id", None)
+
+    if tenant_id is None:
+        # For exempt routes or backward compatibility, use default tenant
+        tenant_id = "default"
+        logger.debug("No tenant ID in request, using default tenant")
+
+    # Ensure tenant provider storage exists before accessing ProviderManager
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
+
+    # Return tenant-specific provider manager
+    return ProviderManager.get_instance(tenant_id)
 
 
 class ProviderConfigRequest(BaseModel):
@@ -121,14 +136,9 @@ def _validate_model_slot(
         )
 
 
-async def _load_agent_model(
-    request: Request,
-    agent_id: str,
-) -> ModelSlotConfig | None:
-    """Load the model configured for a specific agent."""
-    workspace = await get_agent_for_request(request, agent_id=agent_id)
-    agent_config = load_agent_config(workspace.agent_id)
-    return agent_config.active_model
+# Agent-level model configuration is deprecated
+# Models are now managed at tenant level via TenantModelConfig
+# _load_agent_model function removed as agent-specific models are no longer supported
 
 
 @router.get(
@@ -459,53 +469,31 @@ async def remove_model_endpoint(
     summary="Get effective active LLM",
 )
 async def get_active_models(
-    request: Request,
+    _request: Request,  # Kept for API signature compatibility
     manager: ProviderManager = Depends(get_provider_manager),
     scope: ActiveModelReadScope = Query(default="effective"),
-    agent_id: Optional[str] = Query(default=None),
+    _agent_id: Optional[str] = Query(default=None),  # Deprecated
 ) -> ActiveModelsInfo:
     """Get active model by scope.
 
-    - effective: agent-specific first, otherwise global fallback
-    - global: ProviderManager global model only
-    - agent: a specific agent's configured model only
+    DEPRECATED: Agent-level model configuration is no longer supported.
+    Models are now managed at tenant level.
+
+    - effective: Returns tenant-level active model (agent-specific fallback removed)
+    - global: ProviderManager global model (tenant-level model)
+    - agent: DEPRECATED - treated as 'global' for backward compatibility
     """
-    if scope == "global":
-        return ActiveModelsInfo(active_llm=manager.get_active_model())
-
+    # Short-term compatibility: normalize legacy 'agent' scope to 'global'
     if scope == "agent":
-        if not agent_id:
-            raise HTTPException(
-                status_code=400,
-                detail="agent_id is required when scope is 'agent'",
-            )
-        return ActiveModelsInfo(
-            active_llm=await _load_agent_model(request, agent_id),
-        )
-
-    try:
-        target_agent_id = agent_id
-        if target_agent_id is None:
-            workspace = await get_agent_for_request(request)
-            target_agent_id = workspace.agent_id
-
-        agent_model = await _load_agent_model(request, target_agent_id)
-        if agent_model:
-            logger.info(
-                "Returning agent-specific model for %s: %s",
-                target_agent_id,
-                agent_model,
-            )
-            return ActiveModelsInfo(active_llm=agent_model)
-    except (HTTPException, OSError, ValueError, TypeError) as exc:
         logger.warning(
-            "Failed to get agent-specific model: %s",
-            exc,
-            exc_info=True,
+            "Received deprecated scope='agent' for get_active_models. "
+            "Treating as 'global'. Client should be updated to use scope='global'.",
         )
 
+    # For 'effective' and 'global', return the tenant-level active model
+    # Agent-level model fallback is removed as models are now tenant-scoped
     global_model = manager.get_active_model()
-    logger.info("Returning global model: %s", global_model)
+    logger.info("Returning tenant-level active model: %s", global_model)
     return ActiveModelsInfo(active_llm=global_model)
 
 
@@ -515,12 +503,25 @@ async def get_active_models(
     summary="Set active LLM",
 )
 async def set_active_model(
-    request: Request,
+    _request: Request,  # Kept for future tenant context usage
     manager: ProviderManager = Depends(get_provider_manager),
     body: ModelSlotRequest = Body(...),
 ) -> ActiveModelsInfo:
-    """Set active model by scope."""
-    if body.scope == "global":
+    """Set active model by scope.
+
+    Note: 'agent' scope is deprecated and will be treated as 'global'.
+    Models are now managed at tenant level only.
+    """
+    # Short-term compatibility: normalize legacy 'agent' scope to 'global'
+    effective_scope = body.scope
+    if body.scope == "agent":
+        logger.warning(
+            "Received deprecated scope='agent' for set_active_model. "
+            "Treating as 'global'. Client should be updated to use scope='global'.",
+        )
+        effective_scope = "global"
+
+    if effective_scope == "global":
         try:
             await manager.activate_model(body.provider_id, body.model)
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
@@ -531,44 +532,67 @@ async def set_active_model(
             raise HTTPException(status_code=400, detail=message) from exc
         return ActiveModelsInfo(active_llm=manager.get_active_model())
 
-    if not body.agent_id:
+    # Any other scope is not supported
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported scope: {body.scope}. Use 'global' for tenant-level model.",
+    )
+
+
+# ============================================================================
+# Deprecated: Tenant Model Configuration Endpoints
+# ============================================================================
+# These endpoints are deprecated and will be removed in a future release.
+# The /models endpoints should be used instead for all provider/model operations.
+
+tenant_providers_router = APIRouter(
+    prefix="/providers",
+    tags=["tenant-providers (deprecated)"],
+)
+
+
+@tenant_providers_router.get(
+    "",
+    summary="Get tenant model configuration (DEPRECATED)",
+    deprecated=True,
+)
+async def get_tenant_providers():
+    """Get the current tenant's model configuration (DEPRECATED).
+
+    This endpoint is deprecated. Use /models and /models/active instead.
+    Returns the tenant-specific provider configuration from ProviderManager.
+
+    Returns:
+        JSON object containing:
+        - tenant_id: Current tenant ID
+        - providers: List of provider configurations
+        - active_model: Currently active model slot
+
+    Raises:
+        HTTPException: 400 if tenant ID not set in context
+    """
+    # Get tenant ID from context
+    tenant_id = get_current_tenant_id()
+    if tenant_id is None:
         raise HTTPException(
             status_code=400,
-            detail="agent_id is required when scope is 'agent'",
+            detail="Tenant ID not set in context. Ensure request includes tenant identity.",
         )
 
-    _validate_model_slot(manager, body.provider_id, body.model)
+    # Get tenant-specific provider manager (source of truth)
+    ProviderManager.ensure_tenant_provider_storage(tenant_id)
+    manager = ProviderManager.get_instance(tenant_id)
 
-    try:
-        workspace = await get_agent_for_request(
-            request,
-            agent_id=body.agent_id,
-        )
-        agent_config = load_agent_config(workspace.agent_id)
-        agent_config.active_model = ModelSlotConfig(
-            provider_id=body.provider_id,
-            model=body.model,
-        )
-        save_agent_config(workspace.agent_id, agent_config)
-        # Hot reload agent (async, non-blocking)
-        schedule_agent_reload(request, workspace.agent_id)
+    # Get active model from ProviderManager
+    active_model = manager.get_active_model()
 
-    except (HTTPException, OSError, ValueError, TypeError) as exc:
-        logger.warning(
-            "Failed to save active model to agent config: %s",
-            exc,
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to save active model to agent config",
-        ) from exc
+    # Get provider info list
+    provider_infos = await manager.list_provider_info()
 
-    manager.maybe_probe_multimodal(body.provider_id, body.model)
-
-    return ActiveModelsInfo(
-        active_llm=ModelSlotConfig(
-            provider_id=body.provider_id,
-            model=body.model,
-        ),
-    )
+    return {
+        "tenant_id": tenant_id,
+        "providers": [p.model_dump() for p in provider_infos],
+        "active_model": active_model.model_dump() if active_model else None,
+        "deprecated": True,
+        "migration_note": "Use /models and /models/active endpoints instead.",
+    }

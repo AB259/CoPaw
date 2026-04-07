@@ -32,6 +32,7 @@ from .config import (
     load_agent_config,
     save_agent_config,
 )
+from .context import get_current_tenant_id, TenantContextError
 
 logger = logging.getLogger(__name__)
 
@@ -634,15 +635,13 @@ def get_chats_path() -> Path:
 # Tenant-aware path helpers
 # =============================================================================
 
-from .context import get_current_tenant_id, TenantContextError
-
 
 def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     """Get tenant-specific working directory.
 
     Args:
         tenant_id: Tenant ID. If None, uses current tenant from context
-            or falls back to global WORKING_DIR.
+            or falls back to "default" tenant.
 
     Returns:
         Path to tenant working directory.
@@ -650,10 +649,11 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     if tenant_id is None:
         tenant_id = get_current_tenant_id()
 
-    if tenant_id:
-        return WORKING_DIR / tenant_id
+    # Always use tenant subdirectory; default to "default" tenant
+    if not tenant_id:
+        tenant_id = "default"
 
-    return WORKING_DIR
+    return WORKING_DIR / tenant_id
 
 
 def get_tenant_config_path(tenant_id: str | None = None) -> Path:
@@ -740,6 +740,27 @@ def get_tenant_heartbeat_path(tenant_id: str | None = None) -> Path:
     return get_tenant_working_dir(tenant_id) / HEARTBEAT_FILE
 
 
+def get_tenant_env(
+    key: str,
+    tenant_id: str | None = None,
+    default: str | None = None,
+) -> str | None:
+    """Read an environment value from the tenant-scoped envs.json file."""
+    secrets_dir = get_tenant_secrets_dir(tenant_id)
+    envs_path = secrets_dir / "envs.json"
+    try:
+        if not envs_path.is_file():
+            return default
+        with open(envs_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return default
+        value = data.get(key, default)
+        return None if value is None else str(value)
+    except (OSError, ValueError, TypeError):
+        return default
+
+
 def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
     """Get tenant working directory, raising if tenant context unavailable.
 
@@ -757,7 +778,7 @@ def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
         if tenant_id is None:
             raise TenantContextError(
                 "Tenant context required. "
-                "Ensure this code runs within a tenant-scoped request or context."
+                "Ensure this code runs within a tenant-scoped request or context.",
             )
 
     return WORKING_DIR / tenant_id
