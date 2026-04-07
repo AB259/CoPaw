@@ -20,7 +20,7 @@ New tenants currently bootstrap only the minimal workspace structure and do not 
 
 ## Impact
 
-- Affected code: `src/copaw/app/workspace/tenant_initializer.py`, `src/copaw/cli/init_cmd.py`, `src/copaw/agents/skills_manager.py`
-- Affected behavior: `copaw init --tenant-id ...` and any future full tenant initialization path
+- Affected code: `src/swe/app/workspace/tenant_initializer.py`, `src/swe/cli/init_cmd.py`, `src/swe/agents/skills_manager.py`
+- Affected behavior: `swe init --tenant-id ...` and any future full tenant initialization path
 - Unchanged behavior: `TenantWorkspacePool.ensure_bootstrap()` request-path lazy bootstrap
 - Testing impact: tenant initializer tests, skills manager tests, and lazy-loading boundary tests

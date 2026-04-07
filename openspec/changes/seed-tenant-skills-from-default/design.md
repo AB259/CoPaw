@@ -1,6 +1,6 @@
 ## Context
 
-The codebase already separates tenant runtime bootstrap from full tenant initialization. Runtime bootstrap, reached through `TenantWorkspacePool.ensure_bootstrap()`, intentionally creates only tenant directory structure and the default agent declaration so request-path startup remains cheap. Full initialization, currently used by `copaw init`, additionally creates the builtin QA workspace and initializes the tenant skill pool.
+The codebase already separates tenant runtime bootstrap from full tenant initialization. Runtime bootstrap, reached through `TenantWorkspacePool.ensure_bootstrap()`, intentionally creates only tenant directory structure and the default agent declaration so request-path startup remains cheap. Full initialization, currently used by `swe init`, additionally creates the builtin QA workspace and initializes the tenant skill pool.
 
 Skills are stored in two layers: tenant-shared `skill_pool/` and workspace-local `workspaces/<agent>/skills/`. Existing skill-pool initialization imports packaged builtin skills only. Existing workspace initialization copies skills from the pool only when explicit `skill_names` are provided, which today is used by the builtin QA agent but not by the normal default workspace.
 
@@ -78,7 +78,7 @@ If the target tenant already has a pool manifest, pool skill directories, worksp
 1. Add tenant-aware helper parameters for pool manifest operations in the skills manager.
 2. Add skill-pool and default-workspace seed helpers with idempotent copy/merge behavior.
 3. Extend `TenantInitializer` with `ensure_skill_pool()`, `ensure_default_workspace_skills()`, and `initialize_full()`.
-4. Update `copaw init` to use `initialize_full()` while keeping QA agent initialization explicit.
+4. Update `swe init` to use `initialize_full()` while keeping QA agent initialization explicit.
 5. Add tests covering seeded initialization, fallback behavior, idempotency, and unchanged lazy bootstrap boundaries.
 
 Rollback is straightforward: revert the initialization path changes and helper additions. Existing tenants seeded by the new flow remain valid because the resulting on-disk structure matches normal tenant-local skill storage.
