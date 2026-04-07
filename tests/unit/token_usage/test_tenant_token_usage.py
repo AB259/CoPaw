@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from copaw.config.context import tenant_context
-from copaw.token_usage.manager import TokenUsageManager
+from swe.config.context import tenant_context
+from swe.token_usage.manager import TokenUsageManager
 
 
 def test_token_usage_manager_uses_tenant_workspace_path(tmp_path):

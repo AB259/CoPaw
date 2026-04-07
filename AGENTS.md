@@ -2,16 +2,16 @@
 
 ## Project Structure & Module Organization
 
-Core Python code lives in `src/copaw/`. Key areas include `cli/` for the `copaw` entrypoints, `app/channels/` for channel adapters, `providers/` and `local_models/` for model integration, and `agents/skills/` for built-in skills. Tests live in `tests/`, with focused suites such as `tests/lock/`, `tests/store/`, and `tests/app/backup/`. Frontend apps are split into `console/` (main web UI) and `website/` (docs/site). Deployment helpers live under `deploy/` and `scripts/`; longer-form design notes are in `docs/superpowers/specs/`.
+Core Python code lives in `src/swe/`. Key areas include `cli/` for the `swe` entrypoints, `app/channels/` for channel adapters, `providers/` and `local_models/` for model integration, and `agents/skills/` for built-in skills. Tests live in `tests/`, with focused suites such as `tests/lock/`, `tests/store/`, and `tests/app/backup/`. Frontend apps are split into `console/` (main web UI) and `website/` (docs/site). Deployment helpers live under `deploy/` and `scripts/`; longer-form design notes are in `docs/superpowers/specs/`.
 
 ## Build, Test, and Development Commands
 
 Use Python 3.10-3.13.
 
-- `pip install -e ".[dev]"`: install CoPaw in editable mode with test and lint tooling.
+- `pip install -e ".[dev]"`: install SWE in editable mode with test and lint tooling.
 - `pre-commit install && pre-commit run --all-files`: run the required local quality gate.
 - `pytest`: run the Python test suite.
-- `copaw init --defaults` then `copaw app`: initialize config and start the app locally.
+- `swe init --defaults` then `swe app`: initialize config and start the app locally.
 - `cd console && npm ci && npm run dev`: run the Console in Vite dev mode.
 - `cd console && npm run build`: type-check and build the Console.
 - `cd website && pnpm install --frozen-lockfile && pnpm run build`: build the docs website and search index.

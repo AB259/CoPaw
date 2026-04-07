@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import pytest
 
-from copaw.app.workspace.tenant_initializer import TenantInitializer
-from copaw.app.workspace.tenant_pool import TenantWorkspacePool
-from copaw.constant import BUILTIN_QA_AGENT_ID
+from swe.app.workspace.tenant_initializer import TenantInitializer
+from swe.app.workspace.tenant_pool import TenantWorkspacePool
+from swe.constant import BUILTIN_QA_AGENT_ID
 
 
 class TestTenantInitializerBasics:
