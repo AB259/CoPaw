@@ -33,6 +33,7 @@ from ...constant import (
     WORKING_DIR,
 )
 from ...security.tool_guard.approval import ApprovalDecision
+from ...config.context import get_current_passthrough_headers
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
@@ -284,9 +285,13 @@ class AgentRunner(Runner):
             )
 
             # Get MCP clients from manager (hot-reloadable)
+            # If passthrough headers exist, create temporary clients with merged headers
             mcp_clients = []
             if self._mcp_manager is not None:
-                mcp_clients = await self._mcp_manager.get_clients()
+                passthrough_headers = get_current_passthrough_headers()
+                mcp_clients = await self._mcp_manager.get_clients_with_headers(
+                    passthrough_headers=passthrough_headers,
+                )
 
             # Load agent-specific configuration
             agent_config = load_agent_config(self.agent_id)
@@ -417,6 +422,21 @@ class AgentRunner(Runner):
 
             if self._chat_manager is not None and chat is not None:
                 await self._chat_manager.update_chat(chat)
+
+            # Close temporary MCP clients created with passthrough headers
+            for client in mcp_clients:
+                rebuild_info = getattr(client, "_copaw_rebuild_info", {})
+                if rebuild_info.get("_temp_client"):
+                    try:
+                        await client.close()
+                        # Also close the httpx client if stored
+                        http_client = rebuild_info.get("_http_client")
+                        if http_client is not None:
+                            await http_client.aclose()
+                    except Exception as e:
+                        logger.warning(
+                            f"Error closing temporary MCP client: {e}",
+                        )
 
     async def _cleanup_denied_session_memory(
         self,

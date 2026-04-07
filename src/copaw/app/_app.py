@@ -20,6 +20,7 @@ from ..utils.logging import setup_logger, add_copaw_file_handler
 from .auth import AuthMiddleware
 from .middleware.tenant_identity import TenantIdentityMiddleware
 from .middleware.tenant_workspace import TenantWorkspaceMiddleware
+from .middleware.header_passthrough import HeaderPassthroughMiddleware
 from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.voice import voice_router
@@ -275,6 +276,10 @@ app.add_middleware(TenantWorkspaceMiddleware)
 # Add tenant identity middleware last so it executes FIRST
 # This must set tenant_id before TenantWorkspaceMiddleware needs it
 app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
+
+# Add header passthrough middleware for MCP server requests
+# Extracts x-header-* headers and stores in context for MCP clients
+app.add_middleware(HeaderPassthroughMiddleware)
 
 
 # Console static dir: env, or copaw package data (console), or cwd.
