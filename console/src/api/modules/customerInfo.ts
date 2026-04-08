@@ -11,6 +11,8 @@
  * ============================================================
  */
 
+import { agentApi } from "./agent";
+
 export interface CustomerInfoRequest {
   inputParams: {
     userId: string,
@@ -54,10 +56,8 @@ export interface CustomerInfoResponse {
  * 用户初始化请求参数
  */
 export interface UserInitRequest {
-  userId: string;
-  bbk: string;
-  orgCode: string;
-  positionId: string;
+  filename: string;
+  text: string;
 }
 
 /**
@@ -98,27 +98,15 @@ export function setUserInitialized(userId: string): void {
  * @returns 初始化响应
  */
 export async function fetchUserInit(
-  request: UserInitRequest,
-): Promise<UserInitResponse | null> {
+  req: UserInitRequest,
+): Promise<{ success: boolean } | null> {
   try {
-    // TODO: 替换为真实的 API 地址
-    const apiUrl = "/api/user/init";
-
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
+    const response = await agentApi.agentInit({
+      filename: req.filename,
+      text: req.text,
     });
 
-    if (!response.ok) {
-      console.error("[UserInit] API request failed:", response.status);
-      return null;
-    }
-
-    const result: UserInitResponse = await response.json();
-    return result;
+    return response ? { success: response.success } : null;
   } catch (error) {
     console.error("[UserInit] API request error:", error);
     return null;
@@ -167,33 +155,6 @@ export async function fetchCustomerInfo(
 
 /** Mock 延迟时间（毫秒） */
 const MOCK_DELAY = 500;
-
-
-
-/**
- * Mock 用户初始化 API
- *
- * @param request - 请求参数
- * @returns 初始化响应
- */
-export async function mockFetchUserInit(
-  request: UserInitRequest,
-): Promise<UserInitResponse> {
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, MOCK_DELAY));
-
-  console.info("[UserInit] Mock API called with:", request);
-
-  // 返回成功的 mock 响应
-  return {
-    success: true,
-    message: "User initialized successfully",
-    data: {
-      userId: request.userId,
-      initializedAt: new Date().toISOString(),
-    },
-  };
-}
 
 /**
  * 用户信息

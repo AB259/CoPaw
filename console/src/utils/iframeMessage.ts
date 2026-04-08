@@ -158,18 +158,18 @@ async function initializeUserIfNeeded(
     return;
   }
 
+  const params = {
+    filename: "PROFILE.md",
+    text: `\n### 用户身份信息\n分行号：${store.bbk}\n网点机构编号：${store.orgCode}\n岗位编号：${store.positionId}\n客户经理ID：${userId}`,
+  };
+
   try {
-    const initResponse = await fetchUserInit({
-      userId,
-      bbk: store.bbk ?? "",
-      orgCode: store.orgCode ?? "",
-      positionId: store.positionId ?? "",
-    });
+    const initResponse = await fetchUserInit(params);
 
     if (initResponse?.success) {
       setUserInitialized(userId);
     } else {
-      console.warn("[IframeMessage] User init failed:", initResponse?.message);
+      console.warn("[IframeMessage] User init failed");
     }
   } catch (error) {
     console.error("[IframeMessage] User init error:", error);
