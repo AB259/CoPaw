@@ -27,7 +27,7 @@ export function buildAuthHeaders(): Record<string, string> {
 
   // 2. Agent ID（从 sessionStorage 读取当前选中的 agent）
   try {
-    const agentStorage = sessionStorage.getItem("copaw-agent-storage");
+    const agentStorage = sessionStorage.getItem("swe-agent-storage");
     if (agentStorage) {
       const parsed = JSON.parse(agentStorage);
       const selectedAgent = parsed?.state?.selectedAgent;
@@ -59,7 +59,7 @@ export function buildAuthHeaders(): Record<string, string> {
         item.headerValue !== undefined &&
         item.headerName !== "X-User-Id"
       ) {
-        headers[item.headerName] = item.headerValue;
+        headers["x-header-" + item.headerName] = item.headerValue;
       }
     }
   }
