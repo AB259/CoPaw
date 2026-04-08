@@ -356,6 +356,7 @@ class CronManager:
         """Callback invoked when this instance becomes leader via candidate loop.
 
         This starts the scheduler to begin cron execution.
+        If startup fails, releases the lease to allow another instance to take over.
         """
         logger.info(
             "Become leader callback invoked, starting scheduler: agent=%s",
@@ -364,13 +365,39 @@ class CronManager:
         # Schedule start in the event loop
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._do_start())
+            loop.create_task(self._become_leader_and_start())
         except RuntimeError:
             # No event loop running - this shouldn't happen in normal operation
             logger.warning(
                 "Cannot schedule start: no event loop (agent=%s)",
                 self._agent_id,
             )
+
+    async def _become_leader_and_start(self) -> None:
+        """Internal: Start scheduler after becoming leader via candidate loop.
+
+        This wrapper handles startup failures by releasing the lease,
+        allowing another instance to take over.
+        """
+        try:
+            await self._do_start()
+            logger.info(
+                "Successfully started scheduler after becoming leader: agent=%s",
+                self._agent_id,
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to start scheduler after becoming leader: agent=%s",
+                self._agent_id,
+            )
+            # Release lease to allow another instance to take over
+            if self._coordination is not None:
+                logger.warning(
+                    "Releasing lease due to startup failure: agent=%s",
+                    self._agent_id,
+                )
+                await self._coordination.deactivate()
+            raise
 
     async def _update_heartbeat(self) -> None:
         """Update heartbeat job based on current config."""

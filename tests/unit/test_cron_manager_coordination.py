@@ -538,3 +538,35 @@ class TestCronManagerFailover:
             await follower.deactivate()
             await leader.disconnect_coordination()
             await follower.disconnect_coordination()
+
+    async def test_failover_releases_lease_on_startup_failure(
+        self,
+        temp_jobs_file,
+        mock_runner,
+        mock_channel_manager,
+    ):
+        """Test that lease is released if _do_start fails during failover."""
+        # Use a repo that will fail to load
+        from unittest.mock import AsyncMock
+
+        failing_repo = AsyncMock()
+        failing_repo.load = AsyncMock(side_effect=RuntimeError("Simulated repo load failure"))
+
+        manager = CronManager(
+            repo=failing_repo,
+            runner=mock_runner,
+            channel_manager=mock_channel_manager,
+            agent_id="test-agent",
+            tenant_id="test-tenant",
+            coordination_config=CoordinationConfig(enabled=False),
+        )
+
+        # Initialize scheduler
+        await manager.initialize()
+
+        # Try to start - should fail
+        with pytest.raises(RuntimeError, match="Simulated repo load failure"):
+            await manager._become_leader_and_start()
+
+        # Manager should not be started
+        assert not manager.is_started

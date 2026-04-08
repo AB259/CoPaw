@@ -629,12 +629,31 @@ class CronCoordination:
     def _parse_redis_url(self) -> dict:
         """Parse redis_url to extract connection parameters.
 
+        For cluster mode with comma-separated URLs (host1:6379,host2:6380),
+        only parses the first node for auth credentials.
+
         Returns:
             Dict with host, port, username, password, ssl, db.
         """
         import urllib.parse
 
         url = self._config.redis_url
+
+        # For cluster mode with comma-separated nodes, extract just the first node
+        # for auth parsing (e.g., redis://user:pass@host1:6379,host2:6380)
+        if self._config.cluster_mode and "," in url:
+            # Split and take first node, but preserve the scheme and auth
+            if "://" in url:
+                scheme, rest = url.split("://", 1)
+                # rest might be: user:pass@host1:6379,host2:6380
+                if "@" in rest:
+                    auth, nodes = rest.split("@", 1)
+                    first_node = nodes.split(",")[0]
+                    url = f"{scheme}://{auth}@{first_node}"
+                else:
+                    first_node = rest.split(",")[0]
+                    url = f"{scheme}://{first_node}"
+
         parsed = urllib.parse.urlparse(url)
 
         result = {
@@ -821,11 +840,14 @@ class CronCoordination:
 
         Can be called from any instance (leader or follower).
         """
-        if self._redis is None:
+        # Use _pubsub_client in cluster mode, _redis in standalone mode
+        # RedisCluster doesn't have publish() method
+        client = self._pubsub_client if self._config.cluster_mode else self._redis
+        if client is None:
             return False
 
         publisher = ReloadPublisher(
-            redis_client=self._redis,
+            redis_client=client,
             config=self._config,
         )
         return await publisher.publish(self._tenant_id, self._agent_id)
