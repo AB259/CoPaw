@@ -370,7 +370,7 @@ class TenantInitializer:
 
         token_usage_path = default_workspace / "token_usage.json"
         if not token_usage_path.exists():
-            token_usage_path.write_text("[]", encoding="utf-8")
+            token_usage_path.write_text("{}", encoding="utf-8")
 
         return {
             "agent_json": (default_workspace / "agent.json").exists(),

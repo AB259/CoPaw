@@ -527,7 +527,7 @@ class TestTenantBootstrapConcurrency:
         token_usage = json.loads(
             (workspace / "token_usage.json").read_text(encoding="utf-8"),
         )
-        assert token_usage == []
+        assert token_usage == {}
 
     def test_ensure_bootstrap_does_not_recreate_deleted_bootstrap_md(
         self,

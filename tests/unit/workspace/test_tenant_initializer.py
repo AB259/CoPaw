@@ -185,7 +185,7 @@ class TestEnsureSeededBootstrap:
         )
         assert jobs_data == {"version": 1, "jobs": []}
         assert chats_data == {"version": 1, "chats": []}
-        assert token_usage_data == []
+        assert token_usage_data == {}
 
     def test_ensure_seeded_bootstrap_seeds_skills_without_qa_agent(self, tmp_path):
         """Runtime bootstrap seeds skills but does not create QA agent."""
