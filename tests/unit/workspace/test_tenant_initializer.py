@@ -249,6 +249,63 @@ class TestEnsureSeededBootstrap:
         # Verify QA agent was NOT created (runtime bootstrap boundary)
         assert not (new_init.tenant_dir / "workspaces" / BUILTIN_QA_AGENT_ID).exists()
 
+    def test_has_seeded_bootstrap_does_not_require_bootstrap_md(
+        self,
+        tmp_path,
+    ):
+        """Deleting BOOTSTRAP.md should not mark scaffold incomplete."""
+        default_tenant = tmp_path / "default"
+        default_workspace = default_tenant / "workspaces" / "default"
+        default_workspace.mkdir(parents=True)
+
+        save_config(
+            Config(
+                agents=AgentsConfig(
+                    active_agent="default",
+                    profiles={
+                        "default": AgentProfileRef(
+                            id="default",
+                            workspace_dir=str(default_workspace),
+                        ),
+                    },
+                ),
+            ),
+            default_tenant / "config.json",
+        )
+        (default_workspace / "agent.json").write_text(
+            json.dumps(
+                {
+                    "id": "default",
+                    "name": "Default Template Agent",
+                    "workspace_dir": str(default_workspace),
+                },
+            ),
+            encoding="utf-8",
+        )
+        for filename in (
+            "AGENTS.md",
+            "BOOTSTRAP.md",
+            "HEARTBEAT.md",
+            "MEMORY.md",
+            "PROFILE.md",
+            "SOUL.md",
+        ):
+            (default_workspace / filename).write_text("# template\n", encoding="utf-8")
+
+        initializer = TenantInitializer(tmp_path, "tenant-bootstrap")
+        initializer.ensure_seeded_bootstrap()
+
+        tenant_bootstrap = (
+            tmp_path
+            / "tenant-bootstrap"
+            / "workspaces"
+            / "default"
+            / "BOOTSTRAP.md"
+        )
+        tenant_bootstrap.unlink()
+
+        assert initializer.has_seeded_bootstrap() is True
+
     def test_ensure_seeded_bootstrap_is_idempotent(self, tmp_path):
         """Runtime bootstrap is idempotent - second call does not re-seed."""
         from swe.agents.skills_manager import (

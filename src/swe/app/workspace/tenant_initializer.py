@@ -29,6 +29,11 @@ class TenantInitializer:
         "PROFILE.md",
         "SOUL.md",
     )
+    _WORKSPACE_REQUIRED_FILES = tuple(
+        filename
+        for filename in _WORKSPACE_TEMPLATE_FILES
+        if filename != "BOOTSTRAP.md"
+    )
 
     def __init__(self, base_working_dir: Path, tenant_id: str):
         self.base_working_dir = Path(base_working_dir).expanduser().resolve()
@@ -68,7 +73,7 @@ class TenantInitializer:
         ]
         required_paths.extend(
             default_workspace / filename
-            for filename in self._WORKSPACE_TEMPLATE_FILES
+            for filename in self._WORKSPACE_REQUIRED_FILES
         )
 
         return (

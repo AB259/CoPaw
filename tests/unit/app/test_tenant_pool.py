@@ -529,6 +529,63 @@ class TestTenantBootstrapConcurrency:
         )
         assert token_usage == []
 
+    def test_ensure_bootstrap_does_not_recreate_deleted_bootstrap_md(
+        self,
+        tmp_path,
+    ):
+        """Deleting BOOTSTRAP.md should not trigger cached-tenant self-heal."""
+        default_tenant = tmp_path / "default"
+        default_workspace = default_tenant / "workspaces" / "default"
+        default_workspace.mkdir(parents=True)
+
+        save_config(
+            Config(
+                agents=AgentsConfig(
+                    active_agent="default",
+                    profiles={
+                        "default": AgentProfileRef(
+                            id="default",
+                            workspace_dir=str(default_workspace),
+                        ),
+                    },
+                ),
+            ),
+            default_tenant / "config.json",
+        )
+
+        for filename in (
+            "AGENTS.md",
+            "BOOTSTRAP.md",
+            "HEARTBEAT.md",
+            "MEMORY.md",
+            "PROFILE.md",
+            "SOUL.md",
+        ):
+            (default_workspace / filename).write_text(
+                "# template\n",
+                encoding="utf-8",
+            )
+
+        pool = TenantWorkspacePool(tmp_path)
+
+        async def run_test():
+            await pool.ensure_bootstrap("tenant-keep")
+            bootstrap_path = (
+                tmp_path
+                / "tenant-keep"
+                / "workspaces"
+                / "default"
+                / "BOOTSTRAP.md"
+            )
+            bootstrap_path.unlink()
+
+            await pool.ensure_bootstrap("tenant-keep")
+            return bootstrap_path
+
+        bootstrap_path = asyncio.run(run_test())
+
+        assert not bootstrap_path.exists()
+
 
 class TestTenantWorkspaceDirectoryLayout:
     """Tests for tenant workspace directory layout."""
