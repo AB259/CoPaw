@@ -48,29 +48,29 @@ pytest tests/ -k "memory"  # by keyword
 
 ```bash
 cd console
-npm ci
-npm run build      # Build to dist/
-npm run format     # Format code (required before PR)
-npm run dev        # Development server
+pnpm install
+pnpm run build      # Build to dist/
+pnpm run format     # Format code (required before PR)
+pnpm run dev        # Development server
 ```
 
 ### Full Setup from Source
 
 ```bash
 # Build console first
-cd console && npm ci && npm run build
+cd console && pnpm install && pnpm run build
 cd ..
 
 # Copy console build to package
-mkdir -p src/copaw/console
-cp -R console/dist/. src/copaw/console/
+mkdir -p src/swe/console
+cp -R console/dist/. src/swe/console/
 
 # Install Python package
 pip install -e ".[dev]"
 
 # Initialize and run
-copaw init --defaults
-copaw app
+swe init --defaults
+swe app
 ```
 
 ### Website (Documentation Site)
@@ -86,10 +86,10 @@ pnpm run dev       # Development server
 
 ### High-Level Structure
 
-CoPaw is a personal AI assistant that connects to multiple chat platforms (DingTalk, Feishu, QQ, Discord, iMessage, Telegram) and runs scheduled tasks. The architecture consists of:
+SWE is a personal AI assistant that connects to multiple chat platforms (DingTalk, Feishu, QQ, Discord, iMessage, Telegram) and runs scheduled tasks. The architecture consists of:
 
 ```
-src/copaw/
+src/swe/
 ├── app/           # FastAPI server, channels, runners, routers
 ├── agents/        # Agent logic, skills, tools, memory, routing
 ├── channels/      # Chat platform connectors
@@ -101,28 +101,28 @@ src/copaw/
 
 ### Core Components
 
-**App Layer (`src/copaw/app/`):**
+**App Layer (`src/swe/app/`):**
 - `_app.py`: FastAPI application with lifespan management for channels, cron, MCP, and chat managers
 - `channels/`: Platform connectors (DingTalk, Feishu, QQ, Discord, Telegram, iMessage, Voice/Twilio). Each channel converts platform-specific payloads to unified `content_parts`, processes via agent, and sends responses
 - `runner/`: `AgentRunner` manages agent sessions, chat state, and tool execution
 - `crons/`: Scheduled task executor with heartbeat support using APScheduler
 - `mcp/`: MCP (Model Context Protocol) client manager for hot-plug tool discovery
 
-**Agents Layer (`src/copaw/agents/`):**
+**Agents Layer (`src/swe/agents/`):**
 - `routing_chat_model.py`: Routes LLM requests between local (llama.cpp/MLX/Ollama) and cloud providers
 - `skills/`: Built-in skills (cron, pdf, docx, pptx, xlsx, browser, file_reader, news). Each skill is a directory with `SKILL.md` (instructions) and optional `references/` and `scripts/`
 - `tools/`: Agent tools (browser control, screenshots, file search, memory search, time)
 - `memory/`: Long-term memory management with AgentScope's ReMe integration
 
-**Providers Layer (`src/copaw/providers/`):**
+**Providers Layer (`src/swe/providers/`):**
 - `registry.py`: Provider definitions (DashScope, ModelScope, Ollama, custom OpenAI-compatible)
 - `models.py`: Model slot configurations for local/cloud routing
 - `ollama_manager.py`: Ollama model management
 
-**CLI (`src/copaw/cli/`):**
+**CLI (`src/swe/cli/`):**
 - Commands: `init`, `app`, `channels`, `skills`, `cron`, `env`, `daemon`, `clean`, `uninstall`, `providers`, `desktop`
 
-**Config (`src/copaw/config/`):**
+**Config (`src/swe/config/`):**
 - `config.py`: Pydantic models for config.json (channels, agents, MCP, heartbeat, routing)
 - `watcher.py`: Hot-reload config changes without restart
 
@@ -135,10 +135,10 @@ src/copaw/
 
 ### Multi-User Concurrent Support
 
-CoPaw supports serving multiple users concurrently with full data isolation. Each user's request is routed to their own directory:
+SWE supports serving multiple users concurrently with full data isolation. Each user's request is routed to their own directory:
 
 ```
-~/.copaw/
+~/.swe/
 ├── alice/
 │   ├── config.json
 │   ├── active_skills/
@@ -153,7 +153,7 @@ CoPaw supports serving multiple users concurrently with full data isolation. Eac
 ```
 
 **Implementation:**
-- `src/copaw/constant.py` provides `contextvars`-based request isolation
+- `src/swe/constant.py` provides `contextvars`-based request isolation
 - `set_request_user_id(user_id)` sets the current request's user context
 - `get_request_working_dir()` returns the user-specific working directory
 - `AgentRunner.query_handler()` automatically sets up request context per query
@@ -174,7 +174,7 @@ CoPaw supports serving multiple users concurrently with full data isolation. Eac
 Provider configurations (API keys, base URLs, active model selection) are now tenant-isolated:
 
 ```
-~/.copaw.secret/
+~/.swe.secret/
 ├── default/
 │   └── providers/          # Default tenant provider config
 │       ├── builtin/        # Built-in provider configs (openai.json, etc.)
@@ -200,12 +200,12 @@ python scripts/migrate_provider_config.py --dry-run   # Preview changes
 python scripts/migrate_provider_config.py             # Perform migration
 ```
 
-This creates a backup at `~/.copaw.secret/providers.backup.<timestamp>/` before migrating.
+This creates a backup at `~/.swe.secret/providers.backup.<timestamp>/` before migrating.
 
 ### Key Configuration Files
 
 - `config.json` (working dir): Runtime config for channels, agents, MCP, heartbeat
-- `providers/` (secret dir): **Tenant-isolated** LLM provider configurations per tenant at `~/.copaw.secret/{tenant_id}/providers/`
+- `providers/` (secret dir): **Tenant-isolated** LLM provider configurations per tenant at `~/.swe.secret/{tenant_id}/providers/`
 - `.env` (working dir): API keys (DASHSCOPE_API_KEY, TAVILY_API_KEY, etc.)
 
 ### Skills System
@@ -215,21 +215,21 @@ Skills define agent capabilities. Each skill directory contains:
 - `references/`: Reference documents
 - `scripts/`: Executable scripts or tools
 
-Built-in skills live in `src/copaw/agents/skills/`. Custom skills load from the working directory's `customized_skills/`.
+Built-in skills live in `src/swe/agents/skills/`. Custom skills load from the working directory's `customized_skills/`.
 
 ### Channel Development
 
 To add a new channel:
-1. Create subclass of `BaseChannel` in `src/copaw/app/channels/`
+1. Create subclass of `BaseChannel` in `src/swe/app/channels/`
 2. Set `channel` class attribute to unique key
 3. Implement message handling: receive → content_parts → process → send
-4. Add config class in `src/copaw/config/config.py`
-5. Register in `src/copaw/app/channels/registry.py`
+4. Add config class in `src/swe/config/config.py`
+5. Register in `src/swe/app/channels/registry.py`
 
 ### Model Provider Development
 
 To add a built-in provider:
-1. Add `ProviderDefinition` in `src/copaw/providers/registry.py`
+1. Add `ProviderDefinition` in `src/swe/providers/registry.py`
 2. Implement `ChatModel` class (if not OpenAI-compatible) inheriting from `agentscope.model.ChatModelBase`
 3. Register in provider registry's chat model map
 

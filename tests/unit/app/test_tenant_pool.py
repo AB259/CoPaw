@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import pytest  # noqa: E402,F401
 
-from copaw.app.workspace.tenant_pool import (  # noqa: E402
+from swe.app.workspace.tenant_pool import (  # noqa: E402
     TenantWorkspacePool,
     TenantWorkspaceEntry,
 )
@@ -21,10 +21,10 @@ from copaw.app.workspace.tenant_pool import (  # noqa: E402
 @pytest.fixture(name="mock_working_dir")
 def _mock_working_dir(tmp_path, monkeypatch):
     """Mock WORKING_DIR to use tmp_path for isolation."""
-    from copaw import constant
+    from swe import constant
 
-    monkeypatch.setattr(constant, "WORKING_DIR", tmp_path / "copaw")
-    return tmp_path / "copaw"
+    monkeypatch.setattr(constant, "WORKING_DIR", tmp_path / "swe")
+    return tmp_path / "swe"
 
 
 class TestTenantWorkspacePoolBasics:
