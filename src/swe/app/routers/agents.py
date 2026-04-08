@@ -329,6 +329,7 @@ async def create_agent(
         skill_names=(
             request.skill_names if request.skill_names is not None else []
         ),
+        working_dir=tenant_dir,
     )
 
     # Save agent configuration to workspace/agent.json
@@ -672,6 +673,7 @@ def _initialize_agent_workspace(  # pylint: disable=too-many-branches
     *,
     skill_names: list[str] | None = None,
     builtin_qa_md_seed: bool = False,
+    working_dir: Path | None = None,
 ) -> None:
     """Initialize agent workspace (similar to swe init --defaults).
 
@@ -689,6 +691,7 @@ def _initialize_agent_workspace(  # pylint: disable=too-many-branches
     from ...config import load_config as load_global_config
 
     workspace_dir = Path(workspace_dir).expanduser()
+    workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # Create essential subdirectories
     (workspace_dir / "sessions").mkdir(exist_ok=True)
@@ -727,7 +730,7 @@ def _initialize_agent_workspace(  # pylint: disable=too-many-branches
             reconcile_workspace_manifest,
         )
 
-        pool_dir = get_skill_pool_dir()
+        pool_dir = get_skill_pool_dir(working_dir=working_dir)
         skills_dir = workspace_dir / "skills"
         for name in skill_names:
             source = pool_dir / name
