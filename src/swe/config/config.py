@@ -47,149 +47,10 @@ class BaseChannelConfig(BaseModel):
     require_mention: bool = False
 
 
-class IMessageChannelConfig(BaseChannelConfig):
-    db_path: str = "~/Library/Messages/chat.db"
-    poll_sec: float = 1.0
-    media_dir: Optional[str] = None
-    max_decoded_size: int = (
-        10 * 1024 * 1024
-    )  # 10MB default limit for Base64 data
-
-
-class DiscordConfig(BaseChannelConfig):
-    bot_token: str = ""
-    http_proxy: str = ""
-    http_proxy_auth: str = ""
-    accept_bot_messages: bool = False
-
-
-class DingTalkConfig(BaseChannelConfig):
-    client_id: str = ""
-    client_secret: str = ""
-    message_type: str = "markdown"
-    card_template_id: str = ""
-    card_template_key: str = "content"
-    robot_code: str = ""
-    media_dir: Optional[str] = None
-    card_auto_layout: bool = False
-
-
-class FeishuConfig(BaseChannelConfig):
-    """Feishu/Lark channel: app_id, app_secret; optional encrypt_key,
-    verification_token for event handler. media_dir for received media.
-    domain: 'feishu' for China, 'lark' for international.
-    """
-
-    app_id: str = ""
-    app_secret: str = ""
-    encrypt_key: str = ""
-    verification_token: str = ""
-    media_dir: Optional[str] = None
-    domain: Literal["feishu", "lark"] = "feishu"
-
-
-class QQConfig(BaseChannelConfig):
-    app_id: str = ""
-    client_secret: str = ""
-    markdown_enabled: bool = True
-    max_reconnect_attempts: int = 100
-
-
-class TelegramConfig(BaseChannelConfig):
-    bot_token: str = ""
-    http_proxy: str = ""
-    http_proxy_auth: str = ""
-    show_typing: Optional[bool] = None
-
-
-class MQTTConfig(BaseChannelConfig):
-    host: str = ""
-    port: Optional[int] = None
-    transport: str = ""
-    clean_session: bool = True
-    qos: int = 2
-    username: Optional[str] = None
-    password: Optional[str] = None
-    subscribe_topic: str = ""
-    publish_topic: str = ""
-    tls_enabled: bool = False
-    tls_ca_certs: Optional[str] = None
-    tls_certfile: Optional[str] = None
-    tls_keyfile: Optional[str] = None
-
-
-class MattermostConfig(BaseChannelConfig):
-    """Mattermost channel: WebSocket polling and REST API."""
-
-    url: str = ""
-    bot_token: str = ""
-    media_dir: Optional[str] = None
-    show_typing: Optional[bool] = None
-    thread_follow_without_mention: bool = False
-
-
 class ConsoleConfig(BaseChannelConfig):
     """Console channel: prints agent responses to stdout."""
 
     enabled: bool = True
-    media_dir: Optional[str] = None
-
-
-class WecomConfig(BaseChannelConfig):
-    """WeCom (Enterprise WeChat) AI Bot channel config."""
-
-    bot_id: str = ""
-    secret: str = ""
-    media_dir: Optional[str] = None
-    welcome_text: str = ""
-    max_reconnect_attempts: int = -1
-
-
-class MatrixConfig(BaseChannelConfig):
-    """Matrix channel configuration."""
-
-    homeserver: str = ""
-    user_id: str = ""
-    access_token: str = ""
-
-
-class VoiceChannelConfig(BaseChannelConfig):
-    """Voice channel: Twilio ConversationRelay + Cloudflare Tunnel."""
-
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    phone_number: str = ""
-    phone_number_sid: str = ""
-    tts_provider: str = "google"
-    tts_voice: str = "en-US-Journey-D"
-    stt_provider: str = "deepgram"
-    language: str = "en-US"
-    welcome_greeting: str = "Hi! This is SWE. How can I help you?"
-
-
-class XiaoYiConfig(BaseChannelConfig):
-    """XiaoYi channel: Huawei A2A protocol via WebSocket."""
-
-    ak: str = ""  # Access Key
-    sk: str = ""  # Secret Key
-    agent_id: str = ""  # Agent ID from XiaoYi platform
-    ws_url: str = "wss://hag.cloud.huawei.com/openclaw/v1/ws/link"
-    task_timeout_ms: int = 3600000  # 1 hour task timeout
-
-
-class WeixinConfig(BaseChannelConfig):
-    """WeChat (iLink Bot) personal account channel config.
-
-    bot_token:      Bearer token obtained after QR code login.
-    bot_token_file: Path to persist/load the bot_token
-                    (default ~/.swe/weixin_bot_token).
-    base_url:       iLink API base URL (leave empty to use default).
-    media_dir:      Local directory for downloaded media files.
-    """
-
-    bot_token: str = ""
-    bot_token_file: str = ""
-    base_url: str = ""
     media_dir: Optional[str] = None
 
 
@@ -198,20 +59,7 @@ class ChannelConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    imessage: IMessageChannelConfig = IMessageChannelConfig()
-    discord: DiscordConfig = DiscordConfig()
-    dingtalk: DingTalkConfig = DingTalkConfig()
-    feishu: FeishuConfig = FeishuConfig()
-    qq: QQConfig = QQConfig()
-    telegram: TelegramConfig = TelegramConfig()
-    mattermost: MattermostConfig = MattermostConfig()
-    mqtt: MQTTConfig = MQTTConfig()
     console: ConsoleConfig = ConsoleConfig()
-    matrix: MatrixConfig = MatrixConfig()
-    voice: VoiceChannelConfig = VoiceChannelConfig()
-    wecom: WecomConfig = WecomConfig()
-    xiaoyi: XiaoYiConfig = XiaoYiConfig()
-    weixin: WeixinConfig = WeixinConfig()
 
 
 class LastApiConfig(BaseModel):
@@ -651,6 +499,10 @@ class AgentProfileConfig(BaseModel):
         default_factory=AgentsRunningConfig,
         description="Runtime configuration",
     )
+    llm_routing: AgentsLLMRoutingConfig = Field(
+        default_factory=AgentsLLMRoutingConfig,
+        description="LLM routing configuration",
+    )
     language: str = Field(
         default="zh",
         description="Language setting for this agent",
@@ -845,15 +697,17 @@ class MCPConfig(BaseModel):
 class BuiltinToolConfig(BaseModel):
     """Configuration for a single built-in tool."""
 
+    model_config = ConfigDict(extra="ignore")
+
     name: str = Field(..., description="Tool function name")
-    enabled: bool = Field(True, description="Whether the tool is enabled")
+    enabled: bool = Field(default=True, description="Whether the tool is enabled")
     description: str = Field(default="", description="Tool description")
     display_to_user: bool = Field(
-        True,
+        default=True,
         description="Whether tool output is rendered to user channels",
     )
     async_execution: bool = Field(
-        False,
+        default=False,
         description="Whether to execute the tool asynchronously in background",
     )
 
@@ -1059,6 +913,65 @@ class SecurityConfig(BaseModel):
     )
 
 
+class CronCoordinationConfig(BaseModel):
+    """Redis-based cron coordination configuration.
+
+    Controls multi-instance cron leadership election and execution locking.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable Redis coordination for cron leadership election",
+    )
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL for coordination",
+    )
+    # Lease configuration
+    lease_ttl_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=300,
+        description="Lease TTL in seconds (must be > renew interval)",
+    )
+    lease_renew_interval_seconds: int = Field(
+        default=10,
+        ge=1,
+        le=60,
+        description="How often to renew lease",
+    )
+    lease_renew_failure_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Consecutive failures before considering lease lost",
+    )
+    # Execution lock configuration
+    lock_safety_margin_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=300,
+        description="Additional time added to job timeout for execution lock",
+    )
+    # Reload pub/sub configuration
+    reload_channel_prefix: str = Field(
+        default="swe:cron:reload",
+        description="Redis pub/sub channel prefix for reload signals",
+    )
+
+    @model_validator(mode="after")
+    def validate_lease_config(self) -> "CronCoordinationConfig":
+        """Validate lease configuration."""
+        if self.lease_ttl_seconds <= self.lease_renew_interval_seconds:
+            raise ValueError(
+                "lease_ttl_seconds must be greater than "
+                "lease_renew_interval_seconds",
+            )
+        return self
+
+
 class Config(BaseModel):
     """Root config (config.json)."""
 
@@ -1075,24 +988,13 @@ class Config(BaseModel):
         description="User IANA timezone (e.g. Asia/Shanghai). "
         "Defaults to the system timezone.",
     )
+    cron_coordination: CronCoordinationConfig = Field(
+        default_factory=CronCoordinationConfig,
+        description="Redis-based cron coordination configuration",
+    )
 
 
-ChannelConfigUnion = Union[
-    IMessageChannelConfig,
-    DiscordConfig,
-    DingTalkConfig,
-    FeishuConfig,
-    QQConfig,
-    TelegramConfig,
-    MattermostConfig,
-    MQTTConfig,
-    ConsoleConfig,
-    MatrixConfig,
-    VoiceChannelConfig,
-    WecomConfig,
-    XiaoYiConfig,
-    WeixinConfig,
-]
+ChannelConfigUnion = ConsoleConfig
 
 
 # Agent configuration utility functions
