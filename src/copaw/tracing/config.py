@@ -7,28 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-
-class TDSQLConfig(BaseModel):
-    """TDSQL/MySQL database connection configuration.
-
-    TDSQL is Tencent Cloud's distributed database, MySQL-compatible.
-    This can also be used with standard MySQL databases.
-    """
-
-    host: str = Field(default="localhost", description="Database host")
-    port: int = Field(default=3306, description="Database port")
-    user: str = Field(default="root", description="Database user")
-    password: str = Field(default="", description="Database password")
-    database: str = Field(default="copaw_tracing", description="Database name")
-    min_connections: int = Field(
-        default=2,
-        description="Minimum connection pool size",
-    )
-    max_connections: int = Field(
-        default=10,
-        description="Maximum connection pool size",
-    )
-    charset: str = Field(default="utf8mb4", description="Character set")
+from ..database import DatabaseConfig
 
 
 class TracingConfig(BaseModel):
@@ -70,7 +49,7 @@ class TracingConfig(BaseModel):
         default=None,
         description="Custom storage path for trace files (default: WORKING_DIR/tracing)",
     )
-    database: Optional[TDSQLConfig] = Field(
+    database: Optional[DatabaseConfig] = Field(
         default=None,
         description="Database configuration for persistent storage (optional)",
     )

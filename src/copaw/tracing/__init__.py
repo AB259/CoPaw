@@ -5,7 +5,7 @@ This module provides tracing and analytics capabilities for CoPaw,
 including event collection, storage, and aggregation.
 """
 
-from .config import TracingConfig, TDSQLConfig
+from .config import TracingConfig
 from .models import EventType, Span, Trace, TraceStatus
 from .manager import (
     TraceManager,
@@ -18,13 +18,24 @@ from .manager import (
     has_trace_manager,
 )
 from .store import TraceStore
-from .database import TDSQLConnection
 from .model_wrapper import TracingModelWrapper
+
+# Backward compatibility: re-export from database module
+from ..database import (
+    DatabaseConfig,
+    DatabaseConnection,
+    TDSQLConfig,
+    TDSQLConnection,
+)
 
 __all__ = [
     # Config
     "TracingConfig",
+    # Backward compatibility (deprecated, use from copaw.database)
+    "DatabaseConfig",
     "TDSQLConfig",
+    "DatabaseConnection",
+    "TDSQLConnection",
     # Models
     "EventType",
     "Span",
@@ -41,8 +52,6 @@ __all__ = [
     "has_trace_manager",
     # Store
     "TraceStore",
-    # Database
-    "TDSQLConnection",
     # Model wrapper
     "TracingModelWrapper",
 ]

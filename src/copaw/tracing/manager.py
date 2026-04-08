@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import TracingConfig
-from .database import TDSQLConnection
+from ..database import DatabaseConnection
 from .models import EventType, Span, Trace, TraceStatus
 from .store import TraceStore
 from .sanitizer import sanitize_dict, sanitize_string
@@ -137,10 +137,10 @@ class TraceManager:
             self._storage_path = Path("tracing")
 
         # Create database connection if configured
-        db: Optional[TDSQLConnection] = None
+        db: Optional[DatabaseConnection] = None
         if self.config.database:
             try:
-                db = TDSQLConnection(self.config.database)
+                db = DatabaseConnection(self.config.database)
                 await db.connect()
                 logger.info(
                     "Database connection established: %s",

@@ -19,6 +19,14 @@ from ..constant import (
     LOG_LEVEL_ENV,
     CORS_ORIGINS,
     WORKING_DIR,
+    DB_HOST,
+    DB_PORT,
+    DB_USER,
+    DB_PASSWORD,
+    DB_NAME,
+    DB_MIN_CONN,
+    DB_MAX_CONN,
+    # Backward compatibility
     TRACING_DB_HOST,
     TRACING_DB_PORT,
     TRACING_DB_USER,
@@ -43,7 +51,7 @@ from .migration import (
 )
 from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
-from ..tracing.config import TracingConfig, TDSQLConfig
+from ..database import DatabaseConfig
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -214,20 +222,23 @@ async def lifespan(
     # --- Initialize tracing manager ---
     try:
         from ..config.config import load_agent_config
+        from ..tracing.config import TracingConfig
 
         agent_config = load_agent_config("default")
         tracing_config = agent_config.running.tracing
 
         # Check if database is configured via environment variables
-        if TRACING_DB_HOST:
-            database_config = TDSQLConfig(
-                host=TRACING_DB_HOST,
-                port=TRACING_DB_PORT,
-                user=TRACING_DB_USER,
-                password=TRACING_DB_PASSWORD,
-                database=TRACING_DB_NAME,
-                min_connections=TRACING_DB_MIN_CONN,
-                max_connections=TRACING_DB_MAX_CONN,
+        # Support both new DB_* and legacy TRACING_DB_* env vars
+        db_host = DB_HOST or TRACING_DB_HOST
+        if db_host:
+            database_config = DatabaseConfig(
+                host=db_host,
+                port=DB_PORT or TRACING_DB_PORT,
+                user=DB_USER or TRACING_DB_USER,
+                password=DB_PASSWORD or TRACING_DB_PASSWORD,
+                database=DB_NAME or TRACING_DB_NAME,
+                min_connections=DB_MIN_CONN or TRACING_DB_MIN_CONN,
+                max_connections=DB_MAX_CONN or TRACING_DB_MAX_CONN,
             )
             tracing_config = TracingConfig(
                 enabled=tracing_config.enabled,
@@ -247,7 +258,7 @@ async def lifespan(
             await init_trace_manager(tracing_config, storage_path)
             logger.info(
                 "Tracing manager initialized (database storage: %s)",
-                TRACING_DB_HOST,
+                db_host,
             )
         else:
             storage_path = (

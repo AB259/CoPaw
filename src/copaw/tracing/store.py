@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import TracingConfig
-from .database import TDSQLConnection
+from ..database import DatabaseConnection
 from .models import (
     EventType,
     MCPToolUsage,
@@ -47,7 +47,7 @@ class TraceStore:
         self,
         config: TracingConfig,
         storage_path: Path,
-        db: Optional[TDSQLConnection] = None,
+        db: Optional[DatabaseConnection] = None,
     ):
         """Initialize trace store.
 

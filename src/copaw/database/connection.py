@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""TDSQL/MySQL database connection module.
+"""Database connection module.
 
-Provides async connection pool management for TDSQL (MySQL-compatible).
+Provides async connection pool management for MySQL-compatible databases.
 """
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from .config import TDSQLConfig
+from .config import DatabaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -18,20 +18,22 @@ try:
     AIOMYSQL_AVAILABLE = True
 except ImportError:
     AIOMYSQL_AVAILABLE = False
-    logger.debug("aiomysql not installed, tracing will use JSON file storage")
+    logger.debug(
+        "aiomysql not installed, database features will be unavailable",
+    )
 
 
-class TDSQLConnection:
-    """TDSQL/MySQL database connection with async connection pool.
+class DatabaseConnection:
+    """Database connection with async connection pool.
 
     Uses aiomysql for async MySQL operations.
     """
 
-    def __init__(self, config: TDSQLConfig):
+    def __init__(self, config: DatabaseConfig):
         """Initialize database connection.
 
         Args:
-            config: TDSQL configuration
+            config: Database configuration
         """
         self.config = config
         self._pool: Optional[Any] = None
@@ -178,3 +180,7 @@ class TDSQLConnection:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows] if rows else []
+
+
+# Backward compatibility alias
+TDSQLConnection = DatabaseConnection
