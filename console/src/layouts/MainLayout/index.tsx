@@ -35,6 +35,7 @@ import TokenUsagePage from "../../pages/Settings/TokenUsage";
 import VoiceTranscriptionPage from "../../pages/Settings/VoiceTranscription";
 import AgentsPage from "../../pages/Settings/Agents";
 import AnalyticsPage from "../../pages/Analytics";
+import InstancePage from "../../pages/Instance";
 
 const { Content } = Layout;
 
@@ -61,6 +62,10 @@ const pathToKey: Record<string, string> = {
   "/analytics/sessions": "analytics-sessions",
   "/analytics/messages": "analytics-messages",
   "/analytics/traces": "analytics-traces",
+  "/instance/overview": "instance-overview",
+  "/instance/instances": "instance-instances",
+  "/instance/allocations": "instance-allocations",
+  "/instance/logs": "instance-logs",
 };
 
 export default function MainLayout() {
@@ -113,6 +118,7 @@ export default function MainLayout() {
                 element={<VoiceTranscriptionPage />}
               />
               <Route path="/analytics/*" element={<AnalyticsPage />} />
+              <Route path="/instance/*" element={<InstancePage />} />
             </Routes>
           </div>
         </Content>

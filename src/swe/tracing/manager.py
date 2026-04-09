@@ -111,13 +111,20 @@ class TraceManager:
     def store(self) -> TraceStore:
         """Get trace store."""
         if self._store is None:
-            raise RuntimeError("TraceManager not initialized")
+            raise RuntimeError(
+                "TraceManager not initialized or tracing is disabled",
+            )
         return self._store
 
     @property
     def enabled(self) -> bool:
         """Check if tracing is enabled."""
         return self.config.enabled
+
+    @property
+    def is_running(self) -> bool:
+        """Check if the trace manager is running."""
+        return self._running
 
     async def initialize(self, storage_path: Optional[Path] = None) -> None:
         """Initialize the trace manager.
@@ -834,8 +841,17 @@ async def init_trace_manager(
         return _trace_manager
 
     config = config or TracingConfig()
-    _trace_manager = TraceManager(config)
-    await _trace_manager.initialize(storage_path)
+    manager = TraceManager(config)
+    try:
+        await manager.initialize(storage_path)
+        _trace_manager = manager
+    except Exception as e:
+        # Clean up on failure - don't leave partially initialized manager
+        logger.error("Failed to initialize TraceManager: %s", e)
+        if manager.is_running:
+            await manager.close()
+        _trace_manager = None
+        raise
 
     return _trace_manager
 

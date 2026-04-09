@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Runner module with chat manager for coordinating repository."""
+from __future__ import annotations
+
 from .runner import AgentRunner
 from .api import router
 from .manager import ChatManager
@@ -12,7 +14,6 @@ from .repo import (
     BaseChatRepository,
     JsonChatRepository,
 )
-from __future__ import annotations
 
 
 __all__ = [

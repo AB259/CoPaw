@@ -86,6 +86,7 @@ async def get_overview(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         # Tracing not initialized, return empty stats
         return OverviewStats()
@@ -93,7 +94,7 @@ async def get_overview(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await manager.store.get_overview_stats(start, end)
+    return await store.get_overview_stats(start, end)
 
 
 @router.get("/users", response_model=dict)
@@ -124,13 +125,14 @@ async def get_users(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    users, total = await manager.store.get_users(
+    users, total = await store.get_users(
         page,
         page_size,
         user_id,
@@ -166,13 +168,14 @@ async def get_user_stats(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return UserStats(user_id=user_id)
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await manager.store.get_user_stats(user_id, start, end)
+    return await store.get_user_stats(user_id, start, end)
 
 
 @router.get("/traces", response_model=dict)
@@ -207,13 +210,14 @@ async def get_traces(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    traces, total = await manager.store.get_traces(
+    traces, total = await store.get_traces(
         page=page,
         page_size=page_size,
         user_id=user_id,
@@ -245,13 +249,14 @@ async def get_trace_detail(trace_id: str) -> TraceDetail:
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
             detail="Tracing not available",
         ) from exc
 
-    detail = await manager.store.get_trace_detail(trace_id)
+    detail = await store.get_trace_detail(trace_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Trace not found")
 
@@ -277,13 +282,14 @@ async def get_model_usage(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"models": []}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await manager.store.get_overview_stats(start, end)
+    stats = await store.get_overview_stats(start, end)
     return {"models": [m.model_dump() for m in stats.model_distribution]}
 
 
@@ -306,13 +312,14 @@ async def get_tool_usage(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"tools": []}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await manager.store.get_overview_stats(start, end)
+    stats = await store.get_overview_stats(start, end)
     return {"tools": [t.model_dump() for t in stats.top_tools]}
 
 
@@ -335,13 +342,14 @@ async def get_skill_usage(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"skills": []}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await manager.store.get_overview_stats(start, end)
+    stats = await store.get_overview_stats(start, end)
     return {"skills": [s.model_dump() for s in stats.top_skills]}
 
 
@@ -364,13 +372,14 @@ async def get_mcp_usage(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"mcp_tools": [], "mcp_servers": []}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await manager.store.get_overview_stats(start, end)
+    stats = await store.get_overview_stats(start, end)
     return {
         "mcp_tools": [t.model_dump() for t in stats.top_mcp_tools],
         "mcp_servers": [s.model_dump() for s in stats.mcp_servers],
@@ -407,13 +416,14 @@ async def get_sessions(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    sessions, total = await manager.store.get_sessions(
+    sessions, total = await store.get_sessions(
         page=page,
         page_size=page_size,
         user_id=user_id,
@@ -450,13 +460,14 @@ async def get_session_stats(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return SessionStats(session_id=session_id, user_id="", channel="")
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await manager.store.get_session_stats(session_id, start, end)
+    return await store.get_session_stats(session_id, start, end)
 
 
 @router.get("/user-messages", response_model=dict)
@@ -494,13 +505,14 @@ async def get_user_messages(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError:
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    messages, total = await manager.store.get_user_messages(
+    messages, total = await store.get_user_messages(
         page=page,
         page_size=page_size,
         user_id=user_id,
@@ -555,6 +567,7 @@ async def export_user_messages(
     """
     try:
         manager = get_trace_manager()
+        store = manager.store
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
@@ -564,7 +577,7 @@ async def export_user_messages(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    messages, _ = await manager.store.get_user_messages(
+    messages, _ = await store.get_user_messages(
         page=1,
         page_size=1,  # Ignored in export mode
         user_id=user_id,

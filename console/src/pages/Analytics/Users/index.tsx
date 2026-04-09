@@ -4,26 +4,10 @@ import { Table, Card, Input, Drawer, Descriptions, Spin, Empty, Tag, DatePicker 
 import { Search, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { tracingApi, UserStats } from "../../../api/modules/tracing";
+import { tracingApi, UserStats, UserListItem } from "../../../api/modules/tracing";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
-
-interface UserListItem {
-  user_id: string;
-  total_sessions: number;
-  total_conversations: number;
-  total_tokens: number;
-  total_skills: number;
-  last_active: string | null;
-}
-
-interface UsersResponse {
-  items: UserListItem[];
-  total: number;
-  page: number;
-  page_size: number;
-}
 
 export default function UsersPage() {
   const { t } = useTranslation();
@@ -124,12 +108,6 @@ export default function UsersPage() {
       title: t("analytics.conversations", "Conversations"),
       dataIndex: "total_conversations",
       key: "total_conversations",
-      sorter: true,
-    },
-    {
-      title: t("analytics.skills", "Skills"),
-      dataIndex: "total_skills",
-      key: "total_skills",
       sorter: true,
     },
     {
