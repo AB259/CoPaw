@@ -1103,6 +1103,54 @@ class SecurityConfig(BaseModel):
     )
 
 
+class ServiceHeartbeatConfig(BaseModel):
+    """服务心跳配置：向远程接口定期发送心跳信号。
+
+    用于服务注册和健康检查，在服务启动时开启后台心跳任务，
+    进程结束前发送关闭信号（enabled=false）。
+
+    注意：心跳URL和间隔时间从环境变量读取，支持dev/prd环境区分：
+    - SWE_SERVICE_HEARTBEAT_URL: 心跳接口地址
+    - SWE_SERVICE_HEARTBEAT_INTERVAL: 心跳间隔秒数
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="是否启用服务心跳",
+    )
+    service_name: str = Field(
+        default="swe",
+        description="服务名称，固定为swe",
+    )
+    instance_port: int = Field(
+        default=8088,
+        ge=1,
+        le=65535,
+        description="实例端口，默认8088",
+    )
+    weight: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="权重，默认1",
+    )
+
+    @property
+    def url(self) -> str:
+        """从环境变量获取心跳URL。"""
+        return EnvVarLoader.get_str("SWE_SERVICE_HEARTBEAT_URL", "")
+
+    @property
+    def interval_seconds(self) -> int:
+        """从环境变量获取心跳间隔秒数。"""
+        return EnvVarLoader.get_int(
+            "SWE_SERVICE_HEARTBEAT_INTERVAL",
+            default=30,
+            min_value=5,
+            max_value=300,
+        )
+
+
 class Config(BaseModel):
     """Root config (config.json)."""
 
@@ -1113,6 +1161,10 @@ class Config(BaseModel):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     last_dispatch: Optional[LastDispatchConfig] = None
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    service_heartbeat: ServiceHeartbeatConfig = Field(
+        default_factory=ServiceHeartbeatConfig,
+        description="服务心跳配置",
+    )
     show_tool_details: bool = True
     user_timezone: str = Field(
         default_factory=detect_system_timezone,

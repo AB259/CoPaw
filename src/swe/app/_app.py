@@ -53,6 +53,7 @@ from .migration import (
 from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
 from ..database import DatabaseConfig
+from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -281,6 +282,9 @@ async def lifespan(
         f"(minimal initialization - runtimes deferred to first use)",
     )
 
+    # 启动服务心跳任务
+    await start_service_heartbeat()
+
     try:
         yield
     finally:
@@ -290,6 +294,9 @@ async def lifespan(
             logger.info("Tracing manager closed")
         except Exception as e:
             logger.warning("Error closing tracing manager: %s", e)
+
+        # 停止服务心跳并发送关闭信号
+        await stop_service_heartbeat()
 
         local_model_mgr = getattr(app.state, "local_model_manager", None)
         if local_model_mgr is not None:
