@@ -170,6 +170,14 @@ class Workspace:
 
         cluster_nodes = _parse_cluster_nodes(CRON_CLUSTER_NODES)
 
+        # Validate lease configuration (must be >, not >=)
+        if CRON_LEASE_TTL_SECONDS <= CRON_LEASE_RENEW_INTERVAL_SECONDS:
+            raise ValueError(
+                "lease_ttl_seconds must be greater than "
+                f"lease_renew_interval_seconds (got {CRON_LEASE_TTL_SECONDS} <= "
+                f"{CRON_LEASE_RENEW_INTERVAL_SECONDS})"
+            )
+
         return CoordinationConfig(
             enabled=CRON_COORDINATION_ENABLED,
             redis_url=CRON_REDIS_URL,

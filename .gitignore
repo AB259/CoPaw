@@ -106,3 +106,4 @@ src/.hypothesis/
 
 # github actions
 .github/
+.gitnexus

@@ -202,3 +202,49 @@ class TestWorkspaceCronCoordinationFallback:
         assert config.lease_renew_failure_threshold == 3  # Default
         assert config.lock_safety_margin_seconds == 30  # CRON_LOCK_SAFETY_MARGIN_SECONDS default
         assert config.reload_channel_prefix == "swe:cron:reload"  # Code default
+
+    def test_invalid_lease_config_raises_error(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Invalid lease config (ttl <= renew_interval) should raise ValueError."""
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+
+        # Mock invalid lease values: ttl == renew_interval
+        with patch(
+            "swe.constant.CRON_LEASE_TTL_SECONDS", 10
+        ), patch(
+            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS", 10
+        ):
+            ws = Workspace(
+                agent_id="test-agent",
+                workspace_dir=workspace_dir,
+                tenant_id="test-tenant",
+            )
+
+            with pytest.raises(ValueError, match="lease_ttl_seconds must be greater"):
+                ws._get_cron_coordination_config()
+
+    def test_invalid_lease_config_ttl_less_than_renew_raises_error(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Invalid lease config (ttl < renew_interval) should raise ValueError."""
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir()
+
+        # Mock invalid lease values: ttl < renew_interval
+        with patch(
+            "swe.constant.CRON_LEASE_TTL_SECONDS", 5
+        ), patch(
+            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS", 10
+        ):
+            ws = Workspace(
+                agent_id="test-agent",
+                workspace_dir=workspace_dir,
+                tenant_id="test-tenant",
+            )
+
+            with pytest.raises(ValueError, match="lease_ttl_seconds must be greater"):
+                ws._get_cron_coordination_config()

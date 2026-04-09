@@ -1,9 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: New agent creation defaults to all tenant pool skills
-When a new agent is created without an explicit `skill_names` selection, the
-system SHALL seed the new workspace with every skill currently available in the
-active tenant's local `skill_pool`.
+The system SHALL seed a new agent workspace with every skill currently
+available in the active tenant's local `skill_pool` when the create-agent
+request omits an explicit `skill_names` selection.
 
 #### Scenario: Omitted skill selection copies all tenant pool skills
 - **GIVEN** tenant `tenant-a` has skills `guidance` and `docx` in

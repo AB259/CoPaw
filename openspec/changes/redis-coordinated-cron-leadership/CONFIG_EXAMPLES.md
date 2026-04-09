@@ -5,11 +5,15 @@
 Cron coordination is configured **exclusively through environment-derived values**:
 
 1. **Process environment variables** (highest priority)
-2. **`.env` file** in the working directory
+2. **User's `envs.json`** (persisted secrets at `~/.swe/secret/envs.json`)
 3. **Packaged environment presets**: `src/swe/config/envs/{dev|prd}.json`
-4. **Hardcoded defaults** (lowest priority)
+4. **`.env` file** in the working directory
+5. **Hardcoded defaults** (lowest priority)
 
 **Note**: `config.json` is **not** a supported source for cron coordination settings. Legacy `cron_coordination` sections in `config.json` are ignored.
+
+**Important**: `.env` file has lower priority than packaged presets (`dev.json`/`prd.json`).
+If you need to override preset values, use process environment variables or `envs.json`.
 
 ## Environment Variable Configuration
 
