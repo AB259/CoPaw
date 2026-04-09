@@ -19,21 +19,6 @@ from ..constant import (
     LOG_LEVEL_ENV,
     CORS_ORIGINS,
     WORKING_DIR,
-    DB_HOST,
-    DB_PORT,
-    DB_USER,
-    DB_PASSWORD,
-    DB_NAME,
-    DB_MIN_CONN,
-    DB_MAX_CONN,
-    # Backward compatibility
-    TRACING_DB_HOST,
-    TRACING_DB_PORT,
-    TRACING_DB_USER,
-    TRACING_DB_PASSWORD,
-    TRACING_DB_NAME,
-    TRACING_DB_MIN_CONN,
-    TRACING_DB_MAX_CONN,
 )
 from ..__version__ import __version__
 from ..utils.logging import setup_logger, add_swe_file_handler
@@ -52,7 +37,7 @@ from .migration import (
 )
 from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
-from ..database import DatabaseConfig
+from ..database import get_database_config
 from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
 
 # Apply log level on load so reload child process gets same level as CLI.
@@ -229,19 +214,9 @@ async def lifespan(
         agent_config = load_agent_config("default")
         tracing_config = agent_config.running.tracing
 
-        # Check if database is configured via environment variables
-        # Support both new DB_* and legacy TRACING_DB_* env vars
-        db_host = DB_HOST or TRACING_DB_HOST
-        if db_host:
-            database_config = DatabaseConfig(
-                host=db_host,
-                port=DB_PORT or TRACING_DB_PORT,
-                user=DB_USER or TRACING_DB_USER,
-                password=DB_PASSWORD or TRACING_DB_PASSWORD,
-                database=DB_NAME or TRACING_DB_NAME,
-                min_connections=DB_MIN_CONN or TRACING_DB_MIN_CONN,
-                max_connections=DB_MAX_CONN or TRACING_DB_MAX_CONN,
-            )
+        # Get database configuration from unified source
+        database_config = get_database_config()
+        if database_config.host:
             tracing_config = TracingConfig(
                 enabled=tracing_config.enabled,
                 batch_size=tracing_config.batch_size,
@@ -260,7 +235,7 @@ async def lifespan(
             await init_trace_manager(tracing_config, storage_path)
             logger.info(
                 "Tracing manager initialized (database storage: %s)",
-                db_host,
+                database_config.host,
             )
         else:
             storage_path = (
