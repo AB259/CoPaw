@@ -11,7 +11,6 @@ Example:
 
 
 import base64
-import importlib
 import logging
 import os
 from typing import List, Sequence, Tuple, Type, Any, Union, Optional
@@ -709,22 +708,14 @@ def _get_tenant_id() -> Optional[str]:
 
         return get_current_tenant_id()
     except Exception:
-        try:
-            module = importlib.import_module("copaw.config.context")
-            return module.get_current_tenant_id()
-        except Exception:
-            return None
+        return None
 
 
 def _get_model_slot(
     manager: "ProviderManager",
 ):
     """Get active model slot from provider manager."""
-    try:
-        from ..tenant_models.models import ModelSlot
-    except Exception:
-        module = importlib.import_module("copaw.tenant_models.models")
-        ModelSlot = module.ModelSlot
+    from ..tenant_models.models import ModelSlot
 
     active_model = manager.get_active_model()
     if (
