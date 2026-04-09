@@ -11,6 +11,7 @@ Example:
 
 
 import base64
+import importlib
 import logging
 import os
 from typing import List, Sequence, Tuple, Type, Any, Union, Optional
@@ -704,18 +705,26 @@ def _get_agent_id(agent_id: Optional[str]) -> Optional[str]:
 def _get_tenant_id() -> Optional[str]:
     """Get current tenant ID."""
     try:
-        from copaw.config.context import get_current_tenant_id
+        from ..config.context import get_current_tenant_id
 
         return get_current_tenant_id()
     except Exception:
-        return None
+        try:
+            module = importlib.import_module("copaw.config.context")
+            return module.get_current_tenant_id()
+        except Exception:
+            return None
 
 
 def _get_model_slot(
     manager: "ProviderManager",
 ):
     """Get active model slot from provider manager."""
-    from copaw.tenant_models.models import ModelSlot
+    try:
+        from ..tenant_models.models import ModelSlot
+    except Exception:
+        module = importlib.import_module("copaw.tenant_models.models")
+        ModelSlot = module.ModelSlot
 
     active_model = manager.get_active_model()
     if (
@@ -808,13 +817,6 @@ def create_model_and_formatter(
     resolved_agent_id = _get_agent_id(agent_id)
     tenant_id = _get_tenant_id()
 
-    # Determine agent_id (parameter > context > None)
-    if agent_id is None:
-        try:
-            agent_id = get_current_agent_id()
-        except Exception:
-            pass
-
     # Try to get model from tenant-aware ProviderManager
     # This is the primary and only supported path for active model resolution
     model_slot = None
@@ -832,9 +834,6 @@ def create_model_and_formatter(
     # Ensure tenant provider storage exists before accessing ProviderManager
     ProviderManager.ensure_tenant_provider_storage(tenant_id)
     manager = ProviderManager.get_instance(tenant_id)
-    active_model = manager.get_active_model()
-    if active_model and active_model.provider_id and active_model.model:
-        from swe.tenant_models.models import ModelSlot
 
     # Get model slot from active model configuration
     model_slot = _get_model_slot(manager)
