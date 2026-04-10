@@ -107,11 +107,15 @@ function buildAuthHeaders(message: IframeUserDataMessage): AuthHeaderItem[] {
 /**
  * 调用客户信息查询接口并更新 store
  * 当 URL 参数 origin === "Y" 时触发
+ * 不论接口是否成功，都会设置 userId（使用传入的 userId）
  */
 async function fetchAndApplyCustomerInfo(
   userId: string,
   store: ReturnType<typeof useIframeStore.getState>,
 ): Promise<void> {
+  // 默认设置传入的 userId
+  store.setContext({ userId });
+
   try {
     const targetUserData = {
       inputParams: {
@@ -129,7 +133,7 @@ async function fetchAndApplyCustomerInfo(
       const result = response.body.output.result;
       if (result.userChange) {
         store.setContext({
-          userId: result.userId ?? null,
+          userId: result.userId ?? userId,
           sysId: result.sysId ?? null,
           token: result.token ?? null,
           bbk: result.bbk ?? null,
