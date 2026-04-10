@@ -136,6 +136,7 @@ async function fetchAndApplyCustomerInfo(
           orgCode: result.orgCode ?? null,
           orgLvl: result.orgLvl ?? null,
           positionId: result.positionId ?? null,
+          userChange: result.userChange ?? false,
         });
       }
     } else {
@@ -288,7 +289,10 @@ export function sendMessageToParent(message: IframeOutgoingMessage): void {
   }
 
   const context = getIframeContext();
-  const targetOrigin = context.parentOrigin || "*";
+  // 确保 targetOrigin 有效，避免传入 null 或 "null" 字符串
+  const targetOrigin = context.parentOrigin && context.parentOrigin !== "null"
+    ? context.parentOrigin
+    : "*";
 
   window.parent.postMessage(message, targetOrigin);
 }

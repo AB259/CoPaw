@@ -144,4 +144,6 @@ export interface IframeContext {
   orgLvl: string | null;
   /** 职位 ID */
   positionId: string | null;
+  /** 用户是否变更 */
+  userChange: boolean;
 }
