@@ -6,12 +6,11 @@ import {
   Input,
   Button,
   DatePicker,
-  Tag,
   Popover,
-  Spin,
   Tooltip,
+  message,
 } from "antd";
-import { Search, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import {
@@ -21,13 +20,6 @@ import {
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
-
-interface MessagesResponse {
-  items: UserMessageItem[];
-  total: number;
-  page: number;
-  page_size: number;
-}
 
 export default function MessagesPage() {
   const { t } = useTranslation();
@@ -66,7 +58,12 @@ export default function MessagesPage() {
     }
 
     fetchMessages();
-  }, [page, pageSize, searchQuery, userIdFilter, sessionIdFilter, dateRange]);
+  }, [page, pageSize, dateRange]);
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchMessages();
+  };
 
   const fetchMessages = async () => {
     setLoading(true);
@@ -110,6 +107,8 @@ export default function MessagesPage() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Failed to export messages:", error);
+      const errorMsg = error instanceof Error ? error.message : "Export failed";
+      message.error(errorMsg);
     } finally {
       setExporting(false);
     }
@@ -139,11 +138,12 @@ export default function MessagesPage() {
       title: t("analytics.traceId", "Trace ID"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 100,
+      width: 280,
+      ellipsis: true,
       render: (v) => (
         <Tooltip title={v}>
           <span style={{ fontFamily: "monospace", fontSize: 12 }}>
-            {v.slice(0, 8)}...
+            {v}
           </span>
         </Tooltip>
       ),
@@ -159,14 +159,14 @@ export default function MessagesPage() {
       title: t("analytics.sessionId", "Session ID"),
       dataIndex: "session_id",
       key: "session_id",
-      width: 120,
+      width: 280,
       ellipsis: true,
     },
     {
       title: t("analytics.userMessage", "User Message"),
       dataIndex: "user_message",
       key: "user_message",
-      minWidth: 200,
+      width: 180,
       render: (msg) => {
         if (!msg) return <span style={{ color: "#999" }}>-</span>;
         const truncated = truncateMessage(msg, 150);
@@ -210,8 +210,8 @@ export default function MessagesPage() {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 130,
-      render: (v) => dayjs(v).format("MM-DD HH:mm:ss"),
+      width: 180,
+      render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
@@ -239,6 +239,7 @@ export default function MessagesPage() {
             placeholder={t("analytics.searchMessage", "Search messages...")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onPressEnter={handleSearch}
             allowClear
           />
         </div>
@@ -247,6 +248,7 @@ export default function MessagesPage() {
             placeholder={t("analytics.filterUser", "User ID")}
             value={userIdFilter}
             onChange={(e) => setUserIdFilter(e.target.value)}
+            onPressEnter={handleSearch}
             style={{ width: 150 }}
             allowClear
           />
@@ -254,9 +256,13 @@ export default function MessagesPage() {
             placeholder={t("analytics.filterSession", "Session ID")}
             value={sessionIdFilter}
             onChange={(e) => setSessionIdFilter(e.target.value)}
+            onPressEnter={handleSearch}
             style={{ width: 200 }}
             allowClear
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
           <Button
             icon={<Download size={16} />}
             onClick={handleExport}

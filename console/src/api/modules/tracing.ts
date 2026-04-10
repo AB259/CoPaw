@@ -1,4 +1,5 @@
 import { request } from "../request";
+import { buildAuthHeaders } from "../authHeaders";
 
 // Types
 export interface OverviewStats {
@@ -338,16 +339,23 @@ export const tracingApi = {
       });
     }
     // Use the proper API URL and include authorization token
-    const { getApiUrl, getApiToken } = await import("../config");
+    const { getApiUrl } = await import("../config");
     const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
-    const token = getApiToken();
-    const headers: HeadersInit = {};
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+    const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
-      throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+      // Try to parse error message from response
+      let errorMessage = `Export failed: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        console.error("Export error response:", errorData);
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // Ignore JSON parse error
+      }
+      throw new Error(errorMessage);
     }
     return response.blob();
   },

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Table, Card, Input, Drawer, Descriptions, Spin, Empty, Tag, DatePicker } from "antd";
+import { Table, Card, Input, Button, Drawer, Descriptions, Spin, Empty, Tag, DatePicker } from "antd";
 import { Search, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -41,7 +41,12 @@ export default function UsersPage() {
     }
 
     fetchUsers();
-  }, [page, pageSize, searchQuery, dateRange]);
+  }, [page, pageSize, dateRange]);
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchUsers();
+  };
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -140,9 +145,13 @@ export default function UsersPage() {
             prefix={<Search size={16} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onPressEnter={handleSearch}
             style={{ width: 250 }}
             allowClear
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
         </div>
       </div>
 

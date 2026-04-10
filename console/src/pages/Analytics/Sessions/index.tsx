@@ -4,6 +4,7 @@ import {
   Table,
   Card,
   Input,
+  Button,
   DatePicker,
   Spin,
   Tag,
@@ -80,7 +81,12 @@ export default function SessionsPage() {
     }
 
     fetchSessions();
-  }, [page, pageSize, searchQuery, dateRange]);
+  }, [page, pageSize, dateRange]);
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchSessions();
+  };
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -227,8 +233,8 @@ export default function SessionsPage() {
       title: t("analytics.lastActive", "Last Active"),
       dataIndex: "last_active",
       key: "last_active",
-      width: 120,
-      render: (v) => (v ? dayjs(v).format("MM-DD HH:mm") : "-"),
+      width: 150,
+      render: (v) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
     },
   ];
 
@@ -247,9 +253,13 @@ export default function SessionsPage() {
             prefix={<Search size={16} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onPressEnter={handleSearch}
             style={{ width: 250 }}
             allowClear
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
         </div>
       </div>
 

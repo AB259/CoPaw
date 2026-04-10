@@ -49,10 +49,10 @@
     "voiceTranscription": "Voice Transcription",
     "analytics": "Analytics",
     "analyticsOverview": "Overview",
-    "analyticsUsers": "Users",
-    "analyticsSessions": "Sessions",
-    "analyticsMessages": "Messages",
-    "analyticsTraces": "Traces",
+    "analyticsUsers": "User Analytics",
+    "analyticsSessions": "Session Analytics",
+    "analyticsMessages": "User Messages",
+    "analyticsTraces": "Conversation Analytics",
     "instance": "Instance",
     "instanceOverview": "Overview",
     "instanceInstances": "Instances",
@@ -1345,6 +1345,7 @@
     "filterSession": "Session ID",
     "filterStatus": "Filter status",
     "exportExcel": "Export Excel",
+    "search": "Search",
     "totalItems": "Total {{total}} items"
   },
   "instance": {
