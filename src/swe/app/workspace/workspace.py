@@ -166,6 +166,7 @@ class Workspace:
             CRON_LEASE_RENEW_INTERVAL_SECONDS,
             CRON_LEASE_RENEW_FAILURE_THRESHOLD,
             CRON_LOCK_SAFETY_MARGIN_SECONDS,
+            CRON_REDIS_ACCESS,
         )
         from ...config.config import _parse_cluster_nodes
 
@@ -183,6 +184,7 @@ class Workspace:
         return CoordinationConfig(
             enabled=CRON_COORDINATION_ENABLED,
             redis_url=CRON_REDIS_URL,
+            redis_access=CRON_REDIS_ACCESS,
             cluster_mode=CRON_CLUSTER_MODE,
             cluster_nodes=cluster_nodes if CRON_CLUSTER_MODE else None,
             lease_ttl_seconds=CRON_LEASE_TTL_SECONDS,

@@ -41,6 +41,7 @@ class CoordinationConfig:
     enabled: bool = False
     # Redis connection - supports both standalone and cluster modes
     redis_url: str = "redis://localhost:6379/0"
+    redis_access: str = ""
     # Cluster mode configuration
     cluster_mode: bool = False
     cluster_nodes: Optional[
@@ -846,7 +847,7 @@ class CronCoordination:
             max_connections=self._config.cluster_max_connections,
             decode_responses=False,
             require_full_coverage=not self._config.cluster_skip_full_coverage_check,
-            password=url_params["password"],
+            password=self._config.redis_access,
             username=url_params["username"],
             ssl=url_params["ssl"],
         )
@@ -878,7 +879,7 @@ class CronCoordination:
             client = redis_lib.Redis(
                 host=first_node.host,
                 port=first_node.port,
-                password=url_params["password"],
+                password=self._config.redis_access,
                 username=url_params["username"],
                 ssl=url_params["ssl"],
                 decode_responses=False,

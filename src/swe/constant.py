@@ -351,6 +351,11 @@ CRON_REDIS_URL = EnvVarLoader.get_str(
     "redis://localhost:6379/0",
 )
 
+CRON_REDIS_ACCESS = EnvVarLoader.get_str(
+    "SWE_CRON_REDIS_ACCESS",
+    "",
+)
+
 CRON_CLUSTER_NODES = EnvVarLoader.get_str(
     "SWE_CRON_CLUSTER_NODES",
     "",
