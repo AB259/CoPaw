@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Agent file management API."""
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..utils import schedule_agent_reload
 from ...config import (
@@ -33,6 +34,76 @@ class MdFileContent(BaseModel):
     """Markdown file content."""
 
     content: str = Field(..., description="File content")
+
+
+class AgentInitRequest(BaseModel):
+    """Request model for appending initialization text to a working md."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    filename: str | None = Field(None, description="Top-level markdown file name")
+    text: str | None = Field(None, description="Text to append")
+    agent_id: str | None = Field(None, alias="agentId", description="Agent ID")
+
+
+def _normalize_top_level_md_filename(filename: str | None) -> str:
+    """Validate and normalize a top-level markdown filename."""
+    if filename is None or not filename.strip():
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    normalized = filename.strip()
+    if "/" in normalized or "\\" in normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
+
+    path = Path(normalized)
+    if path.name != normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
+
+    suffix = path.suffix.lower()
+    if suffix and suffix != ".md":
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
+    if not suffix:
+        normalized = f"{normalized}.md"
+
+    return normalized
+
+
+@router.post("/init")
+async def append_init_text(
+    body: AgentInitRequest,
+    request: Request,
+) -> dict:
+    """Append initialization text to a working markdown file."""
+    try:
+        filename = _normalize_top_level_md_filename(body.filename)
+        if body.text is None:
+            raise HTTPException(status_code=400, detail="text is required")
+
+        agent_id = (body.agent_id or "").strip()
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="agentId is required")
+
+        workspace = await get_agent_for_request(request, agent_id=agent_id)
+        workspace_manager = AgentMdManager(str(workspace.workspace_dir))
+        workspace_manager.append_working_md(filename, body.text)
+        return {
+            "appended": True,
+            "filename": filename,
+            "agent_id": agent_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get(
