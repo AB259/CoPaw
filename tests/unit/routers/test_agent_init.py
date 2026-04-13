@@ -185,7 +185,7 @@ def test_init_isolates_same_agent_id_across_tenants(
     tenant_a_file.write_text("tenant-a\n", encoding="utf-8")
     tenant_b_file.write_text("tenant-b\n", encoding="utf-8")
 
-    response = client.post(
+    response_a = client.post(
         "/api/agent/init",
         headers={"X-Tenant-Id": "tenant-a"},
         json={
@@ -194,11 +194,24 @@ def test_init_isolates_same_agent_id_across_tenants(
             "agentId": "agent-1",
         },
     )
+    response_b = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-b"},
+        json={
+            "filename": "PROFILE.md",
+            "text": "append",
+            "agentId": "agent-1",
+        },
+    )
 
-    assert response.status_code == 200
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
     assert tenant_a_file.read_text(encoding="utf-8") == "tenant-a\nappend"
-    assert tenant_b_file.read_text(encoding="utf-8") == "tenant-b\n"
-    assert manager.calls == [("agent-1", "tenant-a")]
+    assert tenant_b_file.read_text(encoding="utf-8") == "tenant-b\nappend"
+    assert manager.calls == [
+        ("agent-1", "tenant-a"),
+        ("agent-1", "tenant-b"),
+    ]
 
 
 def test_init_normalizes_filename_with_md_suffix(client: TestClient, tmp_path: Path):
