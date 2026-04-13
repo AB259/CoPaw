@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, NoReturn, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -110,7 +110,7 @@ def _unsupported_progress() -> DownloadProgressResponse:
     )
 
 
-def _raise_removed() -> None:
+def _raise_removed() -> NoReturn:
     raise HTTPException(status_code=410, detail=UNSUPPORTED_DETAIL)
 
 
