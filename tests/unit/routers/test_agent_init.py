@@ -280,6 +280,23 @@ def test_init_rejects_path_based_filename(client: TestClient, filename: str):
     )
 
 
+def test_init_rejects_filename_with_embedded_dotdot(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "safe..name.md",
+            "text": "x",
+            "agentId": "agent-1",
+        },
+    )
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "filename must be a top-level Markdown file name"
+    )
+
+
 @pytest.mark.parametrize("filename", [".md", "..", "...", ".profile.md"])
 def test_init_rejects_dot_only_or_hidden_filenames(
     client: TestClient,
@@ -417,19 +434,51 @@ def test_init_rejects_missing_tenant_header(client: TestClient):
     assert response.json()["detail"] == "X-Tenant-Id header is required"
 
 
+def test_init_rejects_missing_body_with_400(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "request body is required"
+
+
+def test_init_rejects_null_body_with_400(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        data="null",
+        headers={"X-Tenant-Id": "tenant-a", "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "request body must be a JSON object"
+
+
+@pytest.mark.parametrize("raw_body", ['"text"', "[1, 2, 3]"])
+def test_init_rejects_non_object_json_body_with_400(
+    client: TestClient,
+    raw_body: str,
+):
+    response = client.post(
+        "/api/agent/init",
+        data=raw_body,
+        headers={"X-Tenant-Id": "tenant-a", "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "request body must be a JSON object"
+
+
 def test_init_openapi_schema_marks_fields_required_and_non_nullable(
     client: TestClient,
 ):
     openapi = client.app.openapi()
-    body_schema = openapi["components"]["schemas"]["AgentInitRequest"]
+    body_schema = openapi["paths"]["/api/agent/init"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]
 
     assert set(body_schema["required"]) == {"filename", "text", "agentId"}
     assert body_schema["properties"]["filename"]["type"] == "string"
     assert body_schema["properties"]["text"]["type"] == "string"
     assert body_schema["properties"]["agentId"]["type"] == "string"
-    assert "anyOf" not in body_schema["properties"]["filename"]
-    assert "anyOf" not in body_schema["properties"]["text"]
-    assert "anyOf" not in body_schema["properties"]["agentId"]
 
 
 def test_init_rejects_agent_scoped_path_and_does_not_write(

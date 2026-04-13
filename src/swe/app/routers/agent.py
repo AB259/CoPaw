@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Agent file management API."""
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Request
@@ -82,7 +83,7 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
         raise HTTPException(status_code=400, detail="filename is required")
 
     normalized = filename.strip()
-    if "/" in normalized or "\\" in normalized:
+    if "/" in normalized or "\\" in normalized or ".." in normalized:
         raise HTTPException(
             status_code=400,
             detail="filename must be a top-level Markdown file name",
@@ -114,9 +115,28 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
     return normalized
 
 
-@router.post("/init")
+@router.post(
+    "/init",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["filename", "text", "agentId"],
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "text": {"type": "string"},
+                            "agentId": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+)
 async def append_init_text(
-    body: AgentInitRequest,
     request: Request,
 ) -> dict:
     """Append initialization text to a working markdown file."""
@@ -124,11 +144,35 @@ async def append_init_text(
         if "agentId" in request.path_params:
             raise HTTPException(status_code=404, detail="Not Found")
 
-        raw_filename = _require_string(body.filename, "filename is required")
-        filename = _normalize_top_level_md_filename(raw_filename)
-        text = _require_string(body.text, "text is required")
+        raw_body = await request.body()
+        if not raw_body:
+            raise HTTPException(status_code=400, detail="request body is required")
 
-        raw_agent_id = _require_string(body.agent_id, "agentId is required")
+        try:
+            body = json.loads(raw_body)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="request body must be a JSON object",
+            ) from exc
+
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="request body must be a JSON object",
+            )
+
+        raw_filename = _require_string(
+            body.get("filename"),
+            "filename is required",
+        )
+        filename = _normalize_top_level_md_filename(raw_filename)
+        text = _require_string(body.get("text"), "text is required")
+
+        raw_agent_id = _require_string(
+            body.get("agentId"),
+            "agentId is required",
+        )
         agent_id = raw_agent_id.strip()
         if not agent_id:
             raise HTTPException(status_code=400, detail="agentId is required")
