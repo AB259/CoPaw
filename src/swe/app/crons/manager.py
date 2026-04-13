@@ -246,6 +246,7 @@ class CronManager:
 
             # Load jobs from repo
             invalid_enabled_jobs: set[str] = set()
+            jobs_file: Optional[JobsFile] = None
             try:
                 jobs_file = await self._repo.load()
                 for job in jobs_file.jobs:
@@ -820,6 +821,7 @@ class CronManager:
                 remote_version = await self._coordination.get_definition_version()
                 if (
                     file_version is not None
+                    and remote_version is not None
                     and file_version > remote_version
                 ):
                     remote_version = await self._coordination.ensure_definition_version(

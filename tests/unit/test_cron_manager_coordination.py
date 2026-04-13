@@ -354,6 +354,39 @@ class TestCronManagerWithRedis:
 
         await manager.deactivate()
 
+    async def test_manager_reload_handles_repo_load_failure(
+        self,
+        temp_jobs_file,
+        mock_runner,
+        mock_channel_manager,
+    ):
+        """Reload should not raise if repo.load() fails mid-rebuild."""
+        config = CoordinationConfig(enabled=False)
+        repo = JsonJobRepository(temp_jobs_file)
+        manager = CronManager(
+            repo=repo,
+            runner=mock_runner,
+            channel_manager=mock_channel_manager,
+            agent_id="test-agent",
+            tenant_id="test-tenant",
+            coordination_config=config,
+        )
+
+        await manager.activate()
+
+        manager._repo.load = AsyncMock(side_effect=RuntimeError("boom"))
+        manager._refresh_definition_version_locked = AsyncMock()
+        manager._update_heartbeat = AsyncMock()
+
+        await manager.reload()
+
+        manager._update_heartbeat.assert_awaited_once()
+        manager._refresh_definition_version_locked.assert_awaited_once_with(
+            jobs_file=None,
+        )
+
+        await manager.deactivate()
+
 
 class TestCronManagerManualRun:
     """Tests for manual run_job outside scheduler ownership semantics."""
