@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from swe.app.middleware.tenant_identity import TenantIdentityMiddleware
 from swe.app.routers.agent import router
+from swe.app.routers.agent_scoped import create_agent_scoped_router
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         default_tenant_id=None,
     )
     app.include_router(router, prefix="/api")
-    app.include_router(router, prefix="/api/agents/{agentId}")
+    app.include_router(create_agent_scoped_router(), prefix="/api")
 
     async def fake_get_agent_for_request(
         request: Request,
@@ -327,6 +328,11 @@ def test_init_rejects_agent_scoped_path_and_does_not_write(
     assert (
         tmp_path / "tenant-a" / "agents" / "body-agent" / "PROFILE.md"
     ).exists() is False
+
+
+def test_init_not_present_in_agent_scoped_openapi_paths(client: TestClient):
+    openapi = client.app.openapi()
+    assert "/api/agents/{agentId}/agent/init" not in openapi["paths"]
 
 
 @pytest.mark.parametrize(
