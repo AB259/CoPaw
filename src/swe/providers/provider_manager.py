@@ -485,29 +485,6 @@ class ProviderManager:
         )
         return True
 
-    def start_local_model_resume(self, local_manager) -> None:
-        """Schedule background restore of the active local model server."""
-        task = asyncio.create_task(
-            self._resume_local_model(local_manager),
-            name="swe-local-model-resume",
-        )
-        task.add_done_callback(self._on_local_model_resume_done)
-
-    @staticmethod
-    def _on_local_model_resume_done(task: asyncio.Task[None]) -> None:
-        """Log unexpected failures from background local model restore."""
-        if task.cancelled():
-            return
-
-        exc = task.exception()
-        if exc is not None:
-            logger.warning(
-                "Background local model restore failed: %s",
-                exc,
-                exc_info=exc,
-            )
-        logger.info("Background local model restore completed")
-
     async def fetch_provider_models(
         self,
         provider_id: str,
@@ -982,44 +959,3 @@ class ProviderManager:
                         expected.expected_image or expected.expected_video,
                     )
                     model.probe_source = "documentation"
-
-    async def _resume_local_model(self, local_manager) -> None:
-        """Resume the active local model server from the previous run."""
-        local_models = self.get_provider("swe-local").extra_models
-        model_id = local_models[0].id if local_models else None
-        if model_id is None:
-            return
-
-        installed, _ = local_manager.check_llamacpp_installation()
-        if not installed:
-            logger.info(
-                "Skipping local model restore because llama.cpp is not "
-                "installed.",
-            )
-            return
-
-        if not local_manager.is_model_downloaded(model_id):
-            logger.warning(
-                "Skipping local model restore because model is not "
-                "downloaded: %s",
-                model_id,
-            )
-            return
-
-        try:
-            port = await local_manager.setup_server(model_id)
-        except (FileNotFoundError, RuntimeError, ValueError) as exc:
-            logger.warning(
-                "Failed to restore local model server for %s: %s",
-                model_id,
-                exc,
-            )
-            return
-
-        self.update_provider(
-            "swe-local",
-            {
-                "base_url": f"http://127.0.0.1:{port}/v1",
-                "extra_models": [ModelInfo(id=model_id, name=model_id)],
-            },
-        )
