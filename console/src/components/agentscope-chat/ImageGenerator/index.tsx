@@ -6,6 +6,7 @@ import { Locale } from "antd/es/locale";
 import { SparkCheckCircleFill } from "@agentscope-ai/icons";
 import Dot from "../Markdown/core/plugins/cursor/Dot";
 import Spin from "./Spin";
+import { imageGeneratorAnimation } from "@/assets/icons";
 
 export interface IImageGeneratorProps {
   /**
@@ -84,7 +85,7 @@ const ImageGenerator: React.FC<IImageGeneratorProps> = (props) => {
       <div className={`${prefixCls}-default-skeleton-content`}>
         <img
           className={`${prefixCls}-default-skeleton-icon`}
-          src="/icons/image_generator.apng"
+          src={imageGeneratorAnimation}
         />
         {skeletonText && (
           <div className={`${prefixCls}-default-skeleton-text`}>

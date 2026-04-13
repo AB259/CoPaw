@@ -17,6 +17,7 @@ import {
 import { HistoryPanel } from "@/components/agentscope-chat";
 import { ChatAnyWhereLayoutContext } from "../Context/ChatAnywhereLayoutContext";
 import cls from "classnames";
+import { agentDefaultLogo } from "@/assets/icons";
 
 export default function Sessions() {
   const { collapsed } = useContext(ChatAnyWhereLayoutContext);
@@ -45,7 +46,7 @@ export function InnerHeader({ className }: { className?: string }) {
   const { toggleCollapsed, collapsed } = useContext(ChatAnyWhereLayoutContext);
   const multiple = useChatAnywhereOptions((v) => v.session.multiple);
 
-  const { logo = "/icons/agent_default_logo.png", title = "Runtime WebUI" } =
+  const { logo = agentDefaultLogo, title = "Runtime WebUI" } =
     leftHeader as { logo?: string; title?: string };
 
   return (

@@ -342,7 +342,7 @@ function handleUrlOriginParam(): void {
 
   const store = useIframeStore.getState();
 
-  // 设置初始上下文
+  // 设置初始上下文，hideMenu=true 隐藏 MainLayout 侧边栏
   store.setContext({
     userId,
     sysId: sysId ?? null,
@@ -350,6 +350,7 @@ function handleUrlOriginParam(): void {
     orgCode: vorgcode ?? null,
     orgLvl: vorglvl ?? null,
     positionId: positionId ?? null,
+    hideMenu: true, // URL origin=Y 时隐藏 MainLayout 侧边栏
   });
 
   // 异步调用客户信息接口和用户初始化
@@ -364,6 +365,7 @@ function handleUrlOriginParam(): void {
       vorgcode,
       vorglvl,
       positionId,
+      hideMenu: true,
     },
   );
 }

@@ -7,6 +7,17 @@ import { useProviderContext } from "@/components/agentscope-chat";
 import { SparkFalseLine } from "@agentscope-ai/icons";
 import ImageCard from "./ImageCard";
 import type { ImageCardProps } from "./ImageCard";
+import {
+  xlsxIcon,
+  imgIcon,
+  mdIcon,
+  pdfIcon,
+  pptIcon,
+  docIcon,
+  zipIcon,
+  videoIcon,
+  audioIcon,
+} from "@/assets/icons";
 
 export interface FileListCardProps extends Pick<ImageCardProps, "onReplace"> {
   /**
@@ -55,49 +66,47 @@ const PRESET_FILE_ICONS: {
   icon: React.ReactElement;
 }[] = [
   {
-    icon: <IconImage url="/icons/files/xlsx.svg" />,
+    icon: <IconImage url={xlsxIcon} />,
     color: "#22b35e",
     ext: ["xlsx", "xls"],
   },
   {
-    icon: <IconImage url="/icons/files/img.svg" />,
+    icon: <IconImage url={imgIcon} />,
     color: DEFAULT_ICON_COLOR,
     ext: IMG_EXTS,
   },
   {
-    icon: <IconImage url="/icons/files/md.svg" />,
+    icon: <IconImage url={mdIcon} />,
     color: DEFAULT_ICON_COLOR,
     ext: ["md", "mdx"],
   },
   {
-    icon: <IconImage url="/icons/files/pdf.svg" />,
+    icon: <IconImage url={pdfIcon} />,
     color: "#ff4d4f",
     ext: ["pdf"],
   },
   {
-    icon: <IconImage url="/icons/files/ppt.svg" />,
+    icon: <IconImage url={pptIcon} />,
     color: "#ff6e31",
     ext: ["ppt", "pptx"],
   },
   {
-    icon: <IconImage url="/icons/files/doc.svg" />,
+    icon: <IconImage url={docIcon} />,
     color: "#1677ff",
     ext: ["doc", "docx"],
   },
   {
-    icon: <IconImage url="/icons/files/zip.svg" />,
+    icon: <IconImage url={zipIcon} />,
     color: "#fab714",
     ext: ["zip", "rar", "7z", "tar", "gz"],
   },
   {
-    icon: <IconImage url="/icons/files/video.svg" />,
-
+    icon: <IconImage url={videoIcon} />,
     color: "#ff4d4f",
     ext: ["mp4", "avi", "mov", "wmv", "flv", "mkv"],
   },
   {
-    icon: <IconImage url="/icons/files/audio.svg" />,
-
+    icon: <IconImage url={audioIcon} />,
     color: "#8c8c8c",
     ext: ["mp3", "wav", "flac", "ape", "aac", "ogg"],
   },
@@ -186,7 +195,7 @@ function FileListCard(
     }
 
     return [
-      <IconImage url="/icons/files/zip.svg" key="defaultIcon" />,
+      <IconImage url={zipIcon} key="defaultIcon" />,
       DEFAULT_ICON_COLOR,
     ];
   })();

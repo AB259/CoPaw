@@ -2,6 +2,7 @@ import { Accordion } from "@/components/agentscope-chat";
 import { useProviderContext } from "@/components/agentscope-chat";
 import { theme as AntdTheme } from "antd";
 import cls from "classnames";
+import { deepthinkingAnimation } from "@/assets/icons";
 
 export interface IDeepThinking {
   /**
@@ -58,7 +59,7 @@ export default function (props: IDeepThinking) {
         height: 16,
         filter: isDarkMode ? "invert(1)  brightness(100%) saturate(0%)" : "",
       }}
-      src="/icons/deepthinking.apng"
+      src={deepthinkingAnimation}
     />
   );
 

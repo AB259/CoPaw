@@ -133,7 +133,9 @@ function AppInner() {
   // ==================== 语言默认值调整结束 ====================
 
   useEffect(() => {
+    // 如果 localStorage 中没有 language，先设置默认中文，再尝试从后端获取
     if (!localStorage.getItem("language")) {
+      localStorage.setItem("language", "zh"); // 默认中文
       languageApi
         .getLanguage()
         .then(({ language }) => {

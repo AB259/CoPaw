@@ -1,3 +1,5 @@
+import { agentDefaultLogo } from "@/assets/icons";
+
 export default () => {
   return {
     theme: {
@@ -6,7 +8,7 @@ export default () => {
       darkMode: true,
       prefix: "agentscope-runtime-webui",
       leftHeader: {
-        logo: "/icons/agent_default_logo.png",
+        logo: agentDefaultLogo,
         title: "Runtime WebUI",
       },
     },
@@ -33,7 +35,7 @@ export default () => {
       nick: "Assistant",
       description:
         "I am a helpful assistant that can help you with your questions.",
-      avatar: "/icons/agent_default_logo.png",
+      avatar: agentDefaultLogo,
 
       prompts: [
         {
