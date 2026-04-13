@@ -178,6 +178,93 @@ export interface ToolCall {
   error: string | null;
 }
 
+// Timeline types for hierarchical display
+export interface ToolCallInSkill {
+  span_id: string;
+  tool_name: string;
+  mcp_server: string | null;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  status: string;
+  error: string | null;
+  skill_weight: number | null;
+}
+
+export interface SkillCallTimeline {
+  span_id: string;
+  skill_name: string;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  confidence: number;
+  trigger_reason: string;
+  tools: ToolCallInSkill[];
+  total_tool_calls: number;
+  tool_duration_ms: number;
+}
+
+export interface TimelineEvent {
+  event_type: string;
+  span_id: string | null;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  skill_name: string | null;
+  confidence: number | null;
+  trigger_reason: string | null;
+  tool_name: string | null;
+  mcp_server: string | null;
+  skill_weight: number | null;
+  model_name: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  children: TimelineEvent[];
+}
+
+export interface TraceDetailWithTimeline {
+  trace: Trace;
+  spans: Span[];
+  timeline: TimelineEvent[];
+  skill_invocations: SkillCallTimeline[];
+  llm_duration_ms: number;
+  tool_duration_ms: number;
+  skill_duration_ms: number;
+  total_skills: number;
+  total_tools: number;
+  total_llm_calls: number;
+}
+
+export interface SkillToolsStats {
+  skill_name: string;
+  total_calls: number;
+  avg_duration_ms: number;
+  success_rate: number;
+  tools_used: {
+    tool_name: string;
+    count: number;
+    avg_duration_ms: number;
+    is_mcp: boolean;
+    mcp_server: string | null;
+  }[];
+  mcp_servers_used: string[];
+  trigger_reasons: Record<string, number>;
+  avg_confidence: number;
+}
+
+export interface ToolAttributionDetail {
+  tool_name: string;
+  total_calls: number;
+  skill_attribution: Record<string, {
+    skill_name: string;
+    calls: number;
+    weight: number;
+    confidence: number;
+  }>;
+  ambiguous_calls: number;
+  avg_confidence: number;
+}
+
 export interface UserMessageItem {
   trace_id: string;
   user_id: string;
@@ -358,5 +445,41 @@ export const tracingApi = {
       throw new Error(errorMessage);
     }
     return response.blob();
+  },
+
+  // Timeline with skill hierarchy
+  getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
+    return request(`/tracing/traces/${traceId}/timeline`);
+  },
+
+  // Skill tools statistics
+  getSkillToolsStats: async (
+    skillName: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<SkillToolsStats> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/tracing/skills/${encodeURIComponent(skillName)}/tools${query}`);
+  },
+
+  // Skill attribution details
+  getSkillAttribution: async (
+    filters?: {
+      tool_name?: string;
+      start_date?: string;
+      end_date?: string;
+    }
+  ): Promise<{ attributions: ToolAttributionDetail[] }> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+   }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/tracing/skills/attribution${query}`);
   },
 };
