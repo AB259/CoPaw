@@ -108,6 +108,28 @@ def test_init_normalizes_filename_with_md_suffix(client: TestClient, tmp_path: P
     assert normalized.read_text(encoding="utf-8") == "hello"
 
 
+def test_init_normalizes_uppercase_md_extension(client: TestClient, tmp_path: Path):
+    workspace = tmp_path / "tenant-a" / "agents" / "agent-1"
+    workspace.mkdir(parents=True, exist_ok=True)
+    target = workspace / "PROFILE.md"
+    target.write_text("prefix\n", encoding="utf-8")
+
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "PROFILE.MD",
+            "text": "append",
+            "agentId": "agent-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["filename"] == "PROFILE.md"
+    assert target.read_text(encoding="utf-8") == "prefix\nappend"
+    assert (workspace / "PROFILE.MD.md").exists() is False
+
+
 @pytest.mark.parametrize(
     "filename",
     [
@@ -128,6 +150,44 @@ def test_init_rejects_path_based_filename(client: TestClient, filename: str):
         },
     )
 
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "filename must be a top-level Markdown file name"
+    )
+
+
+@pytest.mark.parametrize("filename", [".md", "..", "...", ".profile.md"])
+def test_init_rejects_dot_only_or_hidden_filenames(
+    client: TestClient,
+    filename: str,
+):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": filename,
+            "text": "x",
+            "agentId": "agent-1",
+        },
+    )
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "filename must be a top-level Markdown file name"
+    )
+
+
+def test_init_rejects_non_markdown_extension(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "PROFILE.txt",
+            "text": "x",
+            "agentId": "agent-1",
+        },
+    )
     assert response.status_code == 400
     assert (
         response.json()["detail"]
@@ -232,6 +292,21 @@ def test_init_rejects_missing_tenant_header(client: TestClient):
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "X-Tenant-Id header is required"
+
+
+def test_init_openapi_schema_marks_fields_required_and_non_nullable(
+    client: TestClient,
+):
+    openapi = client.app.openapi()
+    body_schema = openapi["components"]["schemas"]["AgentInitRequest"]
+
+    assert set(body_schema["required"]) == {"filename", "text", "agentId"}
+    assert body_schema["properties"]["filename"]["type"] == "string"
+    assert body_schema["properties"]["text"]["type"] == "string"
+    assert body_schema["properties"]["agentId"]["type"] == "string"
+    assert "anyOf" not in body_schema["properties"]["filename"]
+    assert "anyOf" not in body_schema["properties"]["text"]
+    assert "anyOf" not in body_schema["properties"]["agentId"]
 
 
 @pytest.mark.parametrize(

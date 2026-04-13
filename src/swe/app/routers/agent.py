@@ -39,11 +39,14 @@ class MdFileContent(BaseModel):
 class AgentInitRequest(BaseModel):
     """Request model for appending initialization text to a working md."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={"required": ["filename", "text", "agentId"]},
+    )
 
-    filename: str | None = Field(None, description="Top-level markdown file name")
-    text: str | None = Field(None, description="Text to append")
-    agent_id: str | None = Field(None, alias="agentId", description="Agent ID")
+    filename: str = Field(None, description="Top-level markdown file name")
+    text: str = Field(None, description="Text to append")
+    agent_id: str = Field(None, alias="agentId", description="Agent ID")
 
 
 def _normalize_top_level_md_filename(filename: str | None) -> str:
@@ -53,6 +56,11 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
 
     normalized = filename.strip()
     if "/" in normalized or "\\" in normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
+    if normalized.startswith("."):
         raise HTTPException(
             status_code=400,
             detail="filename must be a top-level Markdown file name",
@@ -73,6 +81,8 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
         )
     if not suffix:
         normalized = f"{normalized}.md"
+    elif path.suffix != ".md":
+        normalized = f"{path.stem}.md"
 
     return normalized
 
