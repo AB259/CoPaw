@@ -297,6 +297,23 @@ def test_init_rejects_filename_with_embedded_dotdot(client: TestClient):
     )
 
 
+def test_init_rejects_filename_with_trailing_dot(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "PROFILE.",
+            "text": "x",
+            "agentId": "agent-1",
+        },
+    )
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "filename must be a top-level Markdown file name"
+    )
+
+
 def test_init_rejects_filename_with_control_character(client: TestClient):
     response = client.post(
         "/api/agent/init",

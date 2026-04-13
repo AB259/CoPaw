@@ -106,6 +106,11 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
             status_code=400,
             detail="filename must be a top-level Markdown file name",
         )
+    if normalized.endswith("."):
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
 
     path = Path(normalized)
     if path.name != normalized:
@@ -124,6 +129,11 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
         normalized = f"{normalized}.md"
     elif path.suffix != ".md":
         normalized = f"{path.stem}.md"
+    if ".." in normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
 
     return normalized
 
