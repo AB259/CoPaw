@@ -3,7 +3,7 @@
 import mimetypes
 import os
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -202,8 +202,8 @@ async def lifespan(
 
     app.state.get_agent_by_id = _get_agent_by_id
 
-    # Note: ProviderManager, LocalModelManager, skill pool, and QA agent
-    # are initialized on-demand via their respective feature entrypoints.
+    # Note: ProviderManager, skill pool, and QA agent are initialized
+    # on-demand via their respective feature entrypoints.
     # See design.md for lazy-loading architecture.
 
     # --- Initialize database connection (required for tracing and instance modules) ---
@@ -324,19 +324,6 @@ async def lifespan(
 
         # 停止服务心跳并发送关闭信号
         await stop_service_heartbeat()
-
-        local_model_mgr = getattr(app.state, "local_model_manager", None)
-        if local_model_mgr is not None:
-            logger.info("Stopping local model server...")
-            try:
-                await local_model_mgr.shutdown_server()
-            except Exception as exc:
-                logger.error(
-                    "Error shutting down local model server gracefully: %s",
-                    exc,
-                )
-                with suppress(OSError, RuntimeError, ValueError):
-                    local_model_mgr.force_shutdown_server()
 
         # Stop multi-agent manager (stops all agents and their components)
         multi_agent_mgr = getattr(app.state, "multi_agent_manager", None)
