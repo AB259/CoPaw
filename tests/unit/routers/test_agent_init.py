@@ -297,6 +297,23 @@ def test_init_rejects_filename_with_embedded_dotdot(client: TestClient):
     )
 
 
+def test_init_rejects_filename_with_control_character(client: TestClient):
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "bad\u0000.md",
+            "text": "x",
+            "agentId": "agent-1",
+        },
+    )
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "filename must be a top-level Markdown file name"
+    )
+
+
 @pytest.mark.parametrize("filename", [".md", "..", "...", ".profile.md"])
 def test_init_rejects_dot_only_or_hidden_filenames(
     client: TestClient,
@@ -471,7 +488,8 @@ def test_init_openapi_schema_marks_fields_required_and_non_nullable(
     client: TestClient,
 ):
     openapi = client.app.openapi()
-    body_schema = openapi["paths"]["/api/agent/init"]["post"]["requestBody"][
+    route_spec = openapi["paths"]["/api/agent/init"]["post"]
+    body_schema = route_spec["requestBody"][
         "content"
     ]["application/json"]["schema"]
 
@@ -479,6 +497,16 @@ def test_init_openapi_schema_marks_fields_required_and_non_nullable(
     assert body_schema["properties"]["filename"]["type"] == "string"
     assert body_schema["properties"]["text"]["type"] == "string"
     assert body_schema["properties"]["agentId"]["type"] == "string"
+
+    response_ref = route_spec["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    response_schema_name = response_ref.rsplit("/", maxsplit=1)[-1]
+    response_schema = openapi["components"]["schemas"][response_schema_name]
+    assert set(response_schema["required"]) == {"appended", "filename", "agent_id"}
+    assert response_schema["properties"]["appended"]["type"] == "boolean"
+    assert response_schema["properties"]["filename"]["type"] == "string"
+    assert response_schema["properties"]["agent_id"]["type"] == "string"
 
 
 def test_init_rejects_agent_scoped_path_and_does_not_write(

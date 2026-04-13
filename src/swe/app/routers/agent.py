@@ -70,6 +70,14 @@ class AgentInitRequest(BaseModel):
     agent_id: object = Field(None, alias="agentId", description="Agent ID")
 
 
+class AgentInitResponse(BaseModel):
+    """Response model for init append endpoint."""
+
+    appended: bool = Field(..., description="Whether append succeeded")
+    filename: str = Field(..., description="Resolved markdown filename")
+    agent_id: str = Field(..., description="Target agent ID")
+
+
 def _require_string(value: object, detail: str) -> str:
     """Require a field value to be a string for endpoint-local validation."""
     if not isinstance(value, str):
@@ -84,6 +92,11 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
 
     normalized = filename.strip()
     if "/" in normalized or "\\" in normalized or ".." in normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="filename must be a top-level Markdown file name",
+        )
+    if any(ord(char) < 32 for char in normalized):
         raise HTTPException(
             status_code=400,
             detail="filename must be a top-level Markdown file name",
@@ -117,6 +130,7 @@ def _normalize_top_level_md_filename(filename: str | None) -> str:
 
 @router.post(
     "/init",
+    response_model=AgentInitResponse,
     openapi_extra={
         "requestBody": {
             "required": True,
