@@ -15,10 +15,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import sessionApi from "./sessionApi";
 import defaultConfig, { getDefaultConfig } from "./OptionsPanel/defaultConfig";
 import { chatApi } from "../../api/modules/chat";
+import { cronJobApi } from "../../api/modules/cronjob";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { providerApi } from "../../api/modules/provider";
-import type { ProviderInfo, ModelInfo } from "../../api/types";
+import type { ProviderInfo, ModelInfo, CronJobSpecOutput } from "../../api/types";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
@@ -54,6 +55,8 @@ import {
 } from "./utils";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
+const TASK_PAGE_POLL_MS = 10_000;
+const TASK_PENDING_POLL_MS = 2_000;
 
 interface SessionInfo {
   session_id?: string;
@@ -290,6 +293,8 @@ export default function ChatPage() {
     return match?.[1];
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
+  const [currentTask, setCurrentTask] = useState<CronJobSpecOutput | null>(null);
+  const [taskProbeDone, setTaskProbeDone] = useState(false);
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -315,6 +320,7 @@ export default function ChatPage() {
   const lastSessionIdRef = useRef<string | null>(null);
   /** Tracks the stale auto-selected session ID that was skipped on init, so we can suppress its late-arriving onSessionSelected callback. */
   const staleAutoSelectedIdRef = useRef<string | null>(null);
+  const taskHadResultRef = useRef(false);
   const chatIdRef = useRef(chatId);
   const navigateRef = useRef(navigate);
   const chatRef = useRef<IAgentScopeRuntimeWebUIRef>(null);
@@ -419,6 +425,70 @@ export default function ChatPage() {
     }
     prevSelectedAgentRef.current = selectedAgent;
   }, [selectedAgent]);
+
+  const fetchCurrentTask = useCallback(async () => {
+    if (!chatId) {
+      setCurrentTask(null);
+      setTaskProbeDone(true);
+      taskHadResultRef.current = false;
+      return;
+    }
+    try {
+      const jobs = await cronJobApi.listCronJobs();
+      const nextTask =
+        (Array.isArray(jobs)
+          ? jobs.find((job) => job.task?.chat_id === chatId) || null
+          : null) ?? null;
+      const hadResult = Boolean(nextTask?.task?.has_scheduled_result);
+      if (hadResult && !taskHadResultRef.current) {
+        setRefreshKey((prev) => prev + 1);
+      }
+      taskHadResultRef.current = hadResult;
+      setCurrentTask(nextTask);
+    } catch {
+      setCurrentTask(null);
+    } finally {
+      setTaskProbeDone(true);
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    setTaskProbeDone(false);
+    taskHadResultRef.current = false;
+    void fetchCurrentTask();
+  }, [fetchCurrentTask]);
+
+  useEffect(() => {
+    if (!chatId || !taskProbeDone || !currentTask) return;
+
+    const pollMs = currentTask.task?.has_scheduled_result
+      ? TASK_PAGE_POLL_MS
+      : TASK_PENDING_POLL_MS;
+
+    const intervalId = window.setInterval(() => {
+      void fetchCurrentTask();
+    }, pollMs);
+
+    return () => window.clearInterval(intervalId);
+  }, [chatId, currentTask, fetchCurrentTask, taskProbeDone]);
+
+  useEffect(() => {
+    if (!currentTask?.id) return;
+    if ((currentTask.task?.unread_execution_count || 0) <= 0) return;
+
+    setCurrentTask((prev) =>
+      prev?.id === currentTask.id && prev.task
+        ? {
+            ...prev,
+            task: {
+              ...prev.task,
+              unread_execution_count: 0,
+            },
+          }
+        : prev,
+    );
+    void cronJobApi.markTaskRead(currentTask.id).catch(() => {});
+  }, [currentTask?.id, currentTask?.task?.unread_execution_count]);
 
   const copyResponse = useCallback(
     async (response: CopyableResponse) => {
@@ -810,10 +880,34 @@ export default function ChatPage() {
           key={refreshKey}
           options={options}
         />
-        <DragUploadOverlay
-          visible={isDragging}
-          onClose={handleDragOverlayClose}
-        />
+        {currentTask && !currentTask.task?.has_scheduled_result && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              pointerEvents: 'none',
+              zIndex: 2,
+            }}
+          >
+            <div
+              style={{
+                padding: '10px 18px',
+                borderRadius: 999,
+                background: 'rgba(255,255,255,0.92)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                color: '#1f1f1f',
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              任务执行中
+            </div>
+          </div>
+        )}
+        <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
       </div>
 
       <Modal
