@@ -19,7 +19,10 @@ dayjs.extend(relativeTime);
 import MainLayout from "./layouts/MainLayout";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 // ==================== 品牌主题 (Kun He) ====================
-import { BrandThemeProvider, useBrandTheme } from "./contexts/BrandThemeContext";
+import {
+  BrandThemeProvider,
+  useBrandTheme,
+} from "./contexts/BrandThemeContext";
 // ==================== 品牌主题结束 ====================
 import LoginPage from "./pages/Login";
 import { authApi } from "./api/modules/auth";
@@ -130,7 +133,9 @@ function AppInner() {
   // ==================== 语言默认值调整结束 ====================
 
   useEffect(() => {
+    // 如果 localStorage 中没有 language，先设置默认中文，再尝试从后端获取
     if (!localStorage.getItem("language")) {
+      localStorage.setItem("language", "zh"); // 默认中文
       languageApi
         .getLanguage()
         .then(({ language }) => {
@@ -182,7 +187,7 @@ function AppInner() {
             // 使用动态品牌主题色
             colorPrimary: brandTheme.primaryColor,
             // 确保浅色主题下 primary button 字体为白色
-            colorTextOnPrimary: '#ffffff',
+            colorTextOnPrimary: "#ffffff",
             // ==================== 品牌主题结束 ====================
           },
         }}
