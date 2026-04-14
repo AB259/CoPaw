@@ -70,7 +70,6 @@ def _create_user_summary(trace: Trace) -> dict[str, Any]:
     }
 
 
-# pylint: disable=too-many-public-methods
 class TraceStore:
     """Store for traces and spans using database storage only."""
 
@@ -2117,119 +2116,83 @@ class TraceStore:
             avg_confidence=round(avg_confidence, 2),
         )
 
-    # pylint: disable=too-many-branches too-many-statements
-    async def get_tool_skill_attributions(
+    def _init_tool_data_bucket(self) -> dict[str, Any]:
+        """Initialize a new tool data bucket for aggregation."""
+        return {
+            "total_calls": 0,
+            "skill_calls": {},
+            "ambiguous": 0,
+            "confidence_sum": 0.0,
+            "confidence_count": 0,
+        }
+
+    def _process_skill_weights(
         self,
-        tool_name: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-    ) -> list[ToolAttributionDetail]:
-        """Get skill attribution details for tools.
+        tool_data: dict[str, dict[str, Any]],
+        tool_name: str,
+        row: dict,
+    ) -> None:
+        """Process skill weights from a database row."""
+        try:
+            weights = json.loads(row["skill_weights"])
+            count = row["count"] or 0
+            bucket = tool_data[tool_name]
 
-        Args:
-            tool_name: Optional filter by tool name
-            start_date: Start date filter
-            end_date: End date filter
-
-        Returns:
-            List of ToolAttributionDetail
-        """
-        if start_date is None:
-            start_date = datetime.now() - timedelta(days=30)
-        if end_date is None:
-            end_date = datetime.now()
-
-        # Build query
-        where_clauses = [
-            "start_time >= %s",
-            "start_time <= %s",
-            "event_type = 'tool_call_end'",
-            "tool_name IS NOT NULL",
-        ]
-        params: list[Any] = [start_date, end_date]
-
-        if tool_name:
-            where_clauses.append("tool_name = %s")
-            params.append(tool_name)
-
-        where_sql = " AND ".join(where_clauses)
-
-        # Get all tool calls with skill attribution
-        query = f"""
-            SELECT tool_name, skill_name, skill_names, skill_weights,
-                   COUNT(*) as count
-            FROM swe_tracing_spans
-            WHERE {where_sql}
-            GROUP BY tool_name, skill_name, skill_names, skill_weights
-        """
-        rows = await self.db.fetch_all(query, tuple(params))
-
-        # Aggregate by tool
-        tool_data: dict[str, dict[str, Any]] = {}
-
-        for row in rows:
-            tn = row["tool_name"]
-            if tn not in tool_data:
-                tool_data[tn] = {
-                    "total_calls": 0,
-                    "skill_calls": {},
-                    "ambiguous": 0,
-                    "confidence_sum": 0.0,
-                    "confidence_count": 0,
-                }
-
-            tool_data[tn]["total_calls"] += row["count"] or 0
-
-            # Parse skill attribution
-            if row["skill_weights"]:
-                try:
-                    weights = json.loads(row["skill_weights"])
-                    for skill, weight in weights.items():
-                        if skill not in tool_data[tn]["skill_calls"]:
-                            tool_data[tn]["skill_calls"][skill] = {
-                                "calls": 0,
-                                "weight_sum": 0.0,
-                            }
-                        tool_data[tn]["skill_calls"][skill]["calls"] += (
-                            row["count"] or 0
-                        )
-                        tool_data[tn]["skill_calls"][skill][
-                            "weight_sum"
-                        ] += weight * (row["count"] or 0)
-                        tool_data[tn]["confidence_count"] += row["count"] or 0
-                        tool_data[tn]["confidence_sum"] += weight * (
-                            row["count"] or 0
-                        )
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            elif row["skill_name"]:
-                skill = row["skill_name"]
-                if skill not in tool_data[tn]["skill_calls"]:
-                    tool_data[tn]["skill_calls"][skill] = {
+            for skill, weight in weights.items():
+                if skill not in bucket["skill_calls"]:
+                    bucket["skill_calls"][skill] = {
                         "calls": 0,
                         "weight_sum": 0.0,
                     }
-                tool_data[tn]["skill_calls"][skill]["calls"] += (
-                    row["count"] or 0
-                )
-                tool_data[tn]["skill_calls"][skill]["weight_sum"] += (
-                    row["count"] or 0
-                )
-                tool_data[tn]["confidence_count"] += row["count"] or 0
-                tool_data[tn]["confidence_sum"] += row["count"] or 0
+                bucket["skill_calls"][skill]["calls"] += count
+                bucket["skill_calls"][skill]["weight_sum"] += weight * count
 
-            # Check for multi-skill attribution
-            if row["skill_names"]:
-                try:
-                    names = json.loads(row["skill_names"])
-                    if len(names) > 1:
-                        tool_data[tn]["ambiguous"] += row["count"] or 0
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            bucket["confidence_count"] += count
+            bucket["confidence_sum"] += sum(weights.values()) * count
+        except (json.JSONDecodeError, TypeError):
+            pass
 
-        # Build result
+    def _process_single_skill(
+        self,
+        tool_data: dict[str, dict[str, Any]],
+        tool_name: str,
+        row: dict,
+    ) -> None:
+        """Process single skill attribution from a database row."""
+        skill = row["skill_name"]
+        count = row["count"] or 0
+        bucket = tool_data[tool_name]
+
+        if skill not in bucket["skill_calls"]:
+            bucket["skill_calls"][skill] = {"calls": 0, "weight_sum": 0.0}
+        bucket["skill_calls"][skill]["calls"] += count
+        bucket["skill_calls"][skill]["weight_sum"] += count
+        bucket["confidence_count"] += count
+        bucket["confidence_sum"] += count
+
+    def _check_multi_skill_attribution(
+        self,
+        tool_data: dict[str, dict[str, Any]],
+        tool_name: str,
+        row: dict,
+    ) -> None:
+        """Check and mark multi-skill attribution."""
+        if not row["skill_names"]:
+            return
+        try:
+            names = json.loads(row["skill_names"])
+            if len(names) > 1:
+                tool_data[tool_name]["ambiguous"] += row["count"] or 0
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    def _build_attribution_result(
+        self,
+        tool_data: dict[str, dict[str, Any]],
+    ) -> list[ToolAttributionDetail]:
+        """Build ToolAttributionDetail list from aggregated data."""
         result = []
-        for tn, data in tool_data.items():
+        for tool_name, data in tool_data.items():
             total_calls = data["total_calls"]
             skill_attribution = {}
 
@@ -2259,12 +2222,72 @@ class TraceStore:
 
             result.append(
                 ToolAttributionDetail(
-                    tool_name=tn,
+                    tool_name=tool_name,
                     total_calls=total_calls,
                     skill_attribution=skill_attribution,
                     ambiguous_calls=data["ambiguous"],
                     avg_confidence=round(avg_confidence, 2),
                 ),
             )
+        return result
 
+    async def get_tool_skill_attributions(
+        self,
+        tool_name: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> list[ToolAttributionDetail]:
+        """Get skill attribution details for tools.
+
+        Args:
+            tool_name: Optional filter by tool name
+            start_date: Start date filter
+            end_date: End date filter
+
+        Returns:
+            List of ToolAttributionDetail
+        """
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now()
+
+        where_clauses = [
+            "start_time >= %s",
+            "start_time <= %s",
+            "event_type = 'tool_call_end'",
+            "tool_name IS NOT NULL",
+        ]
+        params: list[Any] = [start_date, end_date]
+
+        if tool_name:
+            where_clauses.append("tool_name = %s")
+            params.append(tool_name)
+
+        where_sql = " AND ".join(where_clauses)
+        query = f"""
+            SELECT tool_name, skill_name, skill_names, skill_weights,
+                   COUNT(*) as count
+            FROM swe_tracing_spans
+            WHERE {where_sql}
+            GROUP BY tool_name, skill_name, skill_names, skill_weights
+        """
+        rows = await self.db.fetch_all(query, tuple(params))
+
+        tool_data: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            tn = row["tool_name"]
+            if tn not in tool_data:
+                tool_data[tn] = self._init_tool_data_bucket()
+
+            tool_data[tn]["total_calls"] += row["count"] or 0
+
+            if row["skill_weights"]:
+                self._process_skill_weights(tool_data, tn, row)
+            elif row["skill_name"]:
+                self._process_single_skill(tool_data, tn, row)
+
+            self._check_multi_skill_attribution(tool_data, tn, row)
+
+        result = self._build_attribution_result(tool_data)
         return sorted(result, key=lambda x: x.total_calls, reverse=True)[:20]
