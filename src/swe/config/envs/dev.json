@@ -5,7 +5,7 @@
   "SWE_LLM_MAX_CONCURRENT": "5",
   "SWE_LLM_MAX_QPM": "100",
   "SWE_AUTH_ENABLED": "false",
-  "SWE_ENABLED_CHANNELS": "console",
+  "SWE_ENABLED_CHANNELS": "",
   "SWE_DISABLED_CHANNELS": "",
   "SWE_TRACING_ENABLED": "true",
   "SWE_TRACING_BATCH_SIZE": "100",
@@ -27,5 +27,13 @@
   "SWE_BACKUP_S3_REGION": "cn-north-1",
   "SWE_BACKUP_ENDPOINT_URL": "",
   "SWE_SERVICE_HEARTBEAT_URL": "",
-  "SWE_SERVICE_HEARTBEAT_INTERVAL": "30"
+  "SWE_SERVICE_HEARTBEAT_INTERVAL": "30",
+  "SWE_SERVICE_HEARTBEAT_ENABLED": true,
+  "SWE_SERVICE_HEARTBEAT_INSTANCE_PORT": 8080,
+  "SWE_SERVICE_HEARTBEAT_WEIGHT": 1,
+  "SWE_SERVICE_HEARTBEAT_SERVICE_NAME": "swe",
+  "SWE_ZHAOHU_PUSH_URL": "https://agentframework.paasst.cmbchina.cn/exp-msg/push",
+  "SWE_ZHAOHU_ROBOT_OPEN_ID": "4BB6901683AE5BF632E5D00405B3F8AF",
+  "SWE_ZHAOHU_USER_QUERY_URL": "https://lq13gateway.paas.cmbchina.cn/agent-evaluate/evaluate/getYstUserList",
+  "SWE_ZHAOHU_EXTRACT_URL": "http://wplus-slots.paas.cmbchina.cn/api/extract/slots"
 }

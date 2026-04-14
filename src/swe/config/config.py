@@ -97,23 +97,33 @@ class FeishuConfig(BaseChannelConfig):
 
 class ZhaohuConfig(BaseChannelConfig):
     enabled: bool = True
-    # push_url: str = "https://agentframework.paasst.cmbchina.cn/exp-msg/push"  # dev
-    push_url: str = (
-        "https://agentframework.paas.cmbchina.cn/exp-msg/push"  # prd
+    push_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_PUSH_URL",
+            "https://agentframework.paas.cmbchina.cn/exp-msg/push",
+        ),
     )
     sys_id: str = "RMS"
     filter_thinking: bool = True
-    # robot_open_id: str = "4BB6901683AE5BF632E5D00405B3F8AF"  # dev
-    robot_open_id: str = "77D1CCFC2E210ED714ACC3093BFC9BAB"  # prd
+    robot_open_id: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_ROBOT_OPEN_ID",
+            "77D1CCFC2E210ED714ACC3093BFC9BAB",
+        ),
+    )
     channel: str = "ZH"
     net: str = "DMZ"
-    # user_query_url (dev):
-    # "https://lq13gateway.paas.cmbchina.cn/agent-evaluate/evaluate/getYstUserList"
-    user_query_url: str = (
-        "https://llm-evaluate.paas.cmbchina.cn/evaluate/getYstUserList"  # prd
+    user_query_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_USER_QUERY_URL",
+            "https://llm-evaluate.paas.cmbchina.cn/evaluate/getYstUserList",
+        ),
     )
-    extract_url: str = (
-        "http://wplus-slots.paas.cmbchina.cn/api/extract/slots"  # prd/st
+    extract_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_EXTRACT_URL",
+            "http://wplus-slots.paas.cmbchina.cn/api/extract/slots",
+        ),
     )
 
 
@@ -1107,31 +1117,39 @@ class ServiceHeartbeatConfig(BaseModel):
     用于服务注册和健康检查，在服务启动时开启后台心跳任务，
     进程结束前发送关闭信号（enabled=false）。
 
-    注意：心跳URL和间隔时间从环境变量读取，支持dev/prd环境区分：
-    - SWE_SERVICE_HEARTBEAT_URL: 心跳接口地址
-    - SWE_SERVICE_HEARTBEAT_INTERVAL: 心跳间隔秒数
+    需要配置的环境变量：
+    - SWE_SERVICE_HEARTBEAT_ENABLED: 是否启用（默认true）
+    - SWE_SERVICE_HEARTBEAT_URL: 心跳接口地址（必填）
+    - SWE_SERVICE_HEARTBEAT_INTERVAL: 心跳间隔秒数（默认30）
+    - SWE_SERVICE_HEARTBEAT_INSTANCE_PORT: 实例端口（默认8088）
+    - SWE_SERVICE_HEARTBEAT_WEIGHT: 权重（默认1）
+    - SWE_SERVICE_HEARTBEAT_SERVICE_NAME: 服务名称（默认swe）
+
+    容器自带的环境变量（自动获取，无需配置）：
+    - CMB_CAAS_SERVICEUNITID: 服务单元标识
+    - CMB_CLUSTER: 可用区标识
+
+    config.json 中无需配置，所有值通过 property 从环境变量动态获取。
     """
 
-    enabled: bool = Field(
-        default=False,
-        description="是否启用服务心跳",
-    )
-    service_name: str = Field(
-        default="swe",
-        description="服务名称，固定为swe",
-    )
-    instance_port: int = Field(
-        default=8088,
-        ge=1,
-        le=65535,
-        description="实例端口，默认8088",
-    )
-    weight: int = Field(
-        default=1,
-        ge=1,
-        le=100,
-        description="权重，默认1",
-    )
+    # Pydantic 模型配置：允许额外字段以兼容旧配置文件
+    model_config = ConfigDict(extra="ignore")
+
+    @property
+    def enabled(self) -> bool:
+        """从环境变量获取是否启用。"""
+        return EnvVarLoader.get_bool(
+            "SWE_SERVICE_HEARTBEAT_ENABLED",
+            default=True,
+        )
+
+    @property
+    def service_name(self) -> str:
+        """从环境变量获取服务名称。"""
+        return EnvVarLoader.get_str(
+            "SWE_SERVICE_HEARTBEAT_SERVICE_NAME",
+            "swe",
+        )
 
     @property
     def url(self) -> str:
@@ -1146,6 +1164,26 @@ class ServiceHeartbeatConfig(BaseModel):
             default=30,
             min_value=5,
             max_value=300,
+        )
+
+    @property
+    def instance_port(self) -> int:
+        """从环境变量获取实例端口。"""
+        return EnvVarLoader.get_int(
+            "SWE_SERVICE_HEARTBEAT_INSTANCE_PORT",
+            default=8088,
+            min_value=1,
+            max_value=65535,
+        )
+
+    @property
+    def weight(self) -> int:
+        """从环境变量获取权重。"""
+        return EnvVarLoader.get_int(
+            "SWE_SERVICE_HEARTBEAT_WEIGHT",
+            default=1,
+            min_value=1,
+            max_value=100,
         )
 
 
