@@ -281,7 +281,10 @@ export interface UserMessageItem {
 
 // API functions
 export const tracingApi = {
-  getOverview: async (startDate?: string, endDate?: string): Promise<OverviewStats> => {
+  getOverview: async (
+    startDate?: string,
+    endDate?: string,
+  ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -295,8 +298,13 @@ export const tracingApi = {
       user_id?: string;
       start_date?: string;
       end_date?: string;
-    }
-  ): Promise<{ items: UserListItem[]; total: number; page: number; page_size: number }> => {
+    },
+  ): Promise<{
+    items: UserListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
@@ -308,7 +316,11 @@ export const tracingApi = {
     return request(`/tracing/users?${params.toString()}`);
   },
 
-  getUserStats: async (userId: string, startDate?: string, endDate?: string): Promise<UserStats> => {
+  getUserStats: async (
+    userId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<UserStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -325,8 +337,13 @@ export const tracingApi = {
       status?: string;
       start_date?: string;
       end_date?: string;
-    }
-  ): Promise<{ items: TraceListItem[]; total: number; page: number; page_size: number }> => {
+    },
+  ): Promise<{
+    items: TraceListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
@@ -342,7 +359,10 @@ export const tracingApi = {
     return request(`/tracing/traces/${traceId}`);
   },
 
-  getModelUsage: async (startDate?: string, endDate?: string): Promise<{ models: ModelUsage[] }> => {
+  getModelUsage: async (
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{ models: ModelUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -350,7 +370,10 @@ export const tracingApi = {
     return request(`/tracing/models${query}`);
   },
 
-  getToolUsage: async (startDate?: string, endDate?: string): Promise<{ tools: ToolUsage[] }> => {
+  getToolUsage: async (
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{ tools: ToolUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -366,8 +389,13 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
-    }
-  ): Promise<{ items: SessionListItem[]; total: number; page: number; page_size: number }> => {
+    },
+  ): Promise<{
+    items: SessionListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
@@ -379,12 +407,18 @@ export const tracingApi = {
     return request(`/tracing/sessions?${params.toString()}`);
   },
 
-  getSessionStats: async (sessionId: string, startDate?: string, endDate?: string): Promise<SessionStats> => {
+  getSessionStats: async (
+    sessionId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<SessionStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/sessions/${encodeURIComponent(sessionId)}${query}`);
+    return request(
+      `/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
+    );
   },
 
   getUserMessages: async (
@@ -396,8 +430,13 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-    }
-  ): Promise<{ items: UserMessageItem[]; total: number; page: number; page_size: number }> => {
+    },
+  ): Promise<{
+    items: UserMessageItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
     const params = new URLSearchParams();
     params.append("page", page.toString());
     params.append("page_size", pageSize.toString());
@@ -417,7 +456,7 @@ export const tracingApi = {
       end_date?: string;
       query?: string;
     },
-    format: string = "xlsx"
+    format: string = "xlsx",
   ): Promise<Blob> => {
     const params = new URLSearchParams();
     params.append("format", format);
