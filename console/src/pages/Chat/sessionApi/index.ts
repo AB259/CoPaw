@@ -15,7 +15,12 @@ import { toDisplayUrl } from "../utils";
 
 // ==================== userId 统一整改 (Kun He) ====================
 // 使用统一的 getUserId/getChannel helper
-import { getUserId, getChannel } from "../../../utils/identity";
+import {
+  getUserId,
+  getChannel,
+  getUserIdWithoutWindow,
+  getChannelWithoutWindow,
+} from "../../../utils/identity";
 // ==================== userId 统一整改结束 ====================
 
 // ---------------------------------------------------------------------------
@@ -465,8 +470,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     window.currentSessionId = session.sessionId || "";
     // ==================== userId 统一整改 (Kun He) ====================
     // 使用 getUserId() 获取用户 ID，传入 session.userId 作为候选值
-    window.currentUserId = getUserId(session.userId);
-    window.currentChannel = getChannel(session.channel);
+    window.currentUserId = getUserIdWithoutWindow(session.userId);
+    window.currentChannel = getChannelWithoutWindow(session.channel);
     // ==================== userId 统一整改结束 ====================
   }
 
@@ -578,8 +583,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
           name: fromList.name || DEFAULT_SESSION_NAME,
           sessionId: fromList.sessionId || sessionId,
           // ==================== userId 统一整改 (Kun He) ====================
-          userId: getUserId(fromList.userId),
-          channel: getChannel(fromList.channel),
+          userId: getUserIdWithoutWindow(fromList.userId),
+          channel: getChannelWithoutWindow(fromList.channel),
           // ==================== userId 统一整改结束 ====================
           messages,
           meta: fromList.meta || {},
@@ -618,10 +623,10 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
           id: sessionId,
           name: refreshed.name || DEFAULT_SESSION_NAME,
           sessionId: refreshed.sessionId || sessionId,
-          // ==================== userId 统一整改 (Kun He) ====================
-          userId: getUserId(refreshed.userId),
-          channel: getChannel(refreshed.channel),
-          // ==================== userId 统一整改结束 ====================
+          // ==================== userId 缁熶竴鏁存敼 (Kun He) ====================
+          userId: getUserIdWithoutWindow(refreshed.userId),
+          channel: getChannelWithoutWindow(refreshed.channel),
+          // ==================== userId 缁熶竴鏁存敼缁撴潫 ====================
           messages,
           meta: refreshed.meta || {},
           realId: refreshed.realId,
@@ -653,8 +658,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       name: fromList?.name || sessionId,
       sessionId: fromList?.sessionId || sessionId,
       // ==================== userId 统一整改 (Kun He) ====================
-      userId: getUserId(fromList?.userId),
-      channel: getChannel(fromList?.channel),
+      userId: getUserIdWithoutWindow(fromList?.userId),
+      channel: getChannelWithoutWindow(fromList?.channel),
       // ==================== userId 统一整改结束 ====================
       messages,
       meta: fromList?.meta || {},

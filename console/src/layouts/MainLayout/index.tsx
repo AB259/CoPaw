@@ -1,15 +1,8 @@
 import { Layout } from "antd";
-import {
-  Routes,
-  Route,
-  useLocation,
-  Navigate,
-} from "react-router-dom";
+import { Routes, Route, useLocation, Navigate } from "react-router-dom";
 
 // ==================== iframe 集成 (Kun He) ====================
-// useSearchParams: 获取 URL 参数，用于判断 origin 参数是否为 "Y"
 // useIframeStore: 获取父窗口传递的 hideMenu 参数
-import { useSearchParams } from "react-router-dom";
 import { useIframeStore } from "../../stores/iframeStore";
 // ==================== iframe 集成结束 ====================
 
@@ -74,14 +67,11 @@ export default function MainLayout() {
   const selectedKey = pathToKey[currentPath] || "chat";
 
   // ==================== iframe 集成 (Kun He) ====================
-  // Sidebar 显示控制逻辑：
-  // 1. URL 参数 origin === "Y" 时隐藏 Sidebar
-  // 2. iframe 传递的 hideMenu === true 时隐藏 Sidebar
-  // 用途：支持父应用控制子应用的菜单显示
-  const [searchParams] = useSearchParams();
+  // Sidebar 显示控制：
+  // iframe 传递的 hideMenu === true 时隐藏 Sidebar
+  // URL 参数 origin=Y 会自动设置 hideMenu=true（见 iframeMessage.ts）
   const hideMenu = useIframeStore((state) => state.hideMenu);
-  const originParam = searchParams.get("origin");
-  const shouldHideSidebar = originParam === "Y" || hideMenu;
+  const shouldHideSidebar = hideMenu;
   // ==================== iframe 集成结束 ====================
 
   return (
