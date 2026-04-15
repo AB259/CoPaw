@@ -1,16 +1,16 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { cronJobApi } from '@/api/modules/cronjob';
+import { chatApi } from '@/api/modules/chat';
 import type { CronJobSpecOutput } from '@/api/types';
-import type { IAgentScopeRuntimeWebUISession } from '@/components/agentscope-chat';
 import Style from './style';
 import ChatTaskList from '../ChatTaskList';
-import sessionApi from '../../sessionApi';
 import { DESIGN_TOKENS } from '@/config/designTokens';
 import CollapsedToolbar, { type PanelType } from './CollapsedToolbar';
 import ExpandablePanel from './ExpandablePanel';
-
-const SIDEBAR_POLL_MS = 10_000;
+import {
+  buildHistorySessions,
+  type HistorySession,
+} from './historySessions';
 
 function HistoryIcon() {
   return (
@@ -114,6 +114,7 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 }
 
 export interface ChatSidebarProps {
+  tasks: CronJobSpecOutput[];
   onCreateSession?: () => void;
   onTaskClick?: (task: CronJobSpecOutput) => void;
 }
@@ -128,64 +129,35 @@ function formatTime(raw: string | null | undefined): string {
   )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function isTaskSession(session: IAgentScopeRuntimeWebUISession): boolean {
-  const meta = (session as any).meta;
-  return meta?.session_kind === 'task';
-}
-
-function isVisibleTask(task: CronJobSpecOutput): boolean {
-  return task.task_type === 'agent' && Boolean(task.task?.visible_in_my_tasks);
-}
-
 export default function ChatSidebar(props: ChatSidebarProps) {
-  const { onCreateSession, onTaskClick } = props;
+  const { tasks, onCreateSession, onTaskClick } = props;
   const navigate = useNavigate();
   const location = useLocation();
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
-  const [tasks, setTasks] = useState<CronJobSpecOutput[]>([]);
-  const [sessions, setSessions] = useState<IAgentScopeRuntimeWebUISession[]>([]);
+  const [sessions, setSessions] = useState<HistorySession[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   const currentChatId = location.pathname.match(/^\/chat\/(.+)$/)?.[1] || null;
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      const data = await cronJobApi.listCronJobs();
-      const next = Array.isArray(data) ? data.filter(isVisibleTask) : [];
-      setTasks(next);
-    } catch {
-      setTasks([]);
-    }
-  }, []);
-
   const fetchSessions = useCallback(async () => {
     try {
-      const list = await sessionApi.getSessionList();
-      const next = Array.isArray(list) ? list.filter((session) => !isTaskSession(session)) : [];
-      setSessions(next);
+      const chats = await chatApi.listChats();
+      setSessions(Array.isArray(chats) ? buildHistorySessions(chats) : []);
     } catch {
       setSessions([]);
     }
   }, []);
 
   useEffect(() => {
-    void fetchTasks();
     void fetchSessions();
 
-    const intervalId = window.setInterval(() => {
-      void fetchTasks();
-      void fetchSessions();
-    }, SIDEBAR_POLL_MS);
-
     const handleFocusRefresh = () => {
-      void fetchTasks();
       void fetchSessions();
     };
     const handleVisibilityRefresh = () => {
       if (document.visibilityState === 'visible') {
-        void fetchTasks();
         void fetchSessions();
       }
     };
@@ -194,11 +166,10 @@ export default function ChatSidebar(props: ChatSidebarProps) {
     document.addEventListener('visibilitychange', handleVisibilityRefresh);
 
     return () => {
-      window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocusRefresh);
       document.removeEventListener('visibilitychange', handleVisibilityRefresh);
     };
-  }, [fetchSessions, fetchTasks, location.pathname]);
+  }, [fetchSessions]);
 
   const handleToggleHistory = useCallback(() => {
     setHistoryCollapsed((prev) => !prev);
@@ -234,35 +205,11 @@ export default function ChatSidebar(props: ChatSidebarProps) {
   }, []);
 
   const handleTaskOpen = useCallback(
-    async (task: CronJobSpecOutput) => {
-      onTaskClick?.(task);
-      const chatId = task.task?.chat_id;
-      if (!chatId) return;
-
-      setTasks((prev) =>
-        prev.map((item) =>
-          item.id === task.id && item.task
-            ? {
-                ...item,
-                task: {
-                  ...item.task,
-                  unread_execution_count: 0,
-                },
-              }
-            : item,
-        ),
-      );
-
+    (task: CronJobSpecOutput) => {
       setActivePanel(null);
-      navigate(`/chat/${chatId}`, { replace: true });
-
-      try {
-        await cronJobApi.markTaskRead(task.id);
-      } catch {
-        void fetchTasks();
-      }
+      onTaskClick?.(task);
     },
-    [fetchTasks, navigate, onTaskClick],
+    [onTaskClick],
   );
 
   if (collapsed) {

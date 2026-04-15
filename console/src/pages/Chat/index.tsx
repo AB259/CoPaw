@@ -53,6 +53,8 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
+import { deriveChatTaskState } from "./taskJobs";
+import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const TASK_PAGE_POLL_MS = 10_000;
@@ -293,8 +295,7 @@ export default function ChatPage() {
     return match?.[1];
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
-  const [currentTask, setCurrentTask] = useState<CronJobSpecOutput | null>(null);
-  const [taskProbeDone, setTaskProbeDone] = useState(false);
+  const [jobs, setJobs] = useState<CronJobSpecOutput[]>([]);
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -321,6 +322,7 @@ export default function ChatPage() {
   /** Tracks the stale auto-selected session ID that was skipped on init, so we can suppress its late-arriving onSessionSelected callback. */
   const staleAutoSelectedIdRef = useRef<string | null>(null);
   const taskHadResultRef = useRef(false);
+  const previousCurrentTaskRef = useRef<CronJobSpecOutput | null>(null);
   const chatIdRef = useRef(chatId);
   const navigateRef = useRef(navigate);
   const chatRef = useRef<IAgentScopeRuntimeWebUIRef>(null);
@@ -426,69 +428,132 @@ export default function ChatPage() {
     prevSelectedAgentRef.current = selectedAgent;
   }, [selectedAgent]);
 
-  const fetchCurrentTask = useCallback(async () => {
-    if (!chatId) {
-      setCurrentTask(null);
-      setTaskProbeDone(true);
-      taskHadResultRef.current = false;
-      return;
-    }
+  const refreshJobs = useCallback(async () => {
     try {
-      const jobs = await cronJobApi.listCronJobs();
-      const nextTask =
-        (Array.isArray(jobs)
-          ? jobs.find((job) => job.task?.chat_id === chatId) || null
-          : null) ?? null;
-      const hadResult = Boolean(nextTask?.task?.has_scheduled_result);
-      if (hadResult && !taskHadResultRef.current) {
-        setRefreshKey((prev) => prev + 1);
-      }
-      taskHadResultRef.current = hadResult;
-      setCurrentTask(nextTask);
+      const nextJobs = await cronJobApi.listCronJobs();
+      setJobs(Array.isArray(nextJobs) ? nextJobs : []);
     } catch {
-      setCurrentTask(null);
-    } finally {
-      setTaskProbeDone(true);
+      setJobs([]);
     }
-  }, [chatId]);
+  }, []);
+
+  const { tasks, currentTask } = useMemo(
+    () => deriveChatTaskState(jobs, chatId),
+    [jobs, chatId],
+  );
 
   useEffect(() => {
-    setTaskProbeDone(false);
-    taskHadResultRef.current = false;
-    void fetchCurrentTask();
-  }, [fetchCurrentTask]);
+    void refreshJobs();
+
+    const handleFocusRefresh = () => {
+      void refreshJobs();
+    };
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void refreshJobs();
+      }
+    };
+
+    window.addEventListener("focus", handleFocusRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      window.removeEventListener("focus", handleFocusRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [refreshJobs]);
 
   useEffect(() => {
-    if (!chatId || !taskProbeDone || !currentTask) return;
-
-    const pollMs = currentTask.task?.has_scheduled_result
-      ? TASK_PAGE_POLL_MS
-      : TASK_PENDING_POLL_MS;
+    const pollMs =
+      currentTask?.task?.has_scheduled_result === false
+        ? TASK_PENDING_POLL_MS
+        : TASK_PAGE_POLL_MS;
 
     const intervalId = window.setInterval(() => {
-      void fetchCurrentTask();
+      void refreshJobs();
     }, pollMs);
 
     return () => window.clearInterval(intervalId);
-  }, [chatId, currentTask, fetchCurrentTask, taskProbeDone]);
+  }, [currentTask?.task?.has_scheduled_result, refreshJobs]);
+
+  useEffect(() => {
+    const hadResult = Boolean(currentTask?.task?.has_scheduled_result);
+    if (hadResult && !taskHadResultRef.current) {
+      setRefreshKey((prev) => prev + 1);
+    }
+    taskHadResultRef.current = hadResult;
+  }, [currentTask?.task?.has_scheduled_result]);
 
   useEffect(() => {
     if (!currentTask?.id) return;
     if ((currentTask.task?.unread_execution_count || 0) <= 0) return;
 
-    setCurrentTask((prev) =>
-      prev?.id === currentTask.id && prev.task
-        ? {
-            ...prev,
-            task: {
-              ...prev.task,
-              unread_execution_count: 0,
-            },
-          }
-        : prev,
+    setJobs((prev) =>
+      prev.map((job) =>
+        job.id === currentTask.id && job.task
+          ? {
+              ...job,
+              task: {
+                ...job.task,
+                unread_execution_count: 0,
+              },
+            }
+          : job,
+      ),
     );
     void cronJobApi.markTaskRead(currentTask.id).catch(() => {});
   }, [currentTask?.id, currentTask?.task?.unread_execution_count]);
+
+  const handleTaskOpen = useCallback(
+    async (task: CronJobSpecOutput) => {
+      const taskChatId = task.task?.chat_id;
+      if (!taskChatId) return;
+
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id && job.task
+            ? {
+                ...job,
+                task: {
+                  ...job.task,
+                  unread_execution_count: 0,
+                },
+              }
+            : job,
+        ),
+      );
+
+      navigate(`/chat/${taskChatId}`, { replace: true });
+
+      try {
+        await cronJobApi.markTaskRead(task.id);
+      } catch {
+        void refreshJobs();
+      }
+    },
+    [navigate, refreshJobs],
+  );
+
+  useEffect(() => {
+    const previousTask = previousCurrentTaskRef.current;
+    previousCurrentTaskRef.current = currentTask;
+
+    if (
+      !shouldRefreshCurrentTaskMessages({
+        previousTask,
+        currentTask,
+      })
+    ) {
+      return;
+    }
+
+    void chatRef.current?.refreshSession?.();
+  }, [
+    currentTask?.id,
+    currentTask?.task?.has_scheduled_result,
+    currentTask?.task?.last_scheduled_run_at,
+    currentTask?.task?.unread_execution_count,
+  ]);
 
   const copyResponse = useCallback(
     async (response: CopyableResponse) => {
@@ -865,7 +930,11 @@ export default function ChatPage() {
     >
       {/* ==================== 首页改版 (Kun He) ==================== */}
       {/* 聊天专用侧栏：支持折叠为64px工具条 */}
-      <ChatSidebar onCreateSession={handleCreateSessionFromSidebar} />
+      <ChatSidebar
+        tasks={tasks}
+        onCreateSession={handleCreateSessionFromSidebar}
+        onTaskClick={handleTaskOpen}
+      />
       {/* ==================== 首页改版结束 ==================== */}
       <div
         className={styles.chatMessagesArea}

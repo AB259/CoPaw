@@ -11,7 +11,11 @@ import api, {
   type ChatStatus,
   type Message,
 } from "../../../api";
+import { cronJobApi } from "../../../api/modules/cronjob";
 import { toDisplayUrl } from "../utils";
+import { applyPreferredSessionSelection } from "./preferredSession";
+import { shouldNotifySessionSelected } from "./sessionRaceGuard";
+import { filterStaleTaskSessions } from "./taskSessions";
 
 // ==================== userId 统一整改 (Kun He) ====================
 // 使用统一的 getUserId/getChannel helper
@@ -345,6 +349,7 @@ function clearPendingUserMessage(sessionId: string): void {
 
 class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   private sessionList: IAgentScopeRuntimeWebUISession[] = [];
+  private intendedSessionId: string | null = null;
 
   /**
    * When set, getSessionList will move the matching session to the front on the first call,
@@ -500,13 +505,26 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     this.sessionListRequest = (async () => {
       try {
-        const chats = await api.listChats();
+        const allowPreferredSelection = this.sessionList.length === 0;
+        const [chats, jobsResult] = await Promise.all([
+          api.listChats(),
+          cronJobApi.listCronJobs().catch(() => null),
+        ]);
+        const activeTaskJobIds: ReadonlySet<string> | null =
+          jobsResult === null
+            ? null
+            : new Set<string>(
+                jobsResult
+                  .filter((job) => job.task_type === "agent")
+                  .map((job) => String(job.id)),
+              );
         const newList = chats
           .filter((c) => c.id && c.id !== "undefined" && c.id !== "null")
           .map(chatSpecToSession)
           .reverse();
+        const filteredList = filterStaleTaskSessions(newList, activeTaskJobIds);
 
-        this.sessionList = newList.map((s) => {
+        this.sessionList = filteredList.map((s) => {
           const existing = this.sessionList.find(
             (e) =>
               (e as ExtendedSession).sessionId ===
@@ -517,17 +535,12 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
             : s;
         });
 
-        // Move the preferred session to the front so the library's useMount
-        // auto-selects it, avoiding an unnecessary getSession call for sessions[0].
-        if (this.preferredChatId) {
-          const preferredId = this.preferredChatId;
-          this.preferredChatId = null;
-          const idx = this.sessionList.findIndex((s) => s.id === preferredId);
-          if (idx > 0) {
-            const [preferred] = this.sessionList.splice(idx, 1);
-            this.sessionList.unshift(preferred);
-          }
-        }
+        this.sessionList = applyPreferredSessionSelection({
+          sessions: this.sessionList,
+          preferredChatId: this.preferredChatId,
+          allowReorder: allowPreferredSelection,
+        });
+        this.preferredChatId = null;
 
         return [...this.sessionList];
       } finally {
@@ -541,6 +554,10 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   /** Track the last session ID that triggered onSessionSelected to avoid duplicate calls. */
   private lastSelectedSessionId: string | null = null;
 
+  setSelectedSessionIntent(sessionId: string | undefined | null): void {
+    this.intendedSessionId = sessionId ?? null;
+  }
+
   async getSession(sessionId: string) {
     const existingRequest = this.sessionRequests.get(sessionId);
     if (existingRequest) return existingRequest;
@@ -551,7 +568,13 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     try {
       const session = await requestPromise;
       // Trigger onSessionSelected only when session actually changes
-      if (sessionId !== this.lastSelectedSessionId) {
+      if (
+        shouldNotifySessionSelected({
+          requestedSessionId: sessionId,
+          intendedSessionId: this.intendedSessionId,
+        }) &&
+        sessionId !== this.lastSelectedSessionId
+      ) {
         this.lastSelectedSessionId = sessionId;
         const extendedSession = session as ExtendedSession;
         const realId = extendedSession.realId || null;
