@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from ...config import get_heartbeat_config
+from ...config import get_heartbeat_config, load_config
 
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
@@ -42,7 +44,7 @@ class _Runtime:
     sem: asyncio.Semaphore
 
 
-class CronManager:
+class CronManager:  # pylint: disable=too-many-public-methods
     """Manages scheduled cron jobs and heartbeat.
 
     This class has been refactored to support Redis-coordinated leadership:
@@ -100,7 +102,7 @@ class CronManager:
             self._coordination.set_reload_callback(self._on_reload_signal)
             self._coordination.set_lease_lost_callback(self._on_lease_lost)
             self._coordination.set_become_leader_callback(
-                self._on_become_leader
+                self._on_become_leader,
             )
 
         self._active_jobs: set[str] = set()  # Track which jobs are scheduled
@@ -611,7 +613,7 @@ class CronManager:
             True if job was found and paused, False otherwise.
         """
         async with self._lock:
-            changed, job, _ = await self._mutate_jobs_file_locked(
+            _, job, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._set_job_enabled_in_jobs_file(
                     jobs_file,
                     job_id,
@@ -638,7 +640,7 @@ class CronManager:
             True if job was found and resumed, False otherwise.
         """
         async with self._lock:
-            changed, job, _ = await self._mutate_jobs_file_locked(
+            _, job, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._set_job_enabled_in_jobs_file(
                     jobs_file,
                     job_id,
@@ -730,7 +732,7 @@ class CronManager:
             chat_id=meta.get("task_chat_id"),
             session_id=meta.get("task_session_id"),
             has_scheduled_result=bool(
-                meta.get("task_has_scheduled_result", False)
+                meta.get("task_has_scheduled_result", False),
             ),
             latest_scheduled_preview=str(
                 meta.get("task_last_scheduled_preview", "") or "",
@@ -817,7 +819,7 @@ class CronManager:
             save_succeeded = True
             if self._coordination is not None:
                 version = await self._coordination.ensure_definition_version(
-                    version
+                    version,
                 )
             self._definition_version = version
             should_publish = True
@@ -852,7 +854,8 @@ class CronManager:
         if changed:
             for job_id in disabled_ids:
                 logger.warning(
-                    "Auto-disabled invalid cron job: job_id=%s", job_id
+                    "Auto-disabled invalid cron job: job_id=%s",
+                    job_id,
                 )
 
     @staticmethod
@@ -918,7 +921,8 @@ class CronManager:
         self._stop_definition_reconcile.set()
         try:
             await asyncio.wait_for(
-                self._definition_reconcile_task, timeout=5.0
+                self._definition_reconcile_task,
+                timeout=5.0,
             )
         except asyncio.TimeoutError:
             self._definition_reconcile_task.cancel()
@@ -1079,7 +1083,7 @@ class CronManager:
 
         meta = dict(spec.meta or {})
         task_session_id = str(
-            meta.get("task_session_id") or f"cron-task:{spec.id}"
+            meta.get("task_session_id") or f"cron-task:{spec.id}",
         )
         task_chat = await self._chat_manager.get_or_create_chat(
             task_session_id,
@@ -1145,7 +1149,8 @@ class CronManager:
             return
 
         preview = await self._load_task_preview_text(
-            task_session_id, creator_user_id
+            task_session_id,
+            creator_user_id,
         )
         async with self._lock:
             await self._mutate_jobs_file_locked(
@@ -1162,7 +1167,8 @@ class CronManager:
         user_id: str,
     ) -> str:
         state = await self._runner.session.get_session_state_dict(
-            session_id, user_id
+            session_id,
+            user_id,
         )
         if not state:
             return ""
@@ -1191,6 +1197,105 @@ class CronManager:
             jobs_file.jobs[index] = job.model_copy(update={"meta": meta})
             return True, True
         return False, False
+
+    def _build_wplus_link(self, session_id: str) -> str:
+        """Build W+ deep link for cron task completion notification.
+
+        生成格式：CMBMobileOA:///?pcSysId=xxx&pcWebConfig=xxx&pcParams=xxx
+        用于在 PC 端招乎上跳转 W+ 并自动登录。
+        """
+        config = load_config()
+        zhaohu_config = config.zhaohu
+
+        # 获取配置
+        menu_id = zhaohu_config.cron_task_menu_id or ""
+        error_page = zhaohu_config.cron_task_error_page or ""
+        sys_id = zhaohu_config.cron_task_sys_id or ""
+
+        # 构建参数
+        param = {
+            "errorPage": error_page,
+            "to": menu_id,
+            "type": "toMenu",
+            "queryParam": {
+                "sessionId": session_id,
+                "origin": "Y",
+            },
+        }
+
+        # 参数格式化: encodeURIComponent(btoa(JSON.stringify(param)))
+        pc_params = base64.b64encode(
+            json.dumps(param, ensure_ascii=False).encode("utf-8"),
+        ).decode("utf-8")
+        pc_params = self._url_encode(pc_params)
+
+        # 再封装一层: encodeURIComponent(btoa('pcParams='+pc_params))
+        pc_params_wrapper = base64.b64encode(
+            f"pcParams={pc_params}".encode("utf-8"),
+        ).decode("utf-8")
+        pc_params_wrapper = self._url_encode(pc_params_wrapper)
+
+        pc_web_config = "eyJuYW1lIjoi6LSi5a%2BMVysiLCJ5c3RBdXRoIjoidHJ1ZSJ9"
+
+        # 拼接地址
+        wplus_link = (
+            f"CMBMobileOA:///?pcSysId={sys_id}"
+            f"&pcWebConfig={pc_web_config}"
+            f"&pcParams={pc_params_wrapper}"
+        )
+        return wplus_link
+
+    def _url_encode(self, text: str) -> str:
+        """URL encode text."""
+        import urllib.parse
+
+        return urllib.parse.quote(text, safe="")
+
+    async def _push_task_success_notification(
+        self,
+        job: CronJobSpec,
+    ) -> None:
+        """Push success notification via Zhaohu channel when agent task completes."""
+        # 只对 agent 类型的任务发送通知
+        if job.task_type != "agent":
+            logger.debug("Skip notification: job %s is not agent type", job.id)
+            return
+
+        session_id = job.dispatch.target.session_id
+        if not session_id:
+            logger.debug("Skip notification: job %s has no session_id", job.id)
+            return
+
+        logger.info(
+            "Sending cron task completion notification: job_id=%s job_name=%s session_id=%s",
+            job.id,
+            job.name,
+            session_id,
+        )
+
+        # 构建 W+ 跳转链接
+        wplus_link = self._build_wplus_link(session_id)
+        logger.debug("Generated W+ link: %s", wplus_link)
+
+        # 构建 meta，包含 link 和 summary
+        meta = dict(job.dispatch.meta or {})
+        meta["link_url"] = wplus_link
+        meta["link_text"] = "点击跳转小助claw版查看"
+        meta["notification_summary"] = "小助claw定时任务完成提醒"
+
+        # 固定使用 zhaohu 通道发送通知
+        await self._channel_manager.send_text(
+            channel="zhaohu",
+            user_id=job.dispatch.target.user_id,
+            session_id=session_id,
+            text=f"叮咚，你发起的定时任务【{job.name}】已完成，快来查收结果~",
+            meta=meta,
+        )
+        logger.info(
+            "Cron task completion notification sent: job_id=%s job_name=%s",
+            job.id,
+            job.name,
+        )
 
     @staticmethod
     def _extract_latest_assistant_preview(messages: list[Any]) -> str:
@@ -1390,11 +1495,12 @@ class CronManager:
                 workspace_dir = self._runner.workspace_dir
 
             tenant_id = None
+            # pylint: disable=protected-access
             if (
                 hasattr(self._runner, "_workspace")
                 and self._runner._workspace is not None
             ):
-                tenant_id = getattr(self._runner._workspace, "tenant_id", None)
+                tenant_id = self._runner._workspace.tenant_id
 
             with bind_tenant_context(
                 tenant_id=tenant_id,
@@ -1430,6 +1536,7 @@ class CronManager:
                 await self._executor.execute(job)
                 st.last_status = "success"
                 st.last_error = None
+                await self._push_task_success_notification(job)
                 await self._record_task_execution_success(job)
                 logger.info(
                     "cron _execute_once: job_id=%s status=success",
