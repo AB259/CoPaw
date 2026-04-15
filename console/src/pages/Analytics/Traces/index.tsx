@@ -1,18 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  Card,
-  Input,
-  Select,
-  Tag,
-  Drawer,
-  Descriptions,
-  Timeline,
-  Spin,
-  Empty,
-  DatePicker,
-} from "antd";
+import { Table, Card, Input, Select, Button, Tag, Drawer, Descriptions, Timeline, Spin, Empty, DatePicker } from "antd";
 import { FileText, Clock, Zap } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -139,16 +127,11 @@ export default function TracesPage() {
       title: t("analytics.traceId", "Trace ID"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 100,
+      width: 280,
+      ellipsis: true,
       render: (v) => (
-        <span
-          style={{
-            cursor: "pointer",
-            color: "#1890ff",
-            fontFamily: "monospace",
-          }}
-        >
-          {v.slice(0, 8)}...
+        <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
+          {v}
         </span>
       ),
     },
@@ -163,20 +146,21 @@ export default function TracesPage() {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 130,
-      render: (v) => dayjs(v).format("MM-DD HH:mm:ss"),
+      width: 160,
+      render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
       dataIndex: "duration_ms",
       key: "duration_ms",
-      width: 80,
+      width: 100,
       render: (v) => formatDuration(v),
     },
     {
       title: t("analytics.model", "Model"),
       dataIndex: "model_name",
       key: "model_name",
+      width: 150,
       ellipsis: true,
     },
     {
@@ -237,6 +221,9 @@ export default function TracesPage() {
               { value: "cancelled", label: "Cancelled" },
             ]}
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
         </div>
       </div>
 

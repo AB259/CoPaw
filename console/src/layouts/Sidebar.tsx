@@ -274,6 +274,12 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       label: t("nav.analyticsTraces", "Traces"),
     },
     {
+      key: "analytics-skills",
+      icon: <SparkMagicWandLine size={18} />,
+      path: "/analytics/skills",
+      label: t("nav.analyticsSkills", "Skills"),
+    },
+    {
       key: "instance-overview",
       icon: <SparkAdvancedMonitoringLine size={18} />,
       path: "/instance/overview",
@@ -433,6 +439,11 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
+        },
+        {
+          key: "analytics-skills",
+          label: collapsed ? null : t("nav.analyticsSkills", "Skills"),
+          icon: <SparkMagicWandLine size={16} />,
         },
       ],
     },
