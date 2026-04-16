@@ -851,33 +851,6 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             enabled=True,
             description="Find files matching a glob pattern",
         ),
-        "browser_use": BuiltinToolConfig(
-            name="browser_use",
-            enabled=True,
-            description="Browser automation and web interaction",
-        ),
-        "desktop_screenshot": BuiltinToolConfig(
-            name="desktop_screenshot",
-            enabled=True,
-            description="Capture desktop screenshots",
-        ),
-        "view_image": BuiltinToolConfig(
-            name="view_image",
-            enabled=True,
-            description="Load an image into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "view_video": BuiltinToolConfig(
-            name="view_video",
-            enabled=True,
-            description="Load a video into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "send_file_to_user": BuiltinToolConfig(
-            name="send_file_to_user",
-            enabled=True,
-            description="Send files to user",
-        ),
         "get_current_time": BuiltinToolConfig(
             name="get_current_time",
             enabled=True,
@@ -892,6 +865,11 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             name="get_token_usage",
             enabled=True,
             description="Get llm token usage",
+        ),
+        "copy_file_to_static": BuiltinToolConfig(
+            name="copy_file_to_static",
+            enabled=True,
+            description="copy file to static",
         ),
     }
 
@@ -916,7 +894,7 @@ def build_qa_agent_tools_config() -> ToolsConfig:
     """Tools preset for builtin ``default_qa_agent`` (first workspace init).
 
     Only these are enabled: execute_shell_command, read_file, edit_file,
-    write_file, view_image. All other built-ins are disabled.
+    write_file. All other built-ins are disabled.
     """
     allow = frozenset(
         {
@@ -924,7 +902,6 @@ def build_qa_agent_tools_config() -> ToolsConfig:
             "read_file",
             "write_file",
             "edit_file",
-            "view_image",
         },
     )
     builtin_tools = {
@@ -1009,6 +986,31 @@ class SkillScannerConfig(BaseModel):
     )
 
 
+class ProcessLimitsConfig(BaseModel):
+    """Tenant-scoped subprocess process-limit policy."""
+
+    enabled: bool = True
+    shell: bool = True
+    mcp_stdio: bool = False
+    cpu_time_limit_seconds: int | None = Field(default=30, ge=1)
+    memory_max_mb: int | None = Field(default=150, ge=1)
+
+    @model_validator(mode="after")
+    def validate_enabled_policy(self) -> "ProcessLimitsConfig":
+        """Reject enabled policies that cannot enforce anything."""
+        if not self.enabled:
+            return self
+        if not self.shell and not self.mcp_stdio:
+            raise ValueError(
+                "enabled process_limits policy must target shell or mcp_stdio",
+            )
+        if self.cpu_time_limit_seconds is None and self.memory_max_mb is None:
+            raise ValueError(
+                "enabled process_limits policy requires at least one limit",
+            )
+        return self
+
+
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
@@ -1016,6 +1018,9 @@ class SecurityConfig(BaseModel):
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(
         default_factory=SkillScannerConfig,
+    )
+    process_limits: ProcessLimitsConfig = Field(
+        default_factory=ProcessLimitsConfig,
     )
 
 
