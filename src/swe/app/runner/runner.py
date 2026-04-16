@@ -182,12 +182,16 @@ async def _create_mcp_client_with_headers(
 
     client.client = client_context
 
-    setattr(client, "_swe_rebuild_info", {
-        **rebuild_info,
-        "headers": merged_headers,
-        "_temp_client": True,
-        "_http_client": http_client,
-    })
+    setattr(
+        client,
+        "_swe_rebuild_info",
+        {
+            **rebuild_info,
+            "headers": merged_headers,
+            "_temp_client": True,
+            "_http_client": http_client,
+        },
+    )
     setattr(client, "_swe_temp_client", True)
 
     return client
@@ -497,7 +501,7 @@ class AgentRunner(Runner):
 
             # Setup skill detector for tracing
             if trace_id:
-                agent.setup_skill_detector(trace_id)
+                await agent.setup_skill_detector(trace_id)
 
             logger.debug(
                 f"Agent Query msgs {msgs}",

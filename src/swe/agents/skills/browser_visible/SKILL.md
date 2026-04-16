@@ -6,11 +6,6 @@ metadata:
   swe:
     emoji: "🖥️"
     requires: {}
-  swe:
-    uses_tools:
-      - browser_use
-      - desktop_screenshot
-      - execute_shell_command
 ---
 
 # 可见浏览器（真实窗口）参考

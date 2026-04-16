@@ -236,36 +236,6 @@ export interface TraceDetailWithTimeline {
   total_llm_calls: number;
 }
 
-export interface SkillToolsStats {
-  skill_name: string;
-  total_calls: number;
-  avg_duration_ms: number;
-  success_rate: number;
-  tools_used: {
-    tool_name: string;
-    count: number;
-    avg_duration_ms: number;
-    is_mcp: boolean;
-    mcp_server: string | null;
-  }[];
-  mcp_servers_used: string[];
-  trigger_reasons: Record<string, number>;
-  avg_confidence: number;
-}
-
-export interface ToolAttributionDetail {
-  tool_name: string;
-  total_calls: number;
-  skill_attribution: Record<string, {
-    skill_name: string;
-    calls: number;
-    weight: number;
-    confidence: number;
-  }>;
-  ambiguous_calls: number;
-  avg_confidence: number;
-}
-
 export interface UserMessageItem {
   trace_id: string;
   user_id: string;
@@ -490,36 +460,5 @@ export const tracingApi = {
   // Timeline with skill hierarchy
   getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
     return request(`/tracing/traces/${traceId}/timeline`);
-  },
-
-  // Skill tools statistics
-  getSkillToolsStats: async (
-    skillName: string,
-    startDate?: string,
-    endDate?: string
-  ): Promise<SkillToolsStats> => {
-    const params = new URLSearchParams();
-    if (startDate) params.append("start_date", startDate);
-    if (endDate) params.append("end_date", endDate);
-    const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/skills/${encodeURIComponent(skillName)}/tools${query}`);
-  },
-
-  // Skill attribution details
-  getSkillAttribution: async (
-    filters?: {
-      tool_name?: string;
-      start_date?: string;
-      end_date?: string;
-    }
-  ): Promise<{ attributions: ToolAttributionDetail[] }> => {
-    const params = new URLSearchParams();
-    if (filters) {
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
-      });
-   }
-    const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/skills/attribution${query}`);
   },
 };

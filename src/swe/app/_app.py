@@ -220,35 +220,38 @@ async def lifespan(
         database_config.database,
     )
 
-    if database_config.host and database_config.host != "localhost":
-        try:
-            from ..database import DatabaseConnection
+    if database_config.host != "localhost":
+        if database_config.host:
+            try:
+                from ..database import DatabaseConnection
 
-            db_connection = DatabaseConnection(database_config)
-            await db_connection.connect()
-            if not db_connection.is_connected:
-                raise RuntimeError(
-                    "Database connection failed. Please check database configuration.",
+                db_connection = DatabaseConnection(database_config)
+                await db_connection.connect()
+                if not db_connection.is_connected:
+                    raise RuntimeError(
+                        "Database connection failed. Please check database configuration.",
+                    )
+                logger.info(
+                    "Database connection established: %s",
+                    database_config.host,
                 )
-            logger.info(
-                "Database connection established: %s",
-                database_config.host,
-            )
-        except Exception as e:
-            import traceback
+            except Exception as e:
+                import traceback
 
-            logger.error(
-                "Failed to initialize database connection: %s\n%s",
-                e,
-                traceback.format_exc(),
-            )
+                logger.error(
+                    "Failed to initialize database connection: %s\n%s",
+                    e,
+                    traceback.format_exc(),
+                )
+                raise RuntimeError(
+                    "Database connection is required. Please check database configuration.",
+                ) from e
+        else:
             raise RuntimeError(
-                "Database connection is required. Please check database configuration.",
-            ) from e
+                "Database host is required. Please configure SWE_DB_HOST environment variable.",
+            )
     else:
-        raise RuntimeError(
-            "Database host is required. Please configure SWE_DB_HOST environment variable.",
-        )
+        logger.info("Database connection is disabled for localhost")
 
     # --- Initialize tracing manager ---
     try:
@@ -298,10 +301,9 @@ async def lifespan(
         )
 
     # --- Initialize instance module ---
-    from .instance.router import init_instance_module
-
-    init_instance_module(db_connection)
-    logger.info("Instance module initialized")
+    # from .instance.router import init_instance_module
+    # init_instance_module(db_connection)
+    # logger.info("Instance module initialized")
 
     startup_elapsed = time.time() - startup_start_time
     logger.info(

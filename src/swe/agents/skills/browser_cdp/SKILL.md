@@ -6,11 +6,6 @@ metadata:
   swe:
     emoji: "🔌"
     requires: {}
-  swe:
-    uses_tools:
-      - browser_use
-      - desktop_screenshot
-      - execute_shell_command
 ---
 
 # 浏览器 CDP 连接参考
