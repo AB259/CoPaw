@@ -808,33 +808,6 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             enabled=True,
             description="Find files matching a glob pattern",
         ),
-        "browser_use": BuiltinToolConfig(
-            name="browser_use",
-            enabled=True,
-            description="Browser automation and web interaction",
-        ),
-        "desktop_screenshot": BuiltinToolConfig(
-            name="desktop_screenshot",
-            enabled=True,
-            description="Capture desktop screenshots",
-        ),
-        "view_image": BuiltinToolConfig(
-            name="view_image",
-            enabled=True,
-            description="Load an image into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "view_video": BuiltinToolConfig(
-            name="view_video",
-            enabled=True,
-            description="Load a video into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "send_file_to_user": BuiltinToolConfig(
-            name="send_file_to_user",
-            enabled=True,
-            description="Send files to user",
-        ),
         "get_current_time": BuiltinToolConfig(
             name="get_current_time",
             enabled=True,
@@ -969,11 +942,11 @@ class SkillScannerConfig(BaseModel):
 class ProcessLimitsConfig(BaseModel):
     """Tenant-scoped subprocess process-limit policy."""
 
-    enabled: bool = False
+    enabled: bool = True
     shell: bool = True
-    mcp_stdio: bool = True
-    cpu_time_limit_seconds: int | None = Field(default=None, ge=1)
-    memory_max_mb: int | None = Field(default=None, ge=1)
+    mcp_stdio: bool = False
+    cpu_time_limit_seconds: int | None = Field(default=30, ge=1)
+    memory_max_mb: int | None = Field(default=150, ge=1)
 
     @model_validator(mode="after")
     def validate_enabled_policy(self) -> "ProcessLimitsConfig":
@@ -984,10 +957,7 @@ class ProcessLimitsConfig(BaseModel):
             raise ValueError(
                 "enabled process_limits policy must target shell or mcp_stdio",
             )
-        if (
-            self.cpu_time_limit_seconds is None
-            and self.memory_max_mb is None
-        ):
+        if self.cpu_time_limit_seconds is None and self.memory_max_mb is None:
             raise ValueError(
                 "enabled process_limits policy requires at least one limit",
             )
