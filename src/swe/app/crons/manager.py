@@ -699,11 +699,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
         status_text, default_info = status_map[task_status]
 
         if task_status == "completed" and last_run:
-            time_info = f"已于{last_run.strftime('%H:%M')}执行完成"
+            time_info = f"{last_run.strftime('%H:%M')}已完成"
+        elif task_status == "in_progress" and last_run:
+            time_info = f"{last_run.strftime('%H:%M')}已启动"
         elif task_status == "error" and last_run:
-            time_info = f"已于{last_run.strftime('%H:%M')}执行失败"
+            time_info = f"{last_run.strftime('%H:%M')}执行失败"
         elif task_status == "pending" and scheduled_time:
-            time_info = f"将于{scheduled_time.strftime('%H:%M')}执行任务"
+            time_info = f"将于{scheduled_time.strftime('%H:%M')}执行"
         else:
             time_info = default_info
 

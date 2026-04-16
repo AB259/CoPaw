@@ -6,6 +6,8 @@ Supports both outbound push and inbound message handling via callback.
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import logging
 import os
@@ -14,6 +16,7 @@ import time
 import uuid
 import asyncio
 from typing import Any, Dict, Optional, Union
+from urllib.parse import quote as url_quote
 
 import ssl
 
@@ -117,6 +120,9 @@ class ZhaohuChannel(BaseChannel):
         client_id: str = "",
         client_secret: str = "",
         custom_card_url: str = "",
+        cron_task_menu_id: str = "",
+        cron_task_error_page: str = "",
+        cron_task_sys_id: str = "",
         on_reply_sent: OnReplySent = None,
         show_tool_details: bool = True,
         filter_tool_messages: bool = False,
@@ -152,6 +158,9 @@ class ZhaohuChannel(BaseChannel):
         self.client_id = client_id or ""
         self.client_secret = client_secret or ""
         self.custom_card_url = custom_card_url or ""
+        self.cron_task_menu_id = cron_task_menu_id or ""
+        self.cron_task_error_page = cron_task_error_page or ""
+        self.cron_task_sys_id = cron_task_sys_id or ""
 
         # Message dedup: set of processed message IDs with timestamp
         self._processed_message_ids: Dict[str, float] = {}
@@ -193,6 +202,9 @@ class ZhaohuChannel(BaseChannel):
             client_id=os.getenv("ZHAOHU_CLIENT_ID", ""),
             client_secret=os.getenv("ZHAOHU_CLIENT_SECRET", ""),
             custom_card_url=os.getenv("ZHAOHU_CUSTOM_CARD_URL", ""),
+            cron_task_menu_id=os.getenv("ZHAOHU_CRON_TASK_MENU_ID", ""),
+            cron_task_error_page=os.getenv("ZHAOHU_CRON_TASK_ERROR_PAGE", ""),
+            cron_task_sys_id=os.getenv("ZHAOHU_CRON_TASK_SYS_ID", ""),
             on_reply_sent=on_reply_sent,
             dm_policy=os.getenv("ZHAOHU_DM_POLICY", "open"),
             group_policy=os.getenv("ZHAOHU_GROUP_POLICY", "open"),
@@ -233,6 +245,9 @@ class ZhaohuChannel(BaseChannel):
             client_id=_get_str("client_id"),
             client_secret=_get_str("client_secret"),
             custom_card_url=_get_str("custom_card_url"),
+            cron_task_menu_id=_get_str("cron_task_menu_id"),
+            cron_task_error_page=_get_str("cron_task_error_page"),
+            cron_task_sys_id=_get_str("cron_task_sys_id"),
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
             filter_tool_messages=filter_tool_messages,
@@ -508,17 +523,84 @@ class ZhaohuChannel(BaseChannel):
             )
             return (-1, "request failed")
 
-    def _build_task_initiated_card(self, task_content: str) -> list:
+    def _build_claw_url(
+        self,
+        session_id: str,
+        task_id: Optional[str] = None,
+    ) -> str:
+        """Build claw URL for card navigation.
+
+        Generates a URL following the formula:
+        param = { errorPage, to: menuId, type: "toMenu",
+                  queryParam: {sessionId/taskId, origin: 'Y'} }
+        pcParams = encodeURIComponent(btoa(JSON.stringify(param)))
+        pcParams2 = encodeURIComponent(btoa('pcParams='+pcParams))
+        URL = CMBMobileOA:///?pcSysId=${sys_id}&pcParams={pcParams2}
+
+        Args:
+            session_id: Session ID for queryParam
+            task_id: Optional task ID (if provided, uses taskId instead of sessionId)
+
+        Returns:
+            Generated claw URL string
+        """
+        if not self.cron_task_menu_id or not self.cron_task_sys_id:
+            logger.warning(
+                "zhaohu _build_claw_url: missing cron_task_menu_id or "
+                "cron_task_sys_id, returning empty URL",
+            )
+            return ""
+
+        # Build param object
+        if task_id:
+            query_param = {"taskId": task_id, "origin": "Y"}
+        else:
+            query_param = {"sessionId": session_id, "origin": "Y"}
+
+        param = {
+            "errorPage": self.cron_task_error_page,
+            "to": self.cron_task_menu_id,
+            "type": "toMenu",
+            "queryParam": query_param,
+        }
+
+        # Encode: pcParams = encodeURIComponent(btoa(JSON.stringify(param)))
+        param_json = json.dumps(param, separators=(",", ":"))
+        pc_params = url_quote(base64.b64encode(param_json.encode()).decode())
+
+        # Encode: pcParams2 = encodeURIComponent(btoa('pcParams='+pcParams))
+        pc_params_str = f"pcParams={pc_params}"
+        pc_params2 = url_quote(
+            base64.b64encode(pc_params_str.encode()).decode(),
+        )
+
+        # Build final URL
+        url = (
+            f"CMBMobileOA:///?pcSysId={self.cron_task_sys_id}"
+            f"&pcParams={pc_params2}"
+        )
+
+        return url
+
+    def _build_task_initiated_card(
+        self,
+        task_content: str,
+        session_id: str,
+    ) -> list:
         """Build card content for task initiated notification (Template 1).
 
         Used when user message length > 10 (task assignment).
 
         Args:
             task_content: The original task content from user message
+            session_id: Session ID for generating claw URL
 
         Returns:
             Card content array for send_custom_card
         """
+        # Generate claw URL for navigation
+        claw_url = self._build_claw_url(session_id)
+
         # Template 1: Task initiated notification
         card_content = [
             {
@@ -539,7 +621,7 @@ class ZhaohuChannel(BaseChannel):
                         "style": 1,
                         "action": 3,
                         "link": {
-                            "pcUrl": "",  # TODO: placeholder URL
+                            "pcUrl": claw_url,
                         },
                     },
                 ],
@@ -580,7 +662,7 @@ class ZhaohuChannel(BaseChannel):
             status = task.get("status", "pending")
             status_text = task.get("status_text", "待开始")
             time_info = task.get("time_info", "")
-            result_url = task.get("result_url", "")
+            job_id = task.get("job_id", "")
 
             # Determine style and backgroundColor based on status
             if status == "completed":
@@ -626,6 +708,11 @@ class ZhaohuChannel(BaseChannel):
 
             # Operation row (view result button) - only for completed tasks
             if status == "completed":
+                # Generate claw URL using job_id as task_id
+                result_url = self._build_claw_url(
+                    session_id="",
+                    task_id=job_id,
+                )
                 task_list.append(
                     {
                         "type": "operate",
@@ -1216,7 +1303,10 @@ class ZhaohuChannel(BaseChannel):
         )
 
         # Send card notification to user
-        card_content = self._build_task_initiated_card(task_content)
+        card_content = self._build_task_initiated_card(
+            task_content,
+            task_session_id,
+        )
         code, msg = await self.send_custom_card(from_id, card_content)
 
         if code == 0:
