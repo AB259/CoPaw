@@ -94,6 +94,8 @@ export interface TraceListItem {
   start_time: string;
   duration_ms: number | null;
   total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
   model_name: string | null;
   status: string;
   skills_count: number;

@@ -254,6 +254,7 @@ class TraceStore:
             UPDATE swe_tracing_spans SET
                 end_time = %s,
                 duration_ms = %s,
+                input_tokens = %s,
                 output_tokens = %s,
                 tool_output = %s,
                 error = %s,
@@ -264,6 +265,7 @@ class TraceStore:
         params = (
             span.end_time,
             span.duration_ms,
+            span.input_tokens,
             span.output_tokens,
             span.tool_output,
             span.error,
@@ -752,7 +754,8 @@ class TraceStore:
         offset = (page - 1) * page_size
         query = f"""
             SELECT trace_id, user_id, session_id, channel, start_time,
-                   duration_ms, total_tokens, model_name, status,
+                   duration_ms, total_tokens, total_input_tokens, total_output_tokens,
+                   model_name, status,
                    JSON_LENGTH(skills_used) as skills_count
             FROM swe_tracing_traces
             WHERE {where_sql}
@@ -770,6 +773,8 @@ class TraceStore:
                 start_time=row["start_time"],
                 duration_ms=row["duration_ms"],
                 total_tokens=row["total_tokens"] or 0,
+                total_input_tokens=row["total_input_tokens"] or 0,
+                total_output_tokens=row["total_output_tokens"] or 0,
                 model_name=row["model_name"],
                 status=row["status"],
                 skills_count=row["skills_count"] or 0,

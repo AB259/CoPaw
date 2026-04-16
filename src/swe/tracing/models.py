@@ -402,6 +402,8 @@ class TraceListItem(BaseModel):
     start_time: datetime
     duration_ms: Optional[int] = None
     total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
