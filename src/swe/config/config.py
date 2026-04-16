@@ -111,6 +111,30 @@ class ZhaohuConfig(BaseChannelConfig):
             "",
         ),
     )
+    oauth_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_OAUTH_URL",
+            "",
+        ),
+    )
+    client_id: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CLIENT_ID",
+            "",
+        ),
+    )
+    client_secret: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CLIENT_SECRET",
+            "",
+        ),
+    )
+    custom_card_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CUSTOM_CARD_URL",
+            "",
+        ),
+    )
 
 
 class ConsoleConfig(BaseChannelConfig):
