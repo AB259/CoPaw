@@ -68,19 +68,20 @@ def _create_user_summary(trace: Trace) -> dict[str, Any]:
 
 
 class TraceStore:
-    """Store for traces and spans using database storage only."""
+    """Store for traces and spans using database or log-only mode."""
 
     def __init__(
         self,
         config: TracingConfig,
-        db: DatabaseConnection,
+        db: Optional[DatabaseConnection],
         owns_db: bool = False,
     ):
         """Initialize trace store.
 
         Args:
             config: Tracing configuration
-            db: Database connection for persistent storage
+            db: Optional database connection for persistent storage.
+                If None, runs in log-only mode.
             owns_db: Whether this store owns the database connection.
                 If True, close() will close the database connection.
                 If False (default), the connection is shared and should not be closed here.
@@ -92,19 +93,12 @@ class TraceStore:
     async def initialize(self) -> None:
         """Initialize store. Database tables must be created manually."""
         if self.db is None:
-            raise RuntimeError(
-                "Database connection is required for TraceStore. "
-                "Please configure database in tracing config.",
-            )
+            return
+
         if not self.db.is_connected:
-            raise RuntimeError(
-                "Database is not connected. Please check database configuration.",
-            )
-        logger.info(
-            "TraceStore initialized with database (host=%s, database=%s)",
-            self.db.config.host,
-            self.db.config.database,
-        )
+            logger.warning("Database not connected, running in log-only mode")
+            self.db = None
+            return
 
     async def close(self) -> None:
         """Close store. Only closes database connection if this store owns it."""
@@ -119,6 +113,9 @@ class TraceStore:
         Args:
             trace: Trace to create
         """
+        if self.db is None:
+            return
+
         query = """
             INSERT INTO swe_tracing_traces (
                 trace_id, user_id, session_id, channel, start_time,
@@ -155,6 +152,9 @@ class TraceStore:
         Args:
             trace: Trace to update
         """
+        if self.db is None:
+            return
+
         query = """
             UPDATE swe_tracing_traces SET
                 end_time = %s,
@@ -195,6 +195,9 @@ class TraceStore:
         Returns:
             Trace or None
         """
+        if self.db is None:
+            return None
+
         query = "SELECT * FROM swe_tracing_traces WHERE trace_id = %s"
         row = await self.db.fetch_one(query, (trace_id,))
         if row is None:
@@ -209,6 +212,9 @@ class TraceStore:
         Args:
             span: Span to create
         """
+        if self.db is None:
+            return
+
         query = """
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, parent_span_id, name, event_type,
@@ -238,7 +244,7 @@ class TraceStore:
             span.skill_name,
             span.mcp_server,
             json.dumps(span.tool_input) if span.tool_input else None,
-            span.tool_output,
+            span.output,
             span.error,
             json.dumps(span.metadata) if span.metadata else None,
         )
@@ -250,6 +256,9 @@ class TraceStore:
         Args:
             span: Span to update
         """
+        if self.db is None:
+            return
+
         query = """
             UPDATE swe_tracing_spans SET
                 end_time = %s,
@@ -286,6 +295,9 @@ class TraceStore:
         Returns:
             List of spans
         """
+        if self.db is None:
+            return []
+
         query = "SELECT * FROM swe_tracing_spans WHERE trace_id = %s ORDER BY start_time"
         rows = await self.db.fetch_all(query, (trace_id,))
         return [self._row_to_span(row) for row in rows]
@@ -300,6 +312,10 @@ class TraceStore:
         """
         if not spans:
             return
+
+        if self.db is None:
+            return
+
         query = """
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, parent_span_id, name, event_type,
@@ -403,12 +419,6 @@ class TraceStore:
             start_date = datetime.now() - timedelta(days=30)
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)  # Include today
-
-        logger.debug(
-            "get_overview_stats: start_date=%s, end_date=%s",
-            start_date,
-            end_date,
-        )
 
         # Basic stats
         total_users = await self._db_get_total_users(start_date, end_date)
@@ -1359,12 +1369,6 @@ class TraceStore:
         """
         row = await self.db.fetch_one(query, (start_date, end_date))
         result = row["total_users"] if row else 0
-        logger.debug(
-            "_db_get_total_users: start=%s, end=%s, result=%s",
-            start_date,
-            end_date,
-            result,
-        )
         return result
 
     async def _db_get_online_users(self) -> tuple[int, list[str]]:

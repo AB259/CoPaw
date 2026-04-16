@@ -114,7 +114,6 @@ class SkillInvocationDetector:
             skills: List of skill names that are currently enabled
         """
         self._enabled_skills = set(skills)
-        logger.debug("Enabled skills set: %s", skills)
 
     def detect_from_user_message(
         self,
@@ -142,11 +141,6 @@ class SkillInvocationDetector:
         if skill:
             self._message_detected_skill = skill
             self._message_detected_confidence = confidence
-            logger.debug(
-                "Layer 0 detected skill '%s' from user message (confidence: %.2f)",
-                skill,
-                confidence,
-            )
 
         return skill, confidence
 
@@ -270,7 +264,7 @@ class SkillInvocationDetector:
 
         # Start new skill if none active
         if not current and primary_skill:
-            await self._start_skill(
+            await self.start_skill(
                 primary_skill,
                 trigger_tool=tool_name,
                 trigger_reason="declared",
@@ -509,7 +503,7 @@ class SkillInvocationDetector:
         if skill in self._idle_counters:
             self._idle_counters[skill] = 0
 
-    async def _start_skill(
+    async def start_skill(
         self,
         skill_name: str,
         trigger_tool: str,
@@ -524,20 +518,11 @@ class SkillInvocationDetector:
             trigger_reason: How the skill was detected
             confidence: Attribution confidence
         """
-        # Push to context manager
-        self._context_manager.push_skill(
-            skill_name,
-            trigger_reason=trigger_reason,
-            confidence=confidence,
-        )
-
-        # Update state
-        self._update_skill_state(skill_name)
-
-        # Emit tracing event
+        # Emit tracing event first to get span_id
+        span_id = None
         if self._trace_manager and self._trace_id:
             try:
-                await self._trace_manager.emit_skill_invocation(
+                span_id = await self._trace_manager.emit_skill_invocation(
                     trace_id=self._trace_id,
                     skill_name=skill_name,
                     user_id=self._user_id,
@@ -550,20 +535,31 @@ class SkillInvocationDetector:
                     },
                 )
             except Exception as e:
-                logger.debug("Failed to emit skill start event: %s", e)
+                logger.warning("Failed to emit skill start event: %s", e)
 
-        logger.debug(
+        # Push to context manager with span_id
+        self._context_manager.push_skill(
+            skill_name,
+            trigger_reason=trigger_reason,
+            confidence=confidence,
+            span_id=span_id,
+        )
+
+        # Update state
+        self._update_skill_state(skill_name)
+
+        logger.info(
             "Started skill '%s' (reason: %s, confidence: %.2f)",
             skill_name,
             trigger_reason,
             confidence,
         )
 
-    async def _end_skill(self, skill_name: str) -> None:
+    async def _end_skill(self, _skill_name: str) -> None:
         """End a skill invocation.
 
         Args:
-            skill_name: Skill to end
+            _skill_name: Skill to end (unused, kept for API consistency)
         """
         # Pop from context manager
         context = self._context_manager.pop_skill()
@@ -571,14 +567,12 @@ class SkillInvocationDetector:
         if context is None:
             return
 
-        # Emit tracing event
-        if self._trace_manager and self._trace_id:
+        # Emit tracing event with span_id from context
+        if self._trace_manager and self._trace_id and context.span_id:
             try:
-                # Find the span_id for this skill invocation
-                # The span would have been created on start
                 await self._trace_manager.end_skill_invocation(
                     trace_id=self._trace_id,
-                    span_id="",  # Will be handled by context
+                    span_id=context.span_id,
                     skill_output=json.dumps(
                         {
                             "tools_called": context.tools_called,
@@ -589,14 +583,7 @@ class SkillInvocationDetector:
                     ),
                 )
             except Exception as e:
-                logger.debug("Failed to emit skill end event: %s", e)
-
-        logger.debug(
-            "Ended skill '%s' (tools: %d, mcp: %d)",
-            skill_name,
-            len(context.tools_called),
-            len(context.mcp_tools_called),
-        )
+                logger.warning("Failed to emit skill end event: %s", e)
 
     async def on_reasoning_end(self) -> None:
         """Handle end of LLM reasoning.

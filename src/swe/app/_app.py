@@ -264,38 +264,34 @@ async def lifespan(
         ).lower() in ("true", "1", "yes")
 
         if tracing_enabled:
-            # Tracing requires database connection
-            if db_connection is None:
-                logger.warning(
-                    "Tracing is enabled but database connection is not available. "
-                    "Tracing will be disabled.",
-                )
-            else:
-                # Read tracing config from environment
-                def get_int(key: str, default: int) -> int:
-                    try:
-                        return int(os.environ.get(key, str(default)))
-                    except (TypeError, ValueError):
-                        return default
+            # Read tracing config from environment
+            def get_int(key: str, default: int) -> int:
+                try:
+                    return int(os.environ.get(key, str(default)))
+                except (TypeError, ValueError):
+                    return default
 
-                tracing_config = TracingConfig(
-                    enabled=True,
-                    batch_size=get_int("SWE_TRACING_BATCH_SIZE", 100),
-                    flush_interval=get_int("SWE_TRACING_FLUSH_INTERVAL", 5),
-                    retention_days=get_int("SWE_TRACING_RETENTION_DAYS", 30),
-                    sanitize_output=os.environ.get(
-                        "SWE_TRACING_SANITIZE_OUTPUT",
-                        "true",
-                    ).lower()
-                    in ("true", "1", "yes"),
-                    max_output_length=get_int(
-                        "SWE_TRACING_MAX_OUTPUT_LENGTH",
-                        500,
-                    ),
-                    database=db_connection.config,
-                )
-                await init_trace_manager(tracing_config, db_connection)
-                logger.info("Tracing manager initialized")
+            tracing_config = TracingConfig(
+                enabled=True,
+                batch_size=get_int("SWE_TRACING_BATCH_SIZE", 100),
+                flush_interval=get_int("SWE_TRACING_FLUSH_INTERVAL", 5),
+                retention_days=get_int("SWE_TRACING_RETENTION_DAYS", 30),
+                sanitize_output=os.environ.get(
+                    "SWE_TRACING_SANITIZE_OUTPUT",
+                    "true",
+                ).lower()
+                in ("true", "1", "yes"),
+                max_output_length=get_int(
+                    "SWE_TRACING_MAX_OUTPUT_LENGTH",
+                    500,
+                ),
+                database=db_connection.config if db_connection else None,
+            )
+            await init_trace_manager(tracing_config, db_connection)
+            logger.info(
+                "Tracing manager initialized (db_mode=%s)",
+                db_connection is not None,
+            )
         else:
             logger.info("Tracing is disabled via SWE_TRACING_ENABLED")
     except Exception as e:
