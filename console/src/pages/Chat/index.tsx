@@ -2,6 +2,7 @@
 import {
   AgentScopeRuntimeWebUI,
   IAgentScopeRuntimeWebUIOptions,
+  type IAgentScopeRuntimeWebUISenderOptions,
   type IAgentScopeRuntimeWebUIRef,
   useChatAnywhereSessionsState,
 } from "@/components/agentscope-chat";
@@ -59,6 +60,12 @@ import {
 } from "./utils";
 import { deriveChatTaskState } from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
+import RuntimeRequestCard from "./components/RuntimeRequestCard";
+import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import type {
+  ChatRuntimeRequestCardData,
+  ChatRuntimeResponseCardData,
+} from "./messageMeta";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const TASK_PAGE_POLL_MS = 30_000;
@@ -83,6 +90,15 @@ interface CommandSuggestion {
   value: string;
   description: string;
 }
+
+type InputMessage = {
+  role?: string;
+  content?: unknown;
+};
+
+type AttachmentTriggerProps = {
+  disabled?: boolean;
+};
 
 function renderSuggestionLabel(command: string, description: string) {
   return (
@@ -131,7 +147,7 @@ function useIMEComposition(isChatActive: () => boolean) {
       if (target?.tagName === "TEXTAREA" && e.key === "Enter" && !e.shiftKey) {
         // e.isComposing is the standard flag; isComposingRef covers the
         // post-compositionend grace period needed by Safari.
-        if (isComposingRef.current || (e as any).isComposing) {
+        if (isComposingRef.current || e.isComposing) {
           e.stopPropagation();
           e.stopImmediatePropagation();
           e.preventDefault();
@@ -707,7 +723,7 @@ export default function ChatPage() {
         requestBody.session_id;
       if (backendChatId) {
         const userText = rewrittenInput
-          .filter((m: any) => m.role === "user")
+          .filter((m: InputMessage) => m.role === "user")
           .map(extractUserMessageText)
           .join("\n")
           .trim();
@@ -821,7 +837,7 @@ export default function ChatPage() {
   // ==================== Drag & drop end ====================
 
   const options = useMemo(() => {
-    const i18nConfig = getDefaultConfig(t);
+    const i18nConfig = getDefaultConfig(t) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
     const commandSuggestions: CommandSuggestion[] = [
       {
         command: "/clear",
@@ -844,6 +860,10 @@ export default function ChatPage() {
         description: t("chat.commands.deny.description"),
       },
     ];
+
+    const senderConfig = i18nConfig.sender as
+      | IAgentScopeRuntimeWebUISenderOptions
+      | undefined;
 
     const handleBeforeSubmit = async () => {
       if (isComposingRef.current) return false;
@@ -893,11 +913,11 @@ export default function ChatPage() {
         // ==================== 首页改版结束 ====================
       },
       sender: {
-        ...(i18nConfig as any)?.sender,
+        ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
         allowSpeech: true,
         attachments: {
-          trigger: function (props: any) {
+          trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
             const tooltipKey = multimodalCaps.supportsMultimodal
               ? multimodalCaps.supportsImage && !multimodalCaps.supportsVideo
                 ? "chat.attachments.tooltipImageOnly"
@@ -926,6 +946,15 @@ export default function ChatPage() {
         multiple: true,
         hideBuiltInSessionList: true,
         api: sessionApi,
+      },
+      cards: {
+        AgentScopeRuntimeRequestCard: (props: {
+          data: ChatRuntimeRequestCardData;
+        }) => <RuntimeRequestCard {...props} />,
+        AgentScopeRuntimeResponseCard: (props: {
+          data: ChatRuntimeResponseCardData;
+          isLast?: boolean;
+        }) => <RuntimeResponseCard {...props} />,
       },
       api: {
         ...defaultConfig.api,
@@ -980,7 +1009,17 @@ export default function ChatPage() {
         replace: true,
       },
     } as unknown as IAgentScopeRuntimeWebUIOptions;
-  }, [customFetch, copyResponse, handleFileUpload, t, isDark, multimodalCaps]);
+  }, [
+    brandTheme.avatar,
+    brandTheme.brandName,
+    customFetch,
+    copyResponse,
+    handleFileUpload,
+    isComposingRef,
+    isDark,
+    multimodalCaps,
+    t,
+  ]);
 
   // ==================== 首页改版 (Kun He) ====================
   // 新建聊天：通过 chatRef 调用后端 createSession API
