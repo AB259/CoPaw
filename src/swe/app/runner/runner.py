@@ -483,14 +483,7 @@ class AgentRunner(Runner):
             auth_token = getattr(request, "auth_token", None)
             cookie_header = getattr(request, "cookie", None)
             passthrough_headers = dict[str, str](get_current_passthrough_headers() or {})
-            existing_header_names = {
-                key.lower() for key in passthrough_headers
-            }
-            if auth_token and "authorization" not in existing_header_names:
-                passthrough_headers["Authorization"] = (
-                    f"Bearer {auth_token}"
-                )
-            if cookie_header and "cookie" not in existing_header_names:
+            if cookie_header:
                 passthrough_headers["cookie"] = cookie_header
             mcp_clients = await _build_and_connect_mcp_clients(
                 agent_config.mcp,

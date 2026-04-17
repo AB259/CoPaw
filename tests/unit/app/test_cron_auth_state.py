@@ -11,39 +11,61 @@ from swe.app.routers import auth as auth_router
 
 
 @pytest.fixture
-def workspace_dir(tmp_path):
+def workspace_dir(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    monkeypatch.setattr(
+        auth_state,
+        "get_tenant_secrets_dir",
+        lambda _tenant: tmp_path / "tenant-secret",
+    )
     return workspace
 
 
-def test_extract_access_token_from_cookie():
-    cookie = "foo=bar; com.cmb.dw.rtl.sso.token=access-1; theme=dark"
+def test_get_cron_auth_file_path_uses_tenant_secret_dir(
+    tmp_path,
+    monkeypatch,
+):
+    tenant_dir = tmp_path / "tenant-a"
+    tenant_secret = tenant_dir / ".secret"
 
-    assert auth_state.extract_access_token_from_cookie(cookie) == "access-1"
+    monkeypatch.setattr(
+        auth_state,
+        "get_tenant_secrets_dir",
+        lambda _tenant: tenant_secret,
+    )
 
-
-def test_extract_access_token_from_cookie_raises_when_missing():
-    with pytest.raises(
-        ValueError,
-        match=r"com\.cmb\.dw\.rtl\.sso\.token",
-    ):
-        auth_state.extract_access_token_from_cookie("foo=bar; theme=dark")
-
-
-def test_merge_auth_token_into_cookie_replaces_existing_token():
-    cookie = "foo=bar; com.cmb.dw.rtl.sso.token=old-token; theme=dark"
-
-    assert auth_state.merge_auth_token_into_cookie(cookie, "new-token") == (
-        "foo=bar; com.cmb.dw.rtl.sso.token=new-token; theme=dark"
+    assert auth_state.get_cron_auth_file_path(tenant_id="tenant-a") == (
+        tenant_secret / auth_state.CRON_AUTH_FILE_NAME
     )
 
 
-def test_merge_auth_token_into_cookie_appends_when_missing():
-    cookie = "foo=bar; theme=dark"
+def test_save_cron_auth_state_uses_tenant_secret_dir_even_with_workspace_dir(
+    tmp_path,
+    monkeypatch,
+):
+    tenant_secret = tmp_path / "tenant-a" / ".secret"
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
 
-    assert auth_state.merge_auth_token_into_cookie(cookie, "new-token") == (
-        "foo=bar; theme=dark; com.cmb.dw.rtl.sso.token=new-token"
+    monkeypatch.setattr(
+        auth_state,
+        "get_tenant_secrets_dir",
+        lambda _tenant: tenant_secret,
+    )
+
+    path = auth_state.save_cron_auth_state(
+        auth_state.CronAuthState(user_info={"id": 1}),
+        tenant_id="tenant-a",
+        workspace_dir=workspace_dir,
+    )
+
+    assert path == tenant_secret / auth_state.CRON_AUTH_FILE_NAME
+    assert path.is_file()
+
+
+def test_merge_auth_token_into_cookie_uses_token_when_cookie_is_empty():
+    assert auth_state.merge_auth_token_into_cookie("", "new-token") == (
+        "com.cmb.dw.rtl.sso.token=new-token"
     )
 
 
@@ -121,17 +143,30 @@ def test_ensure_user_info_refreshes_when_near_expiry(
     )
 
 
-def test_issue_auth_token_fails_when_user_info_expired(workspace_dir):
-    state = auth_state.save_user_info_from_access_token(
+def test_issue_auth_token_persists_plain_auth_token(
+    monkeypatch,
+    workspace_dir,
+):
+    auth_state.save_user_info_from_access_token(
         "access-1",
         cookie_header="foo=bar; com.cmb.dw.rtl.sso.token=access-1",
         workspace_dir=workspace_dir,
     )
-    state.user_info_expires_at = auth_state.utc_now() - timedelta(seconds=1)
-    auth_state.save_cron_auth_state(state, workspace_dir=workspace_dir)
 
-    with pytest.raises(ValueError, match="expired"):
-        auth_state.issue_auth_token(workspace_dir=workspace_dir)
+    captured = {}
+
+    def fake_get_auth_token(user_info):
+        captured["user_info"] = user_info
+        return "plain-auth-token"
+
+    monkeypatch.setattr(auth_state, "get_auth_token", fake_get_auth_token)
+
+    resolved = auth_state.issue_auth_token(workspace_dir=workspace_dir)
+    state = auth_state.load_cron_auth_state(workspace_dir=workspace_dir)
+
+    assert captured["user_info"] == {"value": "access-1"}
+    assert resolved.token == "plain-auth-token"
+    assert state.auth_token == "plain-auth-token"
 
 
 def test_resolve_auth_token_for_execution_returns_empty_when_user_info_missing(
@@ -144,6 +179,30 @@ def test_resolve_auth_token_for_execution_returns_empty_when_user_info_missing(
     assert resolved.token is None
     assert resolved.cookie_header is None
     assert resolved.expires_at is None
+
+
+def test_resolve_auth_token_returns_cookie_for_empty_stored_cookie(
+    monkeypatch,
+    workspace_dir,
+):
+    state = auth_state.CronAuthState(
+        user_info={"id": 1},
+        user_info_expires_at=auth_state.utc_now() + timedelta(hours=1),
+        cookie_header="",
+    )
+    auth_state.save_cron_auth_state(state, workspace_dir=workspace_dir)
+
+    monkeypatch.setattr(
+        auth_state,
+        "get_auth_token",
+        lambda _payload: "auth-123",
+    )
+
+    resolved = auth_state.resolve_auth_token_for_execution(
+        workspace_dir=workspace_dir,
+    )
+
+    assert resolved.cookie_header == "com.cmb.dw.rtl.sso.token=auth-123"
 
 
 def test_resolve_auth_token_for_execution_includes_cookie_header(

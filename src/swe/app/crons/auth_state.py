@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -11,10 +10,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field
 
-from ...config.utils import (
-    get_tenant_secrets_dir,
-    get_tenant_working_dir,
-)
+from ...config.utils import get_tenant_secrets_dir
 from ...utils.tools import (
     get_auth_token,
     get_user_info,
@@ -112,9 +108,9 @@ def extract_access_token_from_cookie(cookie_header: str) -> str:
 def merge_auth_token_into_cookie(
     cookie_header: str | None,
     auth_token: str,
-) -> str | None:
-    if not cookie_header:
-        return None
+) -> str:
+    if not cookie_header or not cookie_header.strip():
+        return f"{ACCESS_TOKEN_COOKIE_NAME}={auth_token}"
 
     merged_parts: list[str] = []
     replaced = False
@@ -135,23 +131,7 @@ def get_cron_auth_file_path(
     tenant_id: str | None = None,
     workspace_dir: str | Path | None = None,
 ) -> Path:
-    if workspace_dir:
-        return (
-            Path(workspace_dir).expanduser()
-            / ".secret"
-            / CRON_AUTH_FILE_NAME
-        )
-
-    tenant_working_dir = get_tenant_working_dir(tenant_id)
-    workspace_secret_path = (
-        tenant_working_dir
-        / "workspaces"
-        / "default"
-        / ".secret"
-        / CRON_AUTH_FILE_NAME
-    )
-    if workspace_secret_path.is_file():
-        return workspace_secret_path
+    _ = workspace_dir
     return get_tenant_secrets_dir(tenant_id) / CRON_AUTH_FILE_NAME
 
 
@@ -360,9 +340,7 @@ def issue_auth_token(
     if not state.user_info:
         raise ValueError("cron auth user_info is not configured")
 
-    auth_token = get_auth_token(
-        json.dumps(state.user_info, ensure_ascii=False),
-    )
+    auth_token = get_auth_token(state.user_info)
     expires_at = utc_now() + DEFAULT_AUTH_TOKEN_TTL
     state.auth_token = auth_token
     state.auth_token_expires_at = expires_at
