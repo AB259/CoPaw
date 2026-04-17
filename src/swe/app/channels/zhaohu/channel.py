@@ -653,7 +653,7 @@ class ZhaohuChannel(BaseChannel):
                         "type": [3],
                         "content": "点击跳转小助claw版查看",
                         "style": 1,
-                        "action": 3,
+                        "action": 1,
                         "link": {
                             "pcUrl": claw_url,
                         },
@@ -756,7 +756,9 @@ class ZhaohuChannel(BaseChannel):
                                 "style": 1,
                                 "action": 1,
                                 "disable": 0,
-                                "link": result_url,
+                                "link": {
+                                    "pcUrl": result_url,
+                                },
                             },
                         ],
                     },
