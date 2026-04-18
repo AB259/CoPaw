@@ -303,10 +303,11 @@ async def lifespan(
             traceback.format_exc(),
         )
 
-    # --- Initialize instance module ---
-    # from .instance.router import init_instance_module
-    # init_instance_module(db_connection)
-    # logger.info("Instance module initialized")
+    # --- Initialize instance module config---
+    from .instance.router import init_instance_module
+
+    init_instance_module(db_connection)
+    logger.info("Instance module initialized")
 
     # --- Initialize greeting and featured_case modules ---
     if db_connection is not None:

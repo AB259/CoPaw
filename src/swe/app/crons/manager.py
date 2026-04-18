@@ -34,6 +34,9 @@ from .models import CronJobSpec, CronJobState, CronTaskView, JobsFile
 from .repo.base import BaseJobRepository
 
 HEARTBEAT_JOB_ID = "_heartbeat"
+AUTO_PAUSE_UNREAD_THRESHOLD = 3
+AUTO_PAUSE_REASON = "auto_unread_threshold"
+MANUAL_PAUSE_REASON = "manual"
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -569,6 +572,248 @@ class CronManager:  # pylint: disable=too-many-public-methods
     def get_state(self, job_id: str) -> CronJobState:
         return self._states.get(job_id, CronJobState())
 
+    def _filter_jobs_by_user(
+        self,
+        jobs: list[CronJobSpec],
+        user_id: str,
+    ) -> list[CronJobSpec]:
+        """Filter jobs that belong to the given user.
+
+        Args:
+            jobs: List of all jobs
+            user_id: User's sapId
+
+        Returns:
+            List of jobs with tenant_id matching user_id
+        """
+        user_jobs = []
+        for job in jobs:
+            # Check tenant_id match
+            if job.tenant_id and job.tenant_id == user_id:
+                user_jobs.append(job)
+        return user_jobs
+
+    def _calculate_run_times_on_date(
+        self,
+        job: CronJobSpec,
+        date: datetime,
+    ) -> list[datetime]:
+        """Calculate all scheduled run times for a job on a given date.
+
+        Args:
+            job: The cron job specification
+            date: The date to calculate run times for
+
+        Returns:
+            List of scheduled run times on that date
+        """
+        trigger = self._build_trigger(job)
+
+        start_of_day = date.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if start_of_day.tzinfo is None:
+            start_of_day = start_of_day.replace(tzinfo=timezone.utc)
+
+        run_times: list[datetime] = []
+        next_fire = trigger.get_next_fire_time(None, start_of_day)
+        safety_limit = 20
+
+        while next_fire and len(run_times) < safety_limit:
+            fire_date = next_fire.date()
+            query_date = date.date()
+            if fire_date == query_date:
+                run_times.append(next_fire)
+                next_fire = trigger.get_next_fire_time(next_fire, next_fire)
+            elif fire_date > query_date:
+                break
+            else:
+                next_fire = trigger.get_next_fire_time(next_fire, next_fire)
+
+        return run_times
+
+    def _determine_task_status(
+        self,
+        scheduled_time: datetime,
+        state: CronJobState,
+        date: datetime,
+    ) -> str:
+        """Determine task status based on schedule and execution state.
+
+        Args:
+            scheduled_time: The scheduled execution time
+            state: The job's current state
+            date: The query date
+
+        Returns:
+            Status string: "completed", "in_progress", "pending", "error", "cancelled"
+        """
+        now = datetime.now(timezone.utc)
+        last_run = state.last_run_at
+
+        if state.last_status == "running":
+            return "in_progress"
+        if scheduled_time > now:
+            return "pending"
+        if last_run and last_run.date() == date.date():
+            if state.last_status == "success":
+                return "completed"
+            if state.last_status in ("error", "cancelled"):
+                return state.last_status
+            return "in_progress"
+        return "pending"
+
+    def _build_task_status_display(
+        self,
+        task_status: str,
+        scheduled_time: Optional[datetime],
+        last_run: Optional[datetime],
+    ) -> tuple[str, str]:
+        """Build status_text and time_info for display.
+
+        Args:
+            task_status: The task status
+            scheduled_time: Scheduled execution time
+            last_run: Last actual run time
+
+        Returns:
+            Tuple of (status_text, time_info)
+        """
+        status_map = {
+            "completed": ("已完成", "已执行完成"),
+            "in_progress": ("进行中", "任务执行中"),
+            "pending": ("待开始", "等待执行"),
+            "error": ("执行失败", "执行失败"),
+            "cancelled": ("已取消", "任务已取消"),
+        }
+
+        if task_status not in status_map:
+            return ("未知", "")
+
+        status_text, default_info = status_map[task_status]
+
+        if task_status == "completed" and last_run:
+            time_info = f"{last_run.strftime('%H:%M')}已完成"
+        elif task_status == "in_progress" and last_run:
+            time_info = f"{last_run.strftime('%H:%M')}已启动"
+        elif task_status == "error" and last_run:
+            time_info = f"{last_run.strftime('%H:%M')}执行失败"
+        elif task_status == "pending" and scheduled_time:
+            time_info = f"将于{scheduled_time.strftime('%H:%M')}执行"
+        else:
+            time_info = default_info
+
+        return (status_text, time_info)
+
+    async def query_user_tasks_by_date(
+        self,
+        user_id: str,
+        date: datetime,
+    ) -> list[Dict[str, Any]]:
+        """Query all tasks for a user on a specific date.
+
+        This method finds all jobs that belong to the user and calculates
+        their scheduled run times and current status for the given date.
+
+        Args:
+            user_id: User's sapId/tenant_id
+            date: The date to query tasks for
+
+        Returns:
+            List of task info dicts with job_id, task_name, status, etc.
+        """
+        jobs = await self.list_jobs()
+        # pylint: disable=protected-access
+        repo_path = getattr(self._repo, "_path", "unknown")
+        # pylint: enable=protected-access
+        logger.info(
+            "query_user_tasks_by_date: list_jobs returned %d total jobs, "
+            "user_id=%s, repo_path=%s",
+            len(jobs),
+            user_id,
+            repo_path,
+        )
+        for job in jobs:
+            logger.info(
+                "query_user_tasks_by_date: job.id=%s, job.tenant_id=%s, "
+                "job.name=%s, job.enabled=%s",
+                job.id,
+                job.tenant_id,
+                job.name,
+                job.enabled,
+            )
+        user_jobs = self._filter_jobs_by_user(jobs, user_id)
+        logger.info(
+            "query_user_tasks_by_date: filtered %d jobs for user_id=%s",
+            len(user_jobs),
+            user_id,
+        )
+        tasks: list[Dict[str, Any]] = []
+
+        for job in user_jobs:
+            if not job.enabled:
+                continue
+
+            state = self.get_state(job.id)
+
+            try:
+                run_times = self._calculate_run_times_on_date(job, date)
+
+                for scheduled_time in run_times:
+                    task_status = self._determine_task_status(
+                        scheduled_time,
+                        state,
+                        date,
+                    )
+                    status_text, time_info = self._build_task_status_display(
+                        task_status,
+                        scheduled_time,
+                        state.last_run_at,
+                    )
+
+                    tasks.append(
+                        {
+                            "job_id": job.id,
+                            "task_name": job.name,
+                            "status": task_status,
+                            "status_text": status_text,
+                            "scheduled_time": scheduled_time,
+                            "last_run_at": state.last_run_at,
+                            "last_status": state.last_status,
+                            "time_info": time_info,
+                            "result_url": "",
+                        },
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to calculate scheduled time for job %s: %s",
+                    job.id,
+                    repr(e),
+                )
+                tasks.append(
+                    {
+                        "job_id": job.id,
+                        "task_name": job.name,
+                        "status": "pending",
+                        "status_text": "待开始",
+                        "scheduled_time": None,
+                        "last_run_at": state.last_run_at,
+                        "last_status": state.last_status,
+                        "time_info": "等待执行",
+                        "result_url": "",
+                    },
+                )
+
+        tasks.sort(
+            key=lambda t: t.get("scheduled_time")
+            or datetime.max.replace(tzinfo=timezone.utc),
+        )
+        return tasks
+
     # ----- write/control -----
 
     async def create_or_replace_job(self, spec: CronJobSpec) -> None:
@@ -630,10 +875,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """
         async with self._lock:
             _, job, _ = await self._mutate_jobs_file_locked(
-                lambda jobs_file: self._set_job_enabled_in_jobs_file(
+                lambda jobs_file: self._set_job_paused_in_jobs_file(
                     jobs_file,
                     job_id,
-                    enabled=False,
+                    reason=MANUAL_PAUSE_REASON,
                 ),
             )
             if job is None:
@@ -657,10 +902,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """
         async with self._lock:
             _, job, _ = await self._mutate_jobs_file_locked(
-                lambda jobs_file: self._set_job_enabled_in_jobs_file(
+                lambda jobs_file: self._set_job_resumed_in_jobs_file(
                     jobs_file,
                     job_id,
-                    enabled=True,
                 ),
             )
             if job is None:
@@ -758,6 +1002,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
             ),
             last_scheduled_run_at=meta.get("task_last_scheduled_run_at"),
             is_running=state.last_status == "running",
+            is_paused=bool(meta.get("pause_reason")),
+            pause_reason=meta.get("pause_reason"),
+            auto_paused_at=meta.get("auto_paused_at"),
         )
 
     # ----- callbacks -----
@@ -1076,6 +1323,84 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return True, updated
         return False, None
 
+    def _set_job_paused_in_jobs_file(
+        self,
+        jobs_file: JobsFile,
+        job_id: str,
+        *,
+        reason: str,
+        auto_paused_at: Optional[datetime] = None,
+        unread_count_at_pause: Optional[int] = None,
+    ) -> tuple[bool, Optional[CronJobSpec]]:
+        for index, job in enumerate(jobs_file.jobs):
+            if job.id != job_id:
+                continue
+            meta = dict(job.meta or {})
+            changed = False
+            if job.enabled:
+                changed = True
+            if meta.get("pause_reason") != reason:
+                meta["pause_reason"] = reason
+                changed = True
+            if (
+                auto_paused_at is not None
+                and meta.get("auto_paused_at") != auto_paused_at
+            ):
+                meta["auto_paused_at"] = auto_paused_at
+                changed = True
+            if (
+                unread_count_at_pause is not None
+                and meta.get("unread_count_at_pause") != unread_count_at_pause
+            ):
+                meta["unread_count_at_pause"] = unread_count_at_pause
+                changed = True
+            if not changed:
+                return False, job
+            updated = job.model_copy(
+                update={
+                    "enabled": False,
+                    "meta": meta,
+                },
+            )
+            jobs_file.jobs[index] = updated
+            return True, updated
+        return False, None
+
+    def _set_job_resumed_in_jobs_file(
+        self,
+        jobs_file: JobsFile,
+        job_id: str,
+    ) -> tuple[bool, Optional[CronJobSpec]]:
+        for index, job in enumerate(jobs_file.jobs):
+            if job.id != job_id:
+                continue
+            meta = dict(job.meta or {})
+            changed = False
+            if not job.enabled:
+                changed = True
+            if int(meta.get("task_unread_execution_count", 0) or 0) != 0:
+                meta["task_unread_execution_count"] = 0
+                changed = True
+            for key in (
+                "pause_reason",
+                "auto_paused_at",
+                "unread_count_at_pause",
+            ):
+                if key in meta:
+                    meta.pop(key, None)
+                    changed = True
+            if not changed:
+                return False, job
+            updated = job.model_copy(
+                update={
+                    "enabled": True,
+                    "meta": meta,
+                },
+            )
+            jobs_file.jobs[index] = updated
+            return True, updated
+        return False, None
+
     def _disable_invalid_jobs_in_jobs_file(
         self,
         jobs_file: JobsFile,
@@ -1172,13 +1497,20 @@ class CronManager:  # pylint: disable=too-many-public-methods
             creator_user_id,
         )
         async with self._lock:
-            await self._mutate_jobs_file_locked(
+            _, auto_paused, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._apply_task_execution_success(
                     jobs_file,
                     job.id,
                     preview,
                 ),
             )
+            if (
+                auto_paused
+                and self._started
+                and self._scheduler is not None
+                and self._scheduler.get_job(job.id)
+            ):
+                self._scheduler.pause_job(job.id)
 
     async def _load_task_preview_text(
         self,
@@ -1209,12 +1541,28 @@ class CronManager:  # pylint: disable=too-many-public-methods
             meta = dict(job.meta or {})
             meta["task_has_scheduled_result"] = True
             meta["task_last_scheduled_preview"] = preview[:10]
-            meta["task_unread_execution_count"] = (
+            unread_count = (
                 int(meta.get("task_unread_execution_count", 0) or 0) + 1
             )
+            meta["task_unread_execution_count"] = unread_count
             meta["task_last_scheduled_run_at"] = datetime.now(timezone.utc)
-            jobs_file.jobs[index] = job.model_copy(update={"meta": meta})
-            return True, True
+            updated = job.model_copy(update={"meta": meta})
+            auto_paused = False
+            if unread_count >= AUTO_PAUSE_UNREAD_THRESHOLD and job.enabled:
+                auto_paused = True
+                meta["pause_reason"] = AUTO_PAUSE_REASON
+                meta["auto_paused_at"] = meta["task_last_scheduled_run_at"]
+                meta["unread_count_at_pause"] = unread_count
+                updated = job.model_copy(
+                    update={
+                        "enabled": False,
+                        "meta": meta,
+                    },
+                )
+                jobs_file.jobs[index] = updated
+                return True, auto_paused
+            jobs_file.jobs[index] = updated
+            return True, auto_paused
         return False, False
 
     def _build_wplus_link(self, session_id: str) -> str:
