@@ -15,6 +15,8 @@ import ChannelsPage from "../../pages/Control/Channels";
 import SessionsPage from "../../pages/Control/Sessions";
 import CronJobsPage from "../../pages/Control/CronJobs";
 import CasesPage from "../../pages/Control/Cases";
+import GreetingPage from "../../pages/Control/Greeting";
+import FeaturedCasesPage from "../../pages/Control/FeaturedCases";
 import HeartbeatPage from "../../pages/Control/Heartbeat";
 import AgentConfigPage from "../../pages/Agent/Config";
 import SkillsPage from "../../pages/Agent/Skills";
@@ -39,6 +41,8 @@ const pathToKey: Record<string, string> = {
   "/sessions": "sessions",
   "/cron-jobs": "cron-jobs",
   "/cases-management": "cases-management",
+  "/greeting-management": "greeting-management",
+  "/featured-cases-management": "featured-cases-management",
   "/heartbeat": "heartbeat",
   "/skills": "skills",
   "/skill-pool": "skill-pool",
@@ -97,6 +101,11 @@ export default function MainLayout() {
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/cron-jobs" element={<CronJobsPage />} />
               <Route path="/cases-management" element={<CasesPage />} />
+              <Route path="/greeting-management" element={<GreetingPage />} />
+              <Route
+                path="/featured-cases-management"
+                element={<FeaturedCasesPage />}
+              />
               <Route path="/heartbeat" element={<HeartbeatPage />} />
               <Route path="/skills" element={<SkillsPage />} />
               <Route path="/skill-pool" element={<SkillPoolPage />} />

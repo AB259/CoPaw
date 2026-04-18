@@ -70,12 +70,17 @@ export function buildAuthHeaders(): Record<string, string> {
     headers["X-Source-Id"] = iframeContext.source;
   }
 
-  // 6. Space（来自 iframe context）
+  // 6. BBK ID（来自 iframe context，用于维度配置匹配）
+  if (iframeContext.bbk) {
+    headers["X-Bbk-Id"] = iframeContext.bbk;
+  }
+
+  // 7. Space（来自 iframe context）
   if (iframeContext.space) {
     headers["space"] = iframeContext.space;
   }
 
-  // 7. Cookie（仅在用户变更时添加）
+  // 8. Cookie（仅在用户变更时添加）
   if (iframeContext.userChange) {
     headers["x-header-cookie"] = document.cookie;
   }

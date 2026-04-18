@@ -308,6 +308,21 @@ async def lifespan(
     # init_instance_module(db_connection)
     # logger.info("Instance module initialized")
 
+    # --- Initialize greeting and featured_case modules ---
+    if db_connection is not None:
+        try:
+            from .greeting.router import init_greeting_module
+            from .featured_case.router import init_featured_case_module
+
+            init_greeting_module(db_connection)
+            init_featured_case_module(db_connection)
+            logger.info("Greeting and FeaturedCase modules initialized")
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize greeting/featured_case modules: %s",
+                e,
+            )
+
     startup_elapsed = time.time() - startup_start_time
     logger.info(
         f"Application startup completed in {startup_elapsed:.3f} seconds "
