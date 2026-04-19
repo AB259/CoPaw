@@ -364,10 +364,10 @@ class SuggestionConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="是否启用猜你想问功能",
     )
-    max_suggestions: int = Field(
+    max_suggestions: ißnt = Field(
         default=3,
         ge=1,
         le=5,
