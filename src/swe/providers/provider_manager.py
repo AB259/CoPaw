@@ -138,17 +138,39 @@ class ProviderManager:
     ) -> None:
         """Initialize provider storage for a tenant.
 
+        Copies from the appropriate default_{source} template if available,
+        otherwise from the default tenant, or creates an empty structure.
+
         Args:
             tenant_id: The tenant ID.
             tenant_providers_dir: Target directory for provider storage.
         """
-        default_dir = SECRET_DIR / "default" / "providers"
-        if default_dir.exists() and any(default_dir.iterdir()):
+        from ..config.context import get_current_source_id
+
+        source_id = get_current_source_id()
+        source_dir = None
+        template_name = "default"
+
+        # Try source-specific template first
+        if source_id:
+            candidate = SECRET_DIR / f"default_{source_id}" / "providers"
+            if candidate.exists() and any(candidate.iterdir()):
+                source_dir = candidate
+                template_name = f"default_{source_id}"
+
+        # Fall back to generic default
+        if source_dir is None:
+            default_dir = SECRET_DIR / "default" / "providers"
+            if default_dir.exists() and any(default_dir.iterdir()):
+                source_dir = default_dir
+
+        if source_dir is not None:
             logger.info(
-                "Initializing provider config for tenant %s from default tenant",
+                "Initializing provider config for tenant %s from %s",
                 tenant_id,
+                template_name,
             )
-            shutil.copytree(default_dir, tenant_providers_dir)
+            shutil.copytree(source_dir, tenant_providers_dir)
             logger.info("Provider config initialized for tenant %s", tenant_id)
         else:
             logger.info(

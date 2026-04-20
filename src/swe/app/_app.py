@@ -318,6 +318,13 @@ async def lifespan(
             init_greeting_module(db_connection)
             init_featured_case_module(db_connection)
             logger.info("Greeting and FeaturedCase modules initialized")
+
+            from .workspace.tenant_init_source_store import (
+                init_tenant_init_source_module,
+            )
+
+            init_tenant_init_source_module(db_connection)
+            logger.info("TenantInitSource module initialized")
         except Exception as e:
             logger.warning(
                 "Failed to initialize greeting/featured_case modules: %s",
