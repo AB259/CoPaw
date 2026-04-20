@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   useProviderContext,
   ChatInput,
@@ -9,7 +9,10 @@ import { useGetState } from "ahooks";
 import { useChatAnywhereInput } from "../../Context/ChatAnywhereInputContext";
 import useAttachments from "./useAttachments";
 import { IAgentScopeRuntimeWebUIInputData } from "@/components/agentscope-chat";
-import { RUNTIME_INPUT_SET_CONTENT_EVENT } from "../hooks/followUpSubmit";
+import {
+  RUNTIME_INPUT_SET_CONTENT_EVENT,
+  type RuntimeInputRestorePayload,
+} from "../hooks/followUpSubmit";
 
 export interface InputProps {
   onCancel: () => void;
@@ -18,6 +21,9 @@ export interface InputProps {
 
 export default function Input(props: InputProps) {
   const [content, setContent, getContent] = useGetState("");
+  const restoredBizParamsRef = useRef<
+    IAgentScopeRuntimeWebUIInputData["biz_params"]
+  >(undefined);
   const prefixCls = useProviderContext().getPrefixCls("chat-anywhere-input");
   const senderOptions = useChatAnywhereOptions((v) => v.sender);
   const inputContext = useChatAnywhereInput((v) => v);
@@ -57,12 +63,21 @@ export default function Input(props: InputProps) {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const nextContent = (event as CustomEvent).detail?.content;
+      const detail = (event as CustomEvent<RuntimeInputRestorePayload>).detail;
+      const nextContent = detail?.content;
       if (typeof nextContent !== "string") {
         return;
       }
 
       setContent(nextContent);
+
+      if (Object.prototype.hasOwnProperty.call(detail, "fileList") && setFileList) {
+        setFileList(detail.fileList || []);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(detail, "biz_params")) {
+        restoredBizParamsRef.current = detail.biz_params;
+      }
     };
 
     document.addEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
@@ -75,8 +90,13 @@ export default function Input(props: InputProps) {
     if (!next) return;
 
     const fileList = (getFileList?.() || []).filter((i) => i.response?.url);
-    props.onSubmit({ query: getContent(), fileList });
+    props.onSubmit({
+      query: getContent(),
+      fileList,
+      biz_params: restoredBizParamsRef.current,
+    });
     setContent("");
+    restoredBizParamsRef.current = undefined;
     if (setFileList) {
       setFileList([]);
     }

@@ -87,6 +87,12 @@ describe("FollowUpSubmitCoordinator", () => {
     const restoreInput = vi.fn();
     const notifyFailure = vi.fn();
     const sleepMs = vi.fn(async () => {});
+    const fileList = [{ uid: "1", name: "demo.txt", response: { url: "/demo" } }];
+    const biz_params = {
+      user_prompt_params: {
+        source: "follow-up",
+      },
+    };
 
     const coordinator = new FollowUpSubmitCoordinator(
       {
@@ -100,12 +106,16 @@ describe("FollowUpSubmitCoordinator", () => {
       [10, 20],
     );
 
-    await coordinator.enqueue({ query: "recover me" });
+    await coordinator.enqueue({ query: "recover me", fileList, biz_params });
 
     expect(stop).toHaveBeenCalledTimes(3);
     expect(sleepMs).toHaveBeenCalledTimes(2);
     expect(submit).not.toHaveBeenCalled();
-    expect(restoreInput).toHaveBeenCalledWith("recover me");
+    expect(restoreInput).toHaveBeenCalledWith({
+      query: "recover me",
+      fileList,
+      biz_params,
+    });
     expect(notifyFailure).toHaveBeenCalledTimes(1);
   });
 });

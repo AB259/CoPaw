@@ -11,6 +11,12 @@ export type FollowUpSubmitData = Pick<
   "query" | "fileList" | "biz_params"
 >;
 
+export type RuntimeInputRestorePayload = {
+  content: string;
+  fileList?: FollowUpSubmitData["fileList"];
+  biz_params?: FollowUpSubmitData["biz_params"];
+};
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -21,7 +27,7 @@ type FollowUpSubmitCoordinatorOptions = {
   stop: () => Promise<void>;
   submit: (data: FollowUpSubmitData) => Promise<void>;
   isGenerating: () => Promise<boolean>;
-  restoreInput: (query: string) => void;
+  restoreInput: (data: FollowUpSubmitData) => void;
   notifyFailure: () => void;
   sleepMs?: (ms: number) => Promise<void>;
 };
@@ -101,7 +107,7 @@ export class FollowUpSubmitCoordinator {
       }
 
       if (!stopped) {
-        this.options.restoreInput(latestPending.query);
+        this.options.restoreInput(latestPending);
         this.options.notifyFailure();
         return;
       }

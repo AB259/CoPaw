@@ -21,6 +21,7 @@ import {
   RUNTIME_INPUT_SET_CONTENT_EVENT,
   type FollowUpSubmitData,
 } from "./followUpSubmit";
+import { shouldEnqueueFollowUpSubmission } from "./followUpSubmitState";
 // import mockdata from '../../mock/mock.json'
 
 /**
@@ -46,7 +47,6 @@ export default function useChatController() {
     response?: IAgentScopeRuntimeWebUIMessage;
     abortController?: AbortController;
   }>({});
-  const autoSubmittingRef = useRef(false);
   const followUpCoordinatorRef = useRef<FollowUpSubmitCoordinator | null>(null);
   const followUpSessionIdRef = useRef<string | undefined>(undefined);
 
@@ -130,10 +130,14 @@ export default function useChatController() {
     }
   }, [sessionApi, sessionHandler]);
 
-  const restorePendingInput = useCallback((query: string) => {
+  const restorePendingInput = useCallback((data: FollowUpSubmitData) => {
     emit({
       type: RUNTIME_INPUT_SET_CONTENT_EVENT,
-      data: { content: query },
+      data: {
+        content: data.query,
+        fileList: data.fileList,
+        biz_params: data.biz_params,
+      },
     });
   }, []);
 
@@ -172,12 +176,7 @@ export default function useChatController() {
           return;
         }
 
-        autoSubmittingRef.current = true;
-        try {
-          await submitTurn(data);
-        } finally {
-          autoSubmittingRef.current = false;
-        }
+        await submitTurn(data);
       },
       isGenerating: async () => {
         if (
@@ -214,9 +213,10 @@ export default function useChatController() {
    */
   const handleSubmit = useCallback<InputProps["onSubmit"]>(
     async (data) => {
-      const generating =
-        !autoSubmittingRef.current &&
-        (Boolean(getLoading?.()) || (await isSessionGenerating()));
+      const generating = shouldEnqueueFollowUpSubmission(
+        Boolean(getLoading?.()),
+        await isSessionGenerating(),
+      );
 
       if (generating) {
         followUpSessionIdRef.current = sessionHandler.getCurrentSessionId();
