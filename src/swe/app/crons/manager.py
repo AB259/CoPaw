@@ -1218,7 +1218,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             "to": menu_id,
             "type": "toMenu",
             "queryParam": {
-                "taskId": session_id,
+                "sessionId": session_id,
                 "origin": "Y",
             },
         }
