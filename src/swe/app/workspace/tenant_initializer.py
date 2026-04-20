@@ -35,10 +35,47 @@ class TenantInitializer:
         if filename != "BOOTSTRAP.md"
     )
 
-    def __init__(self, base_working_dir: Path, tenant_id: str):
+    def __init__(
+        self,
+        base_working_dir: Path,
+        tenant_id: str,
+        source_id: str | None = None,
+    ):
+        """Initialize tenant bootstrapper.
+
+        Args:
+            base_working_dir: Base working directory (~/.swe).
+            tenant_id: The tenant identifier.
+            source_id: Optional source identifier from X-Source-Id header.
+                Used to select the appropriate default_{source} template.
+        """
         self.base_working_dir = Path(base_working_dir).expanduser().resolve()
         self.tenant_id = tenant_id
         self.tenant_dir = self.base_working_dir / tenant_id
+        self.source_id = source_id
+        self.template_name = self._resolve_template_name()
+
+    def _resolve_template_name(self) -> str:
+        """Determine which default_xxx template directory to use.
+
+        Returns:
+            Template directory name (e.g., "default_ruice" or "default").
+        """
+        if not self.source_id:
+            return "default"
+        template_name = f"default_{self.source_id}"
+        template_dir = self.base_working_dir / template_name
+        if template_dir.exists():
+            logger.info(
+                f"Using template {template_name} for tenant {self.tenant_id} "
+                f"(source_id={self.source_id})",
+            )
+            return template_name
+        logger.info(
+            f"Template dir {template_name} not found, "
+            f"falling back to default for tenant {self.tenant_id}",
+        )
+        return "default"
 
     def ensure_directory_structure(self) -> None:
         """Create the tenant directory skeleton (minimal bootstrap)."""
@@ -315,7 +352,9 @@ class TenantInitializer:
         """
 
         target_config_path = self.tenant_dir / "config.json"
-        source_config_path = self.base_working_dir / "default" / "config.json"
+        source_config_path = (
+            self.base_working_dir / self.template_name / "config.json"
+        )
         result: dict[str, Any] = {"seeded": False, "source": None}
 
         if not source_config_path.exists():
@@ -329,8 +368,8 @@ class TenantInitializer:
             source_config = json.loads(source_content)
 
             # Update workspace_dir paths to point to new tenant
-            default_workspace_prefix = str(
-                self.base_working_dir / "default" / "workspaces",
+            template_workspace_prefix = str(
+                self.base_working_dir / self.template_name / "workspaces",
             )
             tenant_workspace_prefix = str(self.tenant_dir / "workspaces")
 
@@ -342,10 +381,10 @@ class TenantInitializer:
                 for profile in source_config["agents"]["profiles"].values():
                     if "workspace_dir" in profile:
                         old_path = profile["workspace_dir"]
-                        # Replace default tenant path with new tenant path
-                        if old_path.startswith(default_workspace_prefix):
+                        # Replace template tenant path with new tenant path
+                        if old_path.startswith(template_workspace_prefix):
                             profile["workspace_dir"] = old_path.replace(
-                                default_workspace_prefix,
+                                template_workspace_prefix,
                                 tenant_workspace_prefix,
                             )
 
@@ -356,10 +395,10 @@ class TenantInitializer:
                 encoding="utf-8",
             )
             result["seeded"] = True
-            result["source"] = "default"
+            result["source"] = self.template_name
         except Exception as e:
             logger.warning(
-                f"Failed to seed config from default for tenant "
+                f"Failed to seed config from {self.template_name} for tenant "
                 f"{self.tenant_id}: {e}",
             )
 
@@ -381,12 +420,12 @@ class TenantInitializer:
         Returns:
             Dict with result status:
             - "seeded": True if seeded, False otherwise
-            - "source": "default" or None
+            - "source": template name or None
         """
         from ...constant import SECRET_DIR
 
         target_providers_dir = SECRET_DIR / self.tenant_id / "providers"
-        source_providers_dir = SECRET_DIR / "default" / "providers"
+        source_providers_dir = SECRET_DIR / self.template_name / "providers"
         result: dict[str, Any] = {"seeded": False, "source": None}
 
         # Check if source providers directory exists and has content
@@ -407,15 +446,15 @@ class TenantInitializer:
             # Copy entire providers directory
             shutil.copytree(source_providers_dir, target_providers_dir)
             result["seeded"] = True
-            result["source"] = "default"
+            result["source"] = self.template_name
             logger.info(
-                f"Seeded providers directory from default for tenant "
-                f"{self.tenant_id}",
+                f"Seeded providers directory from {self.template_name} "
+                f"for tenant {self.tenant_id}",
             )
         except Exception as e:
             logger.warning(
-                f"Failed to seed providers from default for tenant "
-                f"{self.tenant_id}: {e}",
+                f"Failed to seed providers from {self.template_name} "
+                f"for tenant {self.tenant_id}: {e}",
             )
 
         return result
@@ -433,10 +472,13 @@ class TenantInitializer:
 
         tenant_config_path = self.tenant_dir / "config.json"
         target_agent_config_path = default_workspace / "agent.json"
-        default_template_workspace = (
-            self.base_working_dir / "default" / "workspaces" / "default"
+        template_workspace = (
+            self.base_working_dir
+            / self.template_name
+            / "workspaces"
+            / "default"
         )
-        source_agent_config_path = default_template_workspace / "agent.json"
+        source_agent_config_path = template_workspace / "agent.json"
         if (
             not target_agent_config_path.exists()
             and source_agent_config_path.exists()
@@ -462,7 +504,7 @@ class TenantInitializer:
 
         copied_files: list[str] = []
         for filename in self._WORKSPACE_TEMPLATE_FILES:
-            source_file = default_template_workspace / filename
+            source_file = template_workspace / filename
             target_file = default_workspace / filename
             if target_file.exists():
                 continue
@@ -577,10 +619,12 @@ class TenantInitializer:
         if self._has_skill_pool_state():
             return result
 
-        default_working_dir = self.base_working_dir / "default"
-        default_pool_dir = get_skill_pool_dir(working_dir=default_working_dir)
-        default_manifest_path = get_pool_skill_manifest_path(
-            working_dir=default_working_dir,
+        template_working_dir = self.base_working_dir / self.template_name
+        template_pool_dir = get_skill_pool_dir(
+            working_dir=template_working_dir,
+        )
+        template_manifest_path = get_pool_skill_manifest_path(
+            working_dir=template_working_dir,
         )
 
         # Prepare source state (reconcile + collect config)
@@ -588,18 +632,18 @@ class TenantInitializer:
             source_skill_names,
             source_skills_with_config,
         ) = self._prepare_source_pool_state(
-            default_pool_dir,
-            default_manifest_path,
+            template_pool_dir,
+            template_manifest_path,
         )
 
-        # Try to seed from default tenant if template exists
+        # Try to seed from template if template exists
         if source_skill_names:
             try:
                 target_pool_dir = get_skill_pool_dir(
                     working_dir=self.tenant_dir,
                 )
                 copied = self._copy_skill_directories(
-                    default_pool_dir,
+                    template_pool_dir,
                     target_pool_dir,
                 )
 
@@ -611,12 +655,13 @@ class TenantInitializer:
                     self._merge_pool_manifest_config(source_skills_with_config)
 
                     result["seeded"] = True
-                    result["source"] = "default"
+                    result["source"] = self.template_name
                     result["skills"] = copied
                     return result
             except Exception as e:
                 logger.warning(
-                    f"Failed to seed pool from default for tenant {self.tenant_id}: {e}. "
+                    f"Failed to seed pool from {self.template_name} for tenant "
+                    f"{self.tenant_id}: {e}. "
                     "Falling back to builtin initialization.",
                 )
 
@@ -827,18 +872,21 @@ class TenantInitializer:
         if self._has_default_workspace_skills():
             return result
 
-        default_workspace = (
-            self.base_working_dir / "default" / "workspaces" / "default"
+        template_workspace = (
+            self.base_working_dir
+            / self.template_name
+            / "workspaces"
+            / "default"
         )
-        default_skills_dir = get_workspace_skills_dir(default_workspace)
+        template_skills_dir = get_workspace_skills_dir(template_workspace)
 
         # Prepare source state and reconcile
         source_skills_state = self._prepare_source_workspace_state(
-            default_workspace,
+            template_workspace,
         )
 
         # Check if source has usable skills after reconciliation
-        source_skill_names = self._list_skill_directories(default_skills_dir)
+        source_skill_names = self._list_skill_directories(template_skills_dir)
 
         if not source_skill_names:
             # Source has no skills, check if target has existing skills
@@ -857,7 +905,7 @@ class TenantInitializer:
             target_workspace = self.tenant_dir / "workspaces" / "default"
             target_skills_dir = get_workspace_skills_dir(target_workspace)
             copied = self._copy_skill_directories(
-                default_skills_dir,
+                template_skills_dir,
                 target_skills_dir,
             )
 
