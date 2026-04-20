@@ -640,7 +640,7 @@ export default function ChatPage() {
         setSessions(sessions);
 
         // 如果在具体会话页面，检查当前会话状态
-        if (chatId && !isLoading) {
+        if (chatId && chatId.startsWith("zhaohu") && !isLoading) {
           const currentChat = chatSpecs.find((c) => c.id === chatId);
           const status = currentChat?.status;
           const generating = status === "running";
