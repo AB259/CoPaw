@@ -9,7 +9,7 @@ import { useGetState } from "ahooks";
 import { useChatAnywhereInput } from "../../Context/ChatAnywhereInputContext";
 import useAttachments from "./useAttachments";
 import { IAgentScopeRuntimeWebUIInputData } from "@/components/agentscope-chat";
-import { emit } from "../../Context/useChatAnywhereEventEmitter";
+import { RUNTIME_INPUT_SET_CONTENT_EVENT } from "../hooks/followUpSubmit";
 
 export interface InputProps {
   onCancel: () => void;
@@ -55,6 +55,21 @@ export default function Input(props: InputProps) {
     return () => document.removeEventListener("pasteFile", handler);
   }, [handlePasteFile]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const nextContent = (event as CustomEvent).detail?.content;
+      if (typeof nextContent !== "string") {
+        return;
+      }
+
+      setContent(nextContent);
+    };
+
+    document.addEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
+    return () =>
+      document.removeEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
+  }, [setContent]);
+
   const handleSubmit = useCallback(async () => {
     const next = await beforeSubmit();
     if (!next) return;
@@ -62,7 +77,9 @@ export default function Input(props: InputProps) {
     const fileList = (getFileList?.() || []).filter((i) => i.response?.url);
     props.onSubmit({ query: getContent(), fileList });
     setContent("");
-    setFileList && setFileList([]);
+    if (setFileList) {
+      setFileList([]);
+    }
   }, []);
 
   const handleCancel = useCallback(() => {
