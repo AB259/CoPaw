@@ -763,21 +763,11 @@ class AgentRunner(Runner):
             # Close all MCP clients created for this request
             await _cleanup_mcp_clients(mcp_clients)
 
-            # 异步生成猜你想问建议（如果启用）
+            # 前端已直连外部 suggestions 接口，这里不再触发后端异步生成
             logger.debug(
-                "Suggestions check: enabled=%s, agent=%s, query=%s",
-                agent_config.running.suggestions.enabled,
-                agent is not None,
-                query[:50] if query else None,
+                "Suggestions generation disabled in backend; handled by frontend external API",
             )
-            if (
-                agent_config.running.suggestions.enabled
-                and not _was_cancelled
-                and agent is not None
-                and query
-                and chat
-                is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
-            ):
+            if False:
                 # 提取助手响应文本
                 assistant_response = _extract_assistant_response(agent)
                 logger.debug(
