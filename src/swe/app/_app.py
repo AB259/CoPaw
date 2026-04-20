@@ -246,10 +246,10 @@ async def lifespan(
                 raise RuntimeError(
                     "Database connection is required. Please check database configuration.",
                 ) from e
-        else:
-            raise RuntimeError(
-                "Database host is required. Please configure SWE_DB_HOST environment variable.",
-            )
+        # else:
+        #     raise RuntimeError(
+        #         "Database host is required. Please configure SWE_DB_HOST environment variable.",
+        #     )
     else:
         logger.info("Database connection is disabled for localhost")
 
@@ -310,7 +310,7 @@ async def lifespan(
     # --- Initialize instance module config---
     from .instance.router import init_instance_module
 
-    init_instance_module(db_connection)
+    # init_instance_module(db_connection)
     logger.info("Instance module initialized")
 
     startup_elapsed = time.time() - startup_start_time
