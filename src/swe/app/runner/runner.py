@@ -45,7 +45,9 @@ from ...tracing import (
     get_trace_manager,
 )
 from ...tracing.models import TraceStatus
-from ...config.context import get_current_passthrough_headers
+from ...config.context import (
+    get_current_passthrough_headers,
+)
 from ..suggestions import generate_suggestions, store_suggestions
 
 if TYPE_CHECKING:
@@ -232,6 +234,17 @@ async def _cleanup_mcp_clients(clients: list[Any]) -> None:
             logger.warning(f"Error closing MCP client: {e}")
 
 
+def _extract_text_from_blocks(blocks: list) -> str:
+    """从 content blocks 中提取文本."""
+    texts = []
+    for block in blocks:
+        if hasattr(block, "text"):
+            texts.append(block.text)
+        elif isinstance(block, dict) and "text" in block:
+            texts.append(block["text"])
+    return "\n".join(texts) if texts else ""
+
+
 def _extract_assistant_response(agent: SWEAgent) -> str:
     """从 agent memory 中提取最后的助手响应文本."""
     if not agent or not hasattr(agent, "memory"):
@@ -240,18 +253,13 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     try:
         # memory.content 是 list of (Msg, marks) tuples
         for msg, _marks in reversed(agent.memory.content):
-            if msg.role == "assistant" and hasattr(msg, "content"):
-                # content 可能是 list of blocks 或 string
-                if isinstance(msg.content, str):
-                    return msg.content
-                if isinstance(msg.content, list):
-                    texts = []
-                    for block in msg.content:
-                        if hasattr(block, "text"):
-                            texts.append(block.text)
-                        elif isinstance(block, dict) and "text" in block:
-                            texts.append(block["text"])
-                    return "\n".join(texts) if texts else ""
+            if msg.role != "assistant" or not hasattr(msg, "content"):
+                continue
+            # content 可能是 list of blocks 或 string
+            if isinstance(msg.content, str):
+                return msg.content
+            if isinstance(msg.content, list):
+                return _extract_text_from_blocks(msg.content)
     except Exception as e:
         logger.debug("Failed to extract assistant response: %s", e)
 
@@ -280,7 +288,11 @@ async def _generate_and_store_suggestions(
             user_message_max_length=config.user_message_max_length,
             assistant_response_max_length=config.assistant_response_max_length,
         )
-        logger.info("Generated %d suggestions for session %s", len(suggestions), session_id)
+        logger.info(
+            "Generated %d suggestions for session %s",
+            len(suggestions),
+            session_id,
+        )
         if suggestions:
             await store_suggestions(session_id, suggestions)
             logger.info(
@@ -495,12 +507,25 @@ class AgentRunner(Runner):
                         "channel",
                         DEFAULT_CHANNEL,
                     )
+                    source_id_for_trace = getattr(
+                        request,
+                        "source_id",
+                        None,
+                    ) or getattr(
+                        request,
+                        "channel_meta",
+                        {},
+                    ).get(
+                        "source_id",
+                        "default",
+                    )
                     user_message = _get_last_user_text(msgs)
 
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
                         channel=channel_for_trace,
+                        source_id=source_id_for_trace,
                         user_message=user_message,
                     )
             except Exception as e:
@@ -544,10 +569,16 @@ class AgentRunner(Runner):
             )
 
             # Create MCP clients directly from agent config for this request
-            passthrough_headers = get_current_passthrough_headers()
+            auth_token = getattr(request, "auth_token", None)
+            cookie_header = getattr(request, "cookie", None)
+            passthrough_headers = dict[str, str](
+                get_current_passthrough_headers() or {},
+            )
+            if cookie_header:
+                passthrough_headers["cookie"] = cookie_header
             mcp_clients = await _build_and_connect_mcp_clients(
                 agent_config.mcp,
-                passthrough_headers=passthrough_headers,
+                passthrough_headers=passthrough_headers or None,
             )
 
             agent = SWEAgent(
@@ -560,6 +591,13 @@ class AgentRunner(Runner):
                     "user_id": user_id,
                     "channel": channel,
                     "agent_id": self.agent_id,
+                    **(
+                        {
+                            "auth_token": auth_token,
+                        }
+                        if auth_token
+                        else {}
+                    ),
                     **(
                         {
                             "forced_tool_call_json": json.dumps(
@@ -707,7 +745,10 @@ class AgentRunner(Runner):
             raise
         finally:
             # INFO 日志确认 finally 块执行
-            logger.info("Runner finally block executing for session %s", session_id)
+            logger.info(
+                "Runner finally block executing for session %s",
+                session_id,
+            )
 
             if agent is not None and session_state_loaded:
                 await self.session.save_session_state(
@@ -734,7 +775,8 @@ class AgentRunner(Runner):
                 and not _was_cancelled
                 and agent is not None
                 and query
-                and chat is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
+                and chat
+                is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
             ):
                 # 提取助手响应文本
                 assistant_response = _extract_assistant_response(agent)
@@ -758,7 +800,9 @@ class AgentRunner(Runner):
                         ),
                     )
                 else:
-                    logger.debug("No assistant response to generate suggestions from")
+                    logger.debug(
+                        "No assistant response to generate suggestions from",
+                    )
 
     async def _cleanup_denied_session_memory(
         self,
