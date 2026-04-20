@@ -118,4 +118,51 @@ describe("FollowUpSubmitCoordinator", () => {
     });
     expect(notifyFailure).toHaveBeenCalledTimes(1);
   });
+
+  it("runs another follow-up round when a newer submission arrives during auto-submit", async () => {
+    let generating = true;
+    let firstSubmitResolved = false;
+    let releaseFirstSubmit: (() => void) | null = null;
+    const stop = vi.fn(async () => {
+      generating = false;
+    });
+    const submit = vi.fn((data: { query?: string }) => {
+      if (data.query === "first") {
+        generating = true;
+        return new Promise<void>((resolve) => {
+          releaseFirstSubmit = () => {
+            firstSubmitResolved = true;
+            generating = false;
+            resolve();
+          };
+        });
+      }
+
+      return Promise.resolve();
+    });
+
+    const coordinator = new FollowUpSubmitCoordinator({
+      stop,
+      submit,
+      isGenerating: async () => generating,
+      restoreInput: vi.fn(),
+      notifyFailure: vi.fn(),
+      sleepMs: vi.fn(async () => {}),
+    });
+
+    const task = coordinator.enqueue({ query: "first" });
+    await vi.waitFor(() => {
+      expect(submit).toHaveBeenCalledWith({ query: "first" });
+    });
+
+    coordinator.enqueue({ query: "second" });
+    expect(firstSubmitResolved).toBe(false);
+
+    releaseFirstSubmit?.();
+    await task;
+
+    expect(submit).toHaveBeenNthCalledWith(1, { query: "first" });
+    expect(submit).toHaveBeenNthCalledWith(2, { query: "second" });
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
 });

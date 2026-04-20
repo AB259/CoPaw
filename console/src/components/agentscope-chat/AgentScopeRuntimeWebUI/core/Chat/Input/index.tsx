@@ -77,13 +77,23 @@ export default function Input(props: InputProps) {
 
       if (Object.prototype.hasOwnProperty.call(detail, "biz_params")) {
         restoredBizParamsRef.current = detail.biz_params;
+      } else {
+        restoredBizParamsRef.current = undefined;
       }
     };
 
     document.addEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
     return () =>
       document.removeEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
-  }, [setContent]);
+  }, [setContent, setFileList]);
+
+  const handleContentChange = useCallback(
+    (value: string) => {
+      restoredBizParamsRef.current = undefined;
+      setContent(value);
+    },
+    [setContent],
+  );
 
   const handleSubmit = useCallback(async () => {
     const next = await beforeSubmit();
@@ -122,7 +132,7 @@ export default function Input(props: InputProps) {
             </>
           }
           header={uploadFileListHeader}
-          onChange={setContent}
+          onChange={handleContentChange}
           maxLength={maxLength}
           onSubmit={handleSubmit}
           onCancel={handleCancel}

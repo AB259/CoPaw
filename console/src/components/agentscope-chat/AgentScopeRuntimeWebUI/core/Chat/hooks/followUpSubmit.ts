@@ -92,27 +92,29 @@ export class FollowUpSubmitCoordinator {
 
   private async run(): Promise<void> {
     try {
-      const stopped = await stopUntilGenerationEnds({
-        stop: this.options.stop,
-        isGenerating: this.options.isGenerating,
-        sleepMs: this.options.sleepMs,
-        retryBackoffMs: this.retryBackoffMs,
-      });
+      while (this.pending) {
+        const stopped = await stopUntilGenerationEnds({
+          stop: this.options.stop,
+          isGenerating: this.options.isGenerating,
+          sleepMs: this.options.sleepMs,
+          retryBackoffMs: this.retryBackoffMs,
+        });
 
-      const latestPending = this.pending;
-      this.pending = null;
+        const latestPending = this.pending;
+        this.pending = null;
 
-      if (!latestPending) {
-        return;
+        if (!latestPending) {
+          return;
+        }
+
+        if (!stopped) {
+          this.options.restoreInput(latestPending);
+          this.options.notifyFailure();
+          return;
+        }
+
+        await this.options.submit(latestPending);
       }
-
-      if (!stopped) {
-        this.options.restoreInput(latestPending);
-        this.options.notifyFailure();
-        return;
-      }
-
-      await this.options.submit(latestPending);
     } finally {
       this.activeRun = null;
     }
