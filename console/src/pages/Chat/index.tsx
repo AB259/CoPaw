@@ -81,7 +81,7 @@ import type {
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
-const SESSION_RUNNING_POLL_MS = 3_000;
+const SESSION_RUNNING_POLL_MS = 5_000;
 
 interface SessionInfo {
   session_id?: string;
