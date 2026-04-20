@@ -63,9 +63,12 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
                         TextContent(
                             type=ContentType.TEXT,
                             text=part.get("text", ""),
-                        )
+                        ),
                     )
-                elif hasattr(part, "type") and getattr(part, "type") == ContentType.TEXT:
+                elif (
+                    hasattr(part, "type")
+                    and getattr(part, "type") == ContentType.TEXT
+                ):
                     # Already a Content object
                     content_parts.append(part)
 
@@ -106,6 +109,11 @@ async def post_console_chat(
         native_payload = _extract_session_and_payload(request_data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Inject source_id from header for data isolation
+    source_id = request.headers.get("X-Source-Id", "default")
+    native_payload["meta"]["source_id"] = source_id
+
     # Debug: log the session_id from frontend
     logger.debug(
         "Console chat: native_payload.meta.session_id=%s",
@@ -257,7 +265,10 @@ async def get_push_messages(
 @router.get("/suggestions")
 async def get_suggestions(
     request: Request,
-    session_id: str = Query(..., description="Session id to get suggestions for"),
+    session_id: str = Query(
+        ...,
+        description="Session id to get suggestions for",
+    ),
 ):
     """Return generated suggestions for the session.
 
