@@ -46,6 +46,7 @@ from ...tracing import (
 )
 from ...tracing.models import TraceStatus
 from ...config.context import get_current_passthrough_headers
+from ..suggestions import generate_suggestions, store_suggestions
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
@@ -229,6 +230,67 @@ async def _cleanup_mcp_clients(clients: list[Any]) -> None:
                 await http_client.aclose()
         except Exception as e:
             logger.warning(f"Error closing MCP client: {e}")
+
+
+def _extract_assistant_response(agent: SWEAgent) -> str:
+    """从 agent memory 中提取最后的助手响应文本."""
+    if not agent or not hasattr(agent, "memory"):
+        return ""
+
+    try:
+        # memory.content 是 list of (Msg, marks) tuples
+        for msg, _marks in reversed(agent.memory.content):
+            if msg.role == "assistant" and hasattr(msg, "content"):
+                # content 可能是 list of blocks 或 string
+                if isinstance(msg.content, str):
+                    return msg.content
+                if isinstance(msg.content, list):
+                    texts = []
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            texts.append(block.text)
+                        elif isinstance(block, dict) and "text" in block:
+                            texts.append(block["text"])
+                    return "\n".join(texts) if texts else ""
+    except Exception as e:
+        logger.debug("Failed to extract assistant response: %s", e)
+
+    return ""
+
+
+async def _generate_and_store_suggestions(
+    session_id: str,
+    user_message: str,
+    assistant_response: str,
+    config,  # SuggestionConfig
+) -> None:
+    """异步生成并存储建议（后台任务）."""
+    logger.info(
+        "Generating suggestions for session %s: user_msg=%s chars, assistant_msg=%s chars",
+        session_id,
+        len(user_message),
+        len(assistant_response),
+    )
+    try:
+        suggestions = await generate_suggestions(
+            user_message=user_message,
+            assistant_response=assistant_response,
+            max_suggestions=config.max_suggestions,
+            timeout_seconds=config.timeout_seconds,
+            user_message_max_length=config.user_message_max_length,
+            assistant_response_max_length=config.assistant_response_max_length,
+        )
+        logger.info("Generated %d suggestions for session %s", len(suggestions), session_id)
+        if suggestions:
+            await store_suggestions(session_id, suggestions)
+            logger.info(
+                "Stored %d suggestions for session %s: %s",
+                len(suggestions),
+                session_id,
+                suggestions,
+            )
+    except Exception as e:
+        logger.warning("Suggestion generation task failed: %s", e)
 
 
 class AgentRunner(Runner):
@@ -641,6 +703,9 @@ class AgentRunner(Runner):
                 ) + e.args[1:]
             raise
         finally:
+            # INFO 日志确认 finally 块执行
+            logger.info("Runner finally block executing for session %s", session_id)
+
             if agent is not None and session_state_loaded:
                 await self.session.save_session_state(
                     session_id=session_id,
@@ -653,6 +718,43 @@ class AgentRunner(Runner):
 
             # Close all MCP clients created for this request
             await _cleanup_mcp_clients(mcp_clients)
+
+            # 异步生成猜你想问建议（如果启用）
+            logger.debug(
+                "Suggestions check: enabled=%s, agent=%s, query=%s",
+                agent_config.running.suggestions.enabled,
+                agent is not None,
+                query[:50] if query else None,
+            )
+            if (
+                agent_config.running.suggestions.enabled
+                and agent is not None
+                and query
+                and chat is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
+            ):
+                # 提取助手响应文本
+                assistant_response = _extract_assistant_response(agent)
+                logger.debug(
+                    "Extracted assistant response: %s chars",
+                    len(assistant_response) if assistant_response else 0,
+                )
+                if assistant_response:
+                    # 使用 chat.id (UUID) 作为 session_id，与前端轮询时使用的 session_id 保持一致
+                    logger.info(
+                        "Starting suggestions generation task for chat %s (session_id=%s)",
+                        chat.id,
+                        session_id,
+                    )
+                    asyncio.create_task(
+                        _generate_and_store_suggestions(
+                            session_id=chat.id,  # 使用 chat.id (UUID)
+                            user_message=query,
+                            assistant_response=assistant_response,
+                            config=agent_config.running.suggestions,
+                        ),
+                    )
+                else:
+                    logger.debug("No assistant response to generate suggestions from")
 
     async def _cleanup_denied_session_memory(
         self,
