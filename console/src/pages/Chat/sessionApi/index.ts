@@ -12,6 +12,11 @@ import api, {
   type Message,
 } from "../../../api";
 import { cronJobApi } from "../../../api/modules/cronjob";
+import type {
+  ChatRuntimeRequestCardData,
+  ChatRuntimeResponseCardData,
+} from "../messageMeta";
+import { resolveGroupTimestamp, resolveMessageTimestamp } from "../messageMeta";
 import { toDisplayUrl } from "../utils";
 import { applyPreferredSessionSelection } from "./preferredSession";
 import { shouldNotifySessionSelected } from "./sessionRaceGuard";
@@ -173,6 +178,9 @@ const toOutputMessage = (msg: Message): OutputMessage => ({
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
 function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
   const contentParts = contentToRequestParts(msg.content);
+  const timestamp = resolveMessageTimestamp({
+    timestamp: msg.timestamp,
+  });
   return {
     id: (msg.id as string) || generateId(),
     role: "user",
@@ -187,7 +195,10 @@ function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
               content: contentParts,
             },
           ],
-        },
+          headerMeta: {
+            timestamp,
+          },
+        } as unknown as ChatRuntimeRequestCardData,
       },
     ],
   };
@@ -200,6 +211,11 @@ function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
 const buildResponseCard = (
   outputMessages: OutputMessage[],
 ): IAgentScopeRuntimeWebUIMessage => {
+  const timestamp = resolveGroupTimestamp(
+    outputMessages.map((message) => ({
+      timestamp: message.timestamp,
+    })),
+  );
   const now = Math.floor(Date.now() / 1000);
   const maxSeq = outputMessages.reduce(
     (max, m) => Math.max(max, m.sequence_number || 0),
@@ -227,7 +243,10 @@ const buildResponseCard = (
           error: null,
           completed_at: now,
           usage: null,
-        },
+          headerMeta: {
+            timestamp,
+          },
+        } as unknown as ChatRuntimeResponseCardData,
       },
     ],
     msgStatus: "finished",

@@ -10,13 +10,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
-from agentscope.memory import InMemoryMemory
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-
-from ...config import get_heartbeat_config, load_config
 
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
@@ -27,12 +24,6 @@ from .coordination import (
 )
 from .auth_state import prefetch_auth_token
 from .executor import CronExecutor
-from .heartbeat import (
-    is_cron_expression,
-    parse_heartbeat_cron,
-    parse_heartbeat_every,
-    run_heartbeat_once,
-)
 from .models import CronJobSpec, CronJobState, CronTaskView, JobsFile
 from .repo.base import BaseJobRepository
 
@@ -554,6 +545,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
         if self._scheduler.get_job(HEARTBEAT_JOB_ID):
             self._scheduler.remove_job(HEARTBEAT_JOB_ID)
             self._active_jobs.discard(HEARTBEAT_JOB_ID)
+
+        from ...config.utils import get_heartbeat_config
 
         hb = get_heartbeat_config(self._agent_id)
         if getattr(hb, "enabled", False):
@@ -1543,6 +1536,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
         if not state:
             return ""
         memory_state = state.get("agent", {}).get("memory", {})
+        from agentscope.memory import InMemoryMemory
+
         memory = InMemoryMemory()
         memory.load_state_dict(memory_state, strict=False)
         memories = await memory.get_memory(prepend_summary=False)
@@ -1590,6 +1585,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
         生成格式：CMBMobileOA:///?pcSysId=xxx&pcWebConfig=xxx&pcParams=xxx
         用于在 PC 端招乎上跳转 W+ 并自动登录。
         """
+        from ...config.utils import load_config
+
         config = load_config()
         zhaohu_config = config.channels.zhaohu
 
@@ -1899,6 +1896,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
         Returns CronTrigger for cron expressions,
         IntervalTrigger for interval strings.
         """
+        from .heartbeat import (
+            is_cron_expression,
+            parse_heartbeat_cron,
+            parse_heartbeat_every,
+        )
+
         if is_cron_expression(every):
             minute, hour, day, month, day_of_week = parse_heartbeat_cron(every)
             return CronTrigger(
@@ -2021,6 +2024,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
             logger.exception("heartbeat run failed")
 
     async def _run_heartbeat_once(self, workspace_dir: Any) -> None:
+        from .heartbeat import run_heartbeat_once
+
         await run_heartbeat_once(
             runner=self._runner,
             channel_manager=self._channel_manager,
