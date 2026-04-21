@@ -34,6 +34,8 @@ def test_mcp_page_supports_batch_selection_and_shared_tenant_picker() -> None:
         in content
     )
     assert "api.listActiveModelDistributionTenants()" in content
+    assert 'from "../../../utils/identity"' in content
+    assert "const currentTenantId = getUserId();" in content
     assert 'from "../../../components/TenantTargetPicker"' in content
     assert "<TenantTargetPicker" in content
     assert "selectedTenantIds={selectedTenantIds}" in content
@@ -46,8 +48,9 @@ def test_mcp_page_wires_distribution_payload_and_result_feedback() -> None:
 
     assert "api.distributeMCPClientsToDefaultAgents({" in content
     assert "client_keys: selectedClientKeys," in content
-    assert "target_tenant_ids: selectedTenantIds," in content
+    assert "target_tenant_ids: sanitizedSelectedTenantIds," in content
     assert "overwrite: true," in content
+    assert ".filter((tenantId) => tenantId !== currentTenantId)" in content
     assert 'title: t("mcp.distributeResultTitle")' in content
     assert 'title: t("mcp.distributePartialFailureTitle")' in content
     assert 't("mcp.distributeSuccessList")' in content

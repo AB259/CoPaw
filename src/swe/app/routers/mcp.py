@@ -22,6 +22,7 @@ from ...config.config import (
     load_agent_config,
     save_agent_config,
 )
+from ...config.context import resolve_effective_tenant_id
 from ...config.utils import get_tenant_working_dir_strict
 from ..workspace.tenant_initializer import TenantInitializer
 
@@ -208,8 +209,15 @@ def _request_source_id(request: Request) -> str | None:
     return getattr(request.state, "source_id", None)
 
 
+def _request_effective_tenant_id(request: Request) -> str | None:
+    tenant_id = _request_tenant_id(request)
+    if tenant_id is None:
+        return None
+    return resolve_effective_tenant_id(tenant_id, _request_source_id(request))
+
+
 def _request_tenant_working_dir(request: Request) -> FilePath:
-    return get_tenant_working_dir_strict(_request_tenant_id(request))
+    return get_tenant_working_dir_strict(_request_effective_tenant_id(request))
 
 
 def _get_multi_agent_manager(request: Request) -> Any:
@@ -287,7 +295,16 @@ async def _distribute_mcp_clients_to_tenant(
     if not was_bootstrapped:
         initializer.ensure_seeded_bootstrap()
 
-    target_config = load_agent_config("default", tenant_id=target_tenant_id)
+    effective_target_tenant_id = getattr(
+        initializer,
+        "effective_tenant_id",
+        target_tenant_id,
+    )
+    target_config = load_agent_config(
+        "default",
+        tenant_id=effective_target_tenant_id,
+    )
+    original_target_config = target_config.model_copy(deep=True)
     if target_config.mcp is None:
         target_config.mcp = MCPConfig(clients={})
 
@@ -296,9 +313,44 @@ async def _distribute_mcp_clients_to_tenant(
             source_client,
         )
 
-    save_agent_config("default", target_config, tenant_id=target_tenant_id)
     manager = _get_multi_agent_manager(request)
-    await manager.reload_agent("default", tenant_id=target_tenant_id)
+    try:
+        save_agent_config(
+            "default",
+            target_config,
+            tenant_id=effective_target_tenant_id,
+        )
+        await manager.reload_agent(
+            "default",
+            tenant_id=effective_target_tenant_id,
+        )
+    except Exception as exc:
+        rollback_errors: List[str] = []
+        try:
+            save_agent_config(
+                "default",
+                original_target_config,
+                tenant_id=effective_target_tenant_id,
+            )
+        except Exception as rollback_save_exc:
+            rollback_errors.append(
+                f"rollback save failed: {rollback_save_exc}",
+            )
+        else:
+            try:
+                await manager.reload_agent(
+                    "default",
+                    tenant_id=effective_target_tenant_id,
+                )
+            except Exception as rollback_reload_exc:
+                rollback_errors.append(
+                    f"rollback reload failed: {rollback_reload_exc}",
+                )
+        if rollback_errors:
+            raise RuntimeError(
+                f"{exc}; {'; '.join(rollback_errors)}",
+            ) from exc
+        raise
 
     return MCPDistributionTenantResult(
         tenant_id=target_tenant_id,

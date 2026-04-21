@@ -333,6 +333,132 @@ def test_distribute_mcp_clients_bootstraps_missing_tenant(
     assert manager.reload_calls == [("default", "tenant-new")]
 
 
+def test_distribute_mcp_clients_uses_effective_default_tenant_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manager = FakeMultiAgentManager()
+    request = _request(tenant_id="default", source_id="ruice", manager=manager)
+    source_agent = _agent_config(
+        "qa",
+        str(tmp_path / "default_ruice" / "workspaces" / "qa"),
+        clients={
+            "fetch": MCPClientConfig(
+                name="Fetch",
+                enabled=True,
+                transport="streamable_http",
+                url="https://source.example/mcp",
+            ),
+        },
+    )
+    target_default_agent = _agent_config(
+        "default",
+        str(tmp_path / "default_ruice" / "workspaces" / "default"),
+        clients={},
+    )
+    working_tenant_ids: list[str | None] = []
+    load_calls: list[tuple[str | None, str]] = []
+    save_calls: list[tuple[str | None, str]] = []
+
+    async def fake_get_agent_for_request(_request):
+        return SimpleNamespace(
+            agent_id="qa",
+            tenant_id="default_ruice",
+            config=source_agent,
+        )
+
+    def fake_get_tenant_working_dir_strict(tenant_id=None) -> Path:
+        working_tenant_ids.append(tenant_id)
+        return tmp_path / str(tenant_id)
+
+    def fake_load_agent_config(
+        agent_id: str,
+        config_path: Path | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> AgentProfileConfig:
+        del config_path
+        load_calls.append((tenant_id, agent_id))
+        if (tenant_id, agent_id) == ("default_ruice", "qa"):
+            return source_agent.model_copy(deep=True)
+        if (tenant_id, agent_id) == ("default_ruice", "default"):
+            return target_default_agent.model_copy(deep=True)
+        raise AssertionError(
+            f"unexpected load: tenant={tenant_id}, agent={agent_id}",
+        )
+
+    def fake_save_agent_config(
+        agent_id: str,
+        agent_config: AgentProfileConfig,
+        config_path: Path | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        del agent_config, config_path
+        save_calls.append((tenant_id, agent_id))
+
+    class FakeInitializer:
+        def __init__(
+            self,
+            base_working_dir: Path,
+            tenant_id: str,
+            source_id: str | None = None,
+        ) -> None:
+            assert base_working_dir == tmp_path
+            assert tenant_id == "default"
+            assert source_id == "ruice"
+            self.effective_tenant_id = "default_ruice"
+            self.tenant_dir = tmp_path / self.effective_tenant_id
+
+        def has_seeded_bootstrap(self) -> bool:
+            return True
+
+        def ensure_seeded_bootstrap(self) -> dict[str, object]:
+            raise AssertionError("should not bootstrap an existing tenant")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "swe.app.agent_context",
+        SimpleNamespace(get_agent_for_request=fake_get_agent_for_request),
+    )
+    monkeypatch.setattr(
+        mcp_router,
+        "get_tenant_working_dir_strict",
+        fake_get_tenant_working_dir_strict,
+    )
+    monkeypatch.setattr(
+        mcp_router,
+        "load_agent_config",
+        fake_load_agent_config,
+    )
+    monkeypatch.setattr(
+        mcp_router,
+        "save_agent_config",
+        fake_save_agent_config,
+    )
+    monkeypatch.setattr(mcp_router, "TenantInitializer", FakeInitializer)
+
+    result = asyncio.run(
+        mcp_router.distribute_mcp_clients_to_default_agents(
+            request,
+            mcp_router.MCPDistributionRequest(
+                client_keys=["fetch"],
+                target_tenant_ids=["default"],
+                overwrite=True,
+            ),
+        ),
+    )
+
+    assert result.results[0].success is True
+    assert working_tenant_ids == ["default_ruice"]
+    assert load_calls == [
+        ("default_ruice", "qa"),
+        ("default_ruice", "default"),
+    ]
+    assert save_calls == [("default_ruice", "default")]
+    assert manager.reload_calls == [("default", "default_ruice")]
+
+
 def test_distribute_mcp_clients_reports_partial_success(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -363,6 +489,7 @@ def test_distribute_mcp_clients_reports_partial_success(
         clients={},
     )
     saved_configs: dict[tuple[str | None, str], AgentProfileConfig] = {}
+    save_calls: list[tuple[str | None, str]] = []
 
     async def fake_get_agent_for_request(_request):
         return SimpleNamespace(
@@ -396,6 +523,7 @@ def test_distribute_mcp_clients_reports_partial_success(
         tenant_id: str | None = None,
     ) -> None:
         del config_path
+        save_calls.append((tenant_id, agent_id))
         saved_configs[(tenant_id, agent_id)] = agent_config.model_copy(
             deep=True,
         )
@@ -448,11 +576,18 @@ def test_distribute_mcp_clients_reports_partial_success(
     assert result.results[1].success is False
     assert "reload failed" in str(result.results[1].error)
     assert saved_configs[("tenant-fail", "default")].mcp is not None
-    assert saved_configs[("tenant-fail", "default")].mcp.clients[
-        "fetch"
-    ].url == ("https://source.example/mcp")
+    assert (
+        saved_configs[("tenant-fail", "default")].mcp.clients
+        == target_fail.mcp.clients
+    )
+    assert save_calls == [
+        ("tenant-ok", "default"),
+        ("tenant-fail", "default"),
+        ("tenant-fail", "default"),
+    ]
     assert manager.reload_calls == [
         ("default", "tenant-ok"),
+        ("default", "tenant-fail"),
         ("default", "tenant-fail"),
     ]
 

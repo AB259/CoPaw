@@ -10,6 +10,7 @@ import { useMCP } from "./useMCP";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
 import { useAgentStore } from "../../../stores/agentStore";
+import { getUserId } from "../../../utils/identity";
 import styles from "./index.module.less";
 
 type MCPTransport = "stdio" | "streamable_http" | "sse";
@@ -60,6 +61,7 @@ function MCPPage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { selectedAgent } = useAgentStore();
+  const currentTenantId = getUserId();
   const {
     clients,
     loading,
@@ -77,6 +79,9 @@ function MCPPage() {
   const [distributionSubmitting, setDistributionSubmitting] = useState(false);
   const [distributionTenantIds, setDistributionTenantIds] = useState<string[]>([]);
   const [selectedTenantIds, setSelectedTenantIds] = useState<string[]>([]);
+  const sanitizedSelectedTenantIds = selectedTenantIds.filter(
+    (tenantId) => tenantId !== currentTenantId,
+  );
   const [newClientJson, setNewClientJson] = useState(`{
   "mcpServers": {
     "example-client": {
@@ -126,7 +131,11 @@ function MCPPage() {
     setDistributionLoading(true);
     try {
       const result = await api.listActiveModelDistributionTenants();
-      setDistributionTenantIds(result.tenant_ids || []);
+      setDistributionTenantIds(
+        (result.tenant_ids || []).filter(
+          (tenantId) => tenantId !== currentTenantId,
+        ),
+      );
     } catch (error) {
       const errMsg =
         error instanceof Error ? error.message : t("mcp.distributeFailed");
@@ -143,13 +152,13 @@ function MCPPage() {
   };
 
   const handleDistributeSelectedClients = async () => {
-    if (!selectedClientKeys.length || !selectedTenantIds.length) return;
+    if (!selectedClientKeys.length || !sanitizedSelectedTenantIds.length) return;
 
     setDistributionSubmitting(true);
     try {
       const result = await api.distributeMCPClientsToDefaultAgents({
         client_keys: selectedClientKeys,
-        target_tenant_ids: selectedTenantIds,
+        target_tenant_ids: sanitizedSelectedTenantIds,
         overwrite: true,
       });
       const items = Array.isArray(result.results) ? result.results : [];
@@ -346,7 +355,7 @@ function MCPPage() {
         onCancel={closeDistributionModal}
         onOk={handleDistributeSelectedClients}
         okButtonProps={{
-          disabled: !selectedTenantIds.length,
+          disabled: !sanitizedSelectedTenantIds.length,
           loading: distributionSubmitting,
         }}
       >
@@ -368,7 +377,11 @@ function MCPPage() {
             <TenantTargetPicker
               tenantIds={distributionTenantIds}
               selectedTenantIds={selectedTenantIds}
-              onChange={setSelectedTenantIds}
+              onChange={(tenantIds) =>
+                setSelectedTenantIds(
+                  tenantIds.filter((tenantId) => tenantId !== currentTenantId),
+                )
+              }
             />
           )}
         </div>
