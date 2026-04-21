@@ -1141,6 +1141,106 @@ class ZhaohuChannel(BaseChannel):
                 session_id,
             )
 
+    async def _run_task_llm_and_notify(
+        self,
+        request: Any,
+        session_id: str,
+        task_content: str,
+        from_id: str,
+        meta: Dict[str, Any],
+    ) -> None:
+        """Run LLM task and send final result to user.
+
+        This method:
+        1. Sends task initiated card notification to user immediately
+        2. Runs LLM to get complete result (no streaming)
+        3. Sends final result to user when complete
+
+        Args:
+            request: AgentRequest for the task session
+            session_id: Unique task session ID
+            task_content: Task content/description
+            from_id: User's openId (for sending messages)
+            meta: Channel metadata
+        """
+        from agentscope_runtime.engine.schemas.agent_schemas import RunStatus
+
+        # Step 1: Send card notification immediately
+        card_content = self._build_task_initiated_card(
+            task_content,
+            session_id,
+        )
+        code, msg = await self.send_custom_card(from_id, card_content)
+
+        if code == 0:
+            logger.info(
+                "zhaohu _run_task_llm_and_notify: card sent successfully, msgId=%s",
+                msg,
+            )
+        else:
+            logger.warning(
+                "zhaohu _run_task_llm_and_notify: card send failed, "
+                "code=%d msg=%s",
+                code,
+                msg,
+            )
+
+        # Step 2: Run LLM and collect complete result
+        logger.info(
+            "zhaohu _run_task_llm_and_notify: starting LLM for sessionId=%s",
+            session_id,
+        )
+
+        response_text = ""
+        try:
+            async for event in self._process(request):
+                obj = getattr(event, "object", None)
+                status = getattr(event, "status", None)
+                if obj == "message" and status == RunStatus.Completed:
+                    # Extract text from the completed message
+                    parts = self._message_to_content_parts(event)
+                    for part in parts:
+                        if hasattr(part, "text") and part.text:
+                            response_text += part.text
+                        elif hasattr(part, "refusal") and part.refusal:
+                            response_text += part.refusal
+
+            # Step 3: Send final result to user
+            if response_text:
+                logger.info(
+                    "zhaohu _run_task_llm_and_notify: completed for sessionId=%s, "
+                    "response_len=%d",
+                    session_id,
+                    len(response_text),
+                )
+                # Send result via push_url
+                yst_id = meta.get("send_addr", "")
+                if yst_id:
+                    await self.send(yst_id, response_text, meta)
+                    logger.info(
+                        "zhaohu _run_task_llm_and_notify: result sent to yst_id=%s",
+                        yst_id,
+                    )
+            else:
+                logger.warning(
+                    "zhaohu _run_task_llm_and_notify: no response for sessionId=%s",
+                    session_id,
+                )
+
+        except Exception:
+            logger.exception(
+                "zhaohu _run_task_llm_and_notify: failed for sessionId=%s",
+                session_id,
+            )
+            # Send error notification to user
+            yst_id = meta.get("send_addr", "")
+            if yst_id:
+                await self.send(
+                    yst_id,
+                    "抱歉，处理您的任务时发生错误，请稍后重试。",
+                    meta,
+                )
+
     async def process_callback_message(self, callback_body: Any) -> None:
         """Process callback message: query user, route by message type."""
         from ....config.context import (
@@ -1301,9 +1401,8 @@ class ZhaohuChannel(BaseChannel):
     ) -> None:
         """Handle task assignment (Case 2): create new session and process task.
 
-        Creates a new unique session for the task, runs LLM asynchronously
-        to process the task content via _consume_with_tracker for streaming,
-        and sends a card notification to user.
+        Creates a new unique session for the task, runs LLM directly without
+        streaming to collect complete result, then sends result to user.
 
         Args:
             sap_id: User's sapId
@@ -1327,78 +1426,31 @@ class ZhaohuChannel(BaseChannel):
         # Build content parts
         content_parts = [TextContent(type=ContentType.TEXT, text=task_content)]
 
-        # Build native payload (dict format) for _consume_with_tracker
-        native_payload = {
-            "channel_id": self.channel,
-            "sender_id": sap_id,
-            "session_id": task_session_id,
-            "content_parts": content_parts,
-            "meta": meta,
-        }
+        # Build request for direct processing
+        request = self.build_agent_request_from_user_content(
+            channel_id=self.channel,
+            sender_id=sap_id,
+            session_id=task_session_id,
+            content_parts=content_parts,
+            channel_meta=meta,
+        )
+        request.channel_meta = meta
 
-        # Use BaseChannel's standard flow if workspace is available
-        # This enables TaskTracker broadcasting for Console frontend streaming
-        if self._workspace is not None:
-            request = self.build_agent_request_from_user_content(
-                channel_id=self.channel,
-                sender_id=sap_id,
-                session_id=task_session_id,
-                content_parts=content_parts,
-                channel_meta=meta,
-            )
-            request.channel_meta = meta
-
-            # Launch async task in background (non-blocking)
-            # _consume_with_tracker will create Chat and broadcast events
-            asyncio.create_task(
-                self._consume_with_tracker(request, native_payload),
-            )
-            logger.info(
-                "zhaohu _handle_task_assignment: started background task "
-                "with streaming, sessionId=%s",
+        # Run LLM directly without streaming, collect complete result
+        asyncio.create_task(
+            self._run_task_llm_and_notify(
+                request,
                 task_session_id,
-            )
-        else:
-            # Fallback to direct processing (no streaming)
-            logger.warning(
-                "zhaohu _handle_task_assignment: workspace not set, "
-                "using direct processing without streaming support",
-            )
-            request = self.build_agent_request_from_user_content(
-                channel_id=self.channel,
-                sender_id=sap_id,
-                session_id=task_session_id,
-                content_parts=content_parts,
-                channel_meta=meta,
-            )
-            request.channel_meta = meta
-            asyncio.create_task(
-                self._run_task_llm_async(
-                    request,
-                    task_session_id,
-                    task_content,
-                ),
-            )
-
-        # Send card notification to user
-        card_content = self._build_task_initiated_card(
-            task_content,
+                task_content,
+                from_id,
+                meta,
+            ),
+        )
+        logger.info(
+            "zhaohu _handle_task_assignment: started background task "
+            "without streaming, sessionId=%s",
             task_session_id,
         )
-        code, msg = await self.send_custom_card(from_id, card_content)
-
-        if code == 0:
-            logger.info(
-                "zhaohu _handle_task_assignment: card sent successfully, msgId=%s",
-                msg,
-            )
-        else:
-            logger.warning(
-                "zhaohu _handle_task_assignment: card send failed, "
-                "code=%d msg=%s, fallback to text",
-                code,
-                msg,
-            )
 
     async def _handle_casual_chat(
         self,
