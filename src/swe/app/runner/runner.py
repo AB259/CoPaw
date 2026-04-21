@@ -684,6 +684,25 @@ class AgentRunner(Runner):
             ):
                 yield msg, last
 
+            # Index model output to Elasticsearch
+            if trace_id and agent is not None:
+                assistant_response = _extract_assistant_response(agent)
+                if assistant_response:
+                    try:
+                        from ..elasticsearch import get_es_client
+
+                        es_client = get_es_client()
+                        if es_client and es_client.is_connected:
+                            await es_client.index_message(
+                                trace_id,
+                                assistant_response,
+                            )
+                    except Exception as es_err:
+                        logger.warning(
+                            "Failed to index model output to ES: %s",
+                            es_err,
+                        )
+
             # End trace with success status
             if trace_id and has_trace_manager():
                 try:
