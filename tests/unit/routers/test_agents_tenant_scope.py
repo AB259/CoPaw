@@ -253,6 +253,38 @@ def test_get_tenant_aware_config_uses_tenant_config_path(monkeypatch):
     assert observed["path"] == Path("/tmp/tenant-a/config.json")
 
 
+def test_get_tenant_aware_config_uses_effective_default_for_source(
+    monkeypatch,
+):
+    expected_config = SimpleNamespace(name="source-config")
+    observed = {}
+
+    def fake_get_tenant_config_path(tenant_id=None):
+        observed["tenant_id"] = tenant_id
+        return Path("/tmp") / str(tenant_id) / "config.json"
+
+    def fake_load_config(path=None):
+        observed["path"] = path
+        return expected_config
+
+    monkeypatch.setattr(
+        agent_context,
+        "get_tenant_config_path",
+        fake_get_tenant_config_path,
+        raising=False,
+    )
+    monkeypatch.setattr(agent_context, "load_config", fake_load_config)
+
+    resolved = agent_context._get_tenant_aware_config(
+        "default",
+        source_id="ruice",
+    )
+
+    assert resolved is expected_config
+    assert observed["tenant_id"] == "default_ruice"
+    assert observed["path"] == Path("/tmp/default_ruice/config.json")
+
+
 def test_get_agent_for_request_prefers_request_workspace():
     workspace = object()
     request = SimpleNamespace(
@@ -294,7 +326,7 @@ def test_get_agent_for_request_explicit_agent_id_overrides_request_workspace(
     monkeypatch.setattr(
         agent_context,
         "_get_tenant_aware_config",
-        lambda tenant_id=None: config,
+        lambda tenant_id=None, source_id=None: config,
     )
 
     resolved = asyncio.run(
@@ -334,12 +366,65 @@ def test_get_agent_for_request_uses_tenant_workspace_for_active_agent(
     monkeypatch.setattr(
         agent_context,
         "_get_tenant_aware_config",
-        lambda tenant_id=None: tenant_config,
+        lambda tenant_id=None, source_id=None: tenant_config,
     )
 
     resolved = asyncio.run(agent_context.get_agent_for_request(request))
 
     assert resolved is tenant_workspace
+
+
+def test_get_agent_for_request_uses_effective_tenant_for_source_scoped_default(
+    monkeypatch,
+):
+    observed: dict[str, object] = {}
+    config = SimpleNamespace(
+        agents=SimpleNamespace(
+            profiles={"default": SimpleNamespace(enabled=True)},
+            active_agent="default",
+        ),
+    )
+
+    class Manager:
+        async def get_agent(self, agent_id, tenant_id=None):
+            observed["manager_agent_id"] = agent_id
+            observed["manager_tenant_id"] = tenant_id
+            return SimpleNamespace(
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                workspace_dir="/tmp/default_ruice/workspaces/default",
+            )
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(tenant_id="default", source_id="ruice"),
+        headers={},
+        app=SimpleNamespace(
+            state=SimpleNamespace(multi_agent_manager=Manager()),
+        ),
+    )
+
+    def fake_get_tenant_aware_config(
+        tenant_id=None,
+        source_id=None,
+    ):
+        observed["config_tenant_id"] = tenant_id
+        observed["config_source_id"] = source_id
+        return config
+
+    monkeypatch.setattr(
+        agent_context,
+        "_get_tenant_aware_config",
+        fake_get_tenant_aware_config,
+    )
+
+    resolved = asyncio.run(agent_context.get_agent_for_request(request))
+
+    assert observed["config_tenant_id"] == "default"
+    assert observed["config_source_id"] == "ruice"
+    assert observed["manager_agent_id"] == "default"
+    assert observed["manager_tenant_id"] == "default_ruice"
+    assert resolved.workspace_dir == "/tmp/default_ruice/workspaces/default"
+    assert request.state.tenant_id == "default"
 
 
 def test_multi_agent_manager_uses_tenant_config_when_tenant_id_provided(
