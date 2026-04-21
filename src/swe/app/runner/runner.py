@@ -62,6 +62,8 @@ _APPROVE_EXACT = frozenset(
         "/daemon approve",
     },
 )
+_MCP_HTTP_TIMEOUT_SECONDS = 30.0
+_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS = 60.0 * 5
 
 
 def _is_approval(text: str) -> bool:
@@ -105,7 +107,7 @@ async def _build_and_connect_mcp_clients(
                 await client.connect()
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
-                print("passthrough_headers",passthrough_headers)
+                print("passthrough_headers", passthrough_headers)
         except Exception as e:
             logger.warning(
                 f"Failed to create MCP client '{key}': {e}",
@@ -179,8 +181,6 @@ async def _create_mcp_client_with_headers(
     if passthrough_headers:
         merged_headers.update(passthrough_headers)
 
-    http_client = httpx.AsyncClient(headers=merged_headers)
-
     client = HttpStatefulClient(
         name=client_config.name,
         transport=client_config.transport,
@@ -193,8 +193,20 @@ async def _create_mcp_client_with_headers(
         client_context = sse_client(
             url=client_config.url,
             headers=merged_headers,
+            timeout=_MCP_HTTP_TIMEOUT_SECONDS,
+            sse_read_timeout=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
         )
+        http_client = None
     else:  # streamable_http
+        http_client = httpx.AsyncClient(
+            headers=merged_headers,
+            timeout=httpx.Timeout(
+                connect=_MCP_HTTP_TIMEOUT_SECONDS,
+                read=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
+                write=_MCP_HTTP_TIMEOUT_SECONDS,
+                pool=_MCP_HTTP_TIMEOUT_SECONDS,
+            ),
+        )
         client_context = streamable_http_client(
             url=client_config.url,
             http_client=http_client,
