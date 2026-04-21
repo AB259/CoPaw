@@ -124,22 +124,17 @@ export default function ChatSidebar(props: ChatSidebarProps) {
     }
   }, [setSessions]);
 
-  // 监听 focus/visibilitychange 刷新 sessions
+  // 监听 visibilitychange 刷新 sessions（仅从其他标签页切换回来时）
   useEffect(() => {
-    const handleFocusRefresh = () => {
-      void refreshSessions();
-    };
     const handleVisibilityRefresh = () => {
       if (document.visibilityState === 'visible') {
         void refreshSessions();
       }
     };
 
-    window.addEventListener('focus', handleFocusRefresh);
     document.addEventListener('visibilitychange', handleVisibilityRefresh);
 
     return () => {
-      window.removeEventListener('focus', handleFocusRefresh);
       document.removeEventListener('visibilitychange', handleVisibilityRefresh);
     };
   }, [refreshSessions]);

@@ -44,7 +44,7 @@ import { useIframeStore } from "../../stores/iframeStore";
 // ==================== URL 导航参数结束 ====================
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
-import ChatActionGroup from "./components/ChatActionGroup";
+// import ChatActionGroup from "./components/ChatActionGroup";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
 // ==================== 首页改版 (Kun He) ====================
@@ -548,20 +548,16 @@ export default function ChatPage() {
   useEffect(() => {
     void refreshJobs();
 
-    const handleFocusRefresh = () => {
-      void refreshJobs();
-    };
+    // 仅从其他标签页切换回来时刷新（移除 window.focus 触发，减少不必要的 API 调用）
     const handleVisibilityRefresh = () => {
       if (document.visibilityState === "visible") {
         void refreshJobs();
       }
     };
 
-    window.addEventListener("focus", handleFocusRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
-      window.removeEventListener("focus", handleFocusRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [refreshJobs]);
@@ -1034,7 +1030,7 @@ export default function ChatPage() {
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
             <ModelSelector />
-            <ChatActionGroup />
+            {/* <ChatActionGroup /> */}
           </>
         ),
       },
@@ -1064,7 +1060,7 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
-        allowSpeech: true,
+        allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
             const tooltipKey = multimodalCaps.supportsMultimodal
