@@ -111,6 +111,30 @@ class ZhaohuConfig(BaseChannelConfig):
             "",
         ),
     )
+    oauth_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_OAUTH_URL",
+            "",
+        ),
+    )
+    client_id: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CLIENT_ID",
+            "",
+        ),
+    )
+    client_secret: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CLIENT_SECRET",
+            "",
+        ),
+    )
+    custom_card_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_CUSTOM_CARD_URL",
+            "",
+        ),
+    )
 
 
 class ConsoleConfig(BaseChannelConfig):
@@ -334,6 +358,41 @@ class MemorySummaryConfig(BaseModel):
     )
 
 
+class SuggestionConfig(BaseModel):
+    """猜你想问功能配置 - 在模型回答后异步生成后续问题建议."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="是否启用猜你想问功能",
+    )
+    max_suggestions: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="最多生成的问题数量",
+    )
+    timeout_seconds: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=15.0,
+        description="建议生成超时时间（秒）",
+    )
+    user_message_max_length: int = Field(
+        default=200,
+        ge=50,
+        le=500,
+        description="用户提问截断长度（字符）",
+    )
+    assistant_response_max_length: int = Field(
+        default=500,
+        ge=200,
+        le=2000,
+        description="助手回答截断长度（字符）",
+    )
+
+
 class AgentsRunningConfig(BaseModel):
     """Agent runtime behavior configuration."""
 
@@ -481,6 +540,11 @@ class AgentsRunningConfig(BaseModel):
             max_output_length=TRACING_MAX_OUTPUT_LENGTH,
         ),
         description="Tracing configuration for request tracking and analytics",
+    )
+
+    suggestions: SuggestionConfig = Field(
+        default_factory=SuggestionConfig,
+        description="猜你想问功能配置",
     )
 
     @property
@@ -827,33 +891,6 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             enabled=True,
             description="Find files matching a glob pattern",
         ),
-        "browser_use": BuiltinToolConfig(
-            name="browser_use",
-            enabled=True,
-            description="Browser automation and web interaction",
-        ),
-        "desktop_screenshot": BuiltinToolConfig(
-            name="desktop_screenshot",
-            enabled=True,
-            description="Capture desktop screenshots",
-        ),
-        "view_image": BuiltinToolConfig(
-            name="view_image",
-            enabled=True,
-            description="Load an image into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "view_video": BuiltinToolConfig(
-            name="view_video",
-            enabled=True,
-            description="Load a video into LLM context for visual analysis",
-            display_to_user=False,
-        ),
-        "send_file_to_user": BuiltinToolConfig(
-            name="send_file_to_user",
-            enabled=True,
-            description="Send files to user",
-        ),
         "get_current_time": BuiltinToolConfig(
             name="get_current_time",
             enabled=True,
@@ -897,7 +934,7 @@ def build_qa_agent_tools_config() -> ToolsConfig:
     """Tools preset for builtin ``default_qa_agent`` (first workspace init).
 
     Only these are enabled: execute_shell_command, read_file, edit_file,
-    write_file, view_image. All other built-ins are disabled.
+    write_file. All other built-ins are disabled.
     """
     allow = frozenset(
         {
@@ -905,7 +942,6 @@ def build_qa_agent_tools_config() -> ToolsConfig:
             "read_file",
             "write_file",
             "edit_file",
-            "view_image",
         },
     )
     builtin_tools = {
@@ -990,6 +1026,31 @@ class SkillScannerConfig(BaseModel):
     )
 
 
+class ProcessLimitsConfig(BaseModel):
+    """Tenant-scoped subprocess process-limit policy."""
+
+    enabled: bool = True
+    shell: bool = True
+    mcp_stdio: bool = False
+    cpu_time_limit_seconds: int | None = Field(default=30, ge=1)
+    memory_max_mb: int | None = Field(default=150, ge=1)
+
+    @model_validator(mode="after")
+    def validate_enabled_policy(self) -> "ProcessLimitsConfig":
+        """Reject enabled policies that cannot enforce anything."""
+        if not self.enabled:
+            return self
+        if not self.shell and not self.mcp_stdio:
+            raise ValueError(
+                "enabled process_limits policy must target shell or mcp_stdio",
+            )
+        if self.cpu_time_limit_seconds is None and self.memory_max_mb is None:
+            raise ValueError(
+                "enabled process_limits policy requires at least one limit",
+            )
+        return self
+
+
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
@@ -997,6 +1058,9 @@ class SecurityConfig(BaseModel):
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(
         default_factory=SkillScannerConfig,
+    )
+    process_limits: ProcessLimitsConfig = Field(
+        default_factory=ProcessLimitsConfig,
     )
 
 

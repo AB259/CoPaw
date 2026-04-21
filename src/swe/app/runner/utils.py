@@ -21,7 +21,12 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
     MessageType,
 )
 
-from ...config import load_config
+from ...agents.utils.tool_summary import (
+    generate_tool_call_summary,
+    generate_tool_output_summary,
+)
+from ...config import load_config  # pylint: disable=no-name-in-module
+from .models import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +302,7 @@ def _build_media_message_from_block(
 # pylint: disable=too-many-branches,too-many-statements, too-many-nested-blocks
 def agentscope_msg_to_message(
     messages: Union[Msg, List[Msg]],
-) -> List[Message]:
+) -> List[ChatMessage]:
     """
     Convert AgentScope Msg(s) into one or more runtime Message objects.
 
@@ -314,7 +319,15 @@ def agentscope_msg_to_message(
     else:
         raise TypeError(f"Expected Msg or list[Msg], got {type(messages)}")
 
-    results: List[Message] = []
+    results: List[ChatMessage] = []
+
+    def attach_timestamp(
+        message: Message,
+        timestamp: str | None,
+    ) -> ChatMessage:
+        payload = message.model_dump()
+        payload["timestamp"] = timestamp
+        return ChatMessage.model_validate(payload)
 
     for msg in msgs:
         role = msg.role or "assistant"
@@ -333,7 +346,7 @@ def agentscope_msg_to_message(
                 text=msg.content,
             )
             message.add_content(new_content=text_content)
-            results.append(message)
+            results.append(attach_timestamp(message, msg.timestamp))
             continue
 
         current_message = None
@@ -348,7 +361,12 @@ def agentscope_msg_to_message(
             if btype == "text":
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -366,7 +384,12 @@ def agentscope_msg_to_message(
             elif btype == "thinking":
                 if current_type != MessageType.REASONING:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.REASONING,
                         role=role,
@@ -383,7 +406,12 @@ def agentscope_msg_to_message(
 
             elif btype == "tool_use":
                 if current_message:
-                    results.append(current_message.completed())
+                    results.append(
+                        attach_timestamp(
+                            current_message.completed(),
+                            msg.timestamp,
+                        ),
+                    )
 
                 current_message = Message(
                     type=MessageType.PLUGIN_CALL,
@@ -406,6 +434,13 @@ def agentscope_msg_to_message(
                     arguments=arguments,
                 ).model_dump()
 
+                # Generate user-friendly summary for tool call
+                call_data["summary"] = generate_tool_call_summary(
+                    tool_name=block.get("name"),
+                    arguments=arguments,
+                    server_label=block.get("server_label"),
+                )
+
                 data_content = DataContent(
                     delta=False,
                     index=None,
@@ -415,7 +450,12 @@ def agentscope_msg_to_message(
 
             elif btype == "tool_result":
                 if current_message:
-                    results.append(current_message.completed())
+                    results.append(
+                        attach_timestamp(
+                            current_message.completed(),
+                            msg.timestamp,
+                        ),
+                    )
 
                 current_message = Message(
                     type=MessageType.PLUGIN_CALL_OUTPUT,
@@ -438,6 +478,12 @@ def agentscope_msg_to_message(
                     output=output,
                 ).model_dump(exclude_none=True)
 
+                # Generate user-friendly summary for tool output
+                output_data["output_summary"] = generate_tool_output_summary(
+                    tool_name=block.get("name"),
+                    output=output,
+                )
+
                 data_content = DataContent(
                     delta=False,
                     index=None,
@@ -451,12 +497,19 @@ def agentscope_msg_to_message(
                     metadata,
                 )
                 if media_message:
-                    results.append(media_message)
+                    results.append(
+                        attach_timestamp(media_message, msg.timestamp),
+                    )
 
             elif btype == "image":
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -495,7 +548,12 @@ def agentscope_msg_to_message(
             elif btype == "audio":
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -536,7 +594,12 @@ def agentscope_msg_to_message(
             elif btype == "video":
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -575,7 +638,12 @@ def agentscope_msg_to_message(
             elif btype == "file":
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -619,7 +687,12 @@ def agentscope_msg_to_message(
             else:
                 if current_type != MessageType.MESSAGE:
                     if current_message:
-                        results.append(current_message.completed())
+                        results.append(
+                            attach_timestamp(
+                                current_message.completed(),
+                                msg.timestamp,
+                            ),
+                        )
                     current_message = Message(
                         type=MessageType.MESSAGE,
                         role=role,
@@ -635,6 +708,8 @@ def agentscope_msg_to_message(
                 current_message.add_content(new_content=text_content)
 
         if current_message:
-            results.append(current_message.completed())
+            results.append(
+                attach_timestamp(current_message.completed(), msg.timestamp),
+            )
 
     return results

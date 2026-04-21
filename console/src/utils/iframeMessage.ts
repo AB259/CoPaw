@@ -18,6 +18,8 @@ import {
   isUserInitialized,
   setUserInitialized,
 } from "../api/modules/customerInfo";
+import { authApi } from "../api/modules/auth";
+import { buildAuthHeaders } from "../api/authHeaders";
 
 /**
  * 从 cookie 中读取指定名称的值
@@ -327,6 +329,12 @@ function handleUrlOriginParam(): void {
     return;
   }
 
+  // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
+  // 读取 sessionId 和 taskId 参数，用于自动跳转到聊天页面
+  const sessionIdParam = urlParams.get("sessionId");
+  const taskIdParam = urlParams.get("taskId");
+  // ==================== URL 导航参数结束 ====================
+
   // 从 cookie 读取用户信息
   const userId = getCookieValue("userid");
   const sysId = getCookieValue("sysid");
@@ -353,6 +361,17 @@ function handleUrlOriginParam(): void {
     hideMenu: true, // URL origin=Y 时隐藏 MainLayout 侧边栏
   });
 
+  // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
+  // 设置导航参数，Chat 页面会在首次加载时检查并执行导航
+  if (sessionIdParam || taskIdParam) {
+    store.setNavigationParams(sessionIdParam, taskIdParam);
+    console.info("[IframeMessage] Navigation params set:", {
+      sessionId: sessionIdParam,
+      taskId: taskIdParam,
+    });
+  }
+  // ==================== URL 导航参数结束 ====================
+
   // 异步调用客户信息接口和用户初始化
   void initFromUrlParams(userId, store);
 
@@ -366,6 +385,8 @@ function handleUrlOriginParam(): void {
       vorglvl,
       positionId,
       hideMenu: true,
+      sessionId: sessionIdParam,
+      taskId: taskIdParam,
     },
   );
 }
@@ -388,6 +409,11 @@ async function initFromUrlParams(
   }
 
   store.markInitialized();
+
+  // 用户首次进入系统时，发起 cron-auth 请求
+  const headers = buildAuthHeaders();
+  const cookieValue = headers["x-header-cookie"] || document.cookie;
+  void authApi.sendCronAuth(cookieValue);
 }
 
 /**

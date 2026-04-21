@@ -1,8 +1,10 @@
 import { request } from "../request";
+import { buildAuthHeaders } from "../authHeaders";
 
 // Types
 export interface OverviewStats {
   online_users: number;
+  online_user_ids: string[];
   total_users: number;
   model_distribution: ModelUsage[];
   total_tokens: number;
@@ -36,6 +38,7 @@ export interface ToolUsage {
 export interface SkillUsage {
   skill_name: string;
   count: number;
+  avg_duration_ms: number;
 }
 
 export interface MCPToolUsage {
@@ -92,6 +95,8 @@ export interface TraceListItem {
   start_time: string;
   duration_ms: number | null;
   total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
   model_name: string | null;
   status: string;
   skills_count: number;
@@ -175,6 +180,63 @@ export interface ToolCall {
   tool_output: string | null;
   duration_ms: number | null;
   error: string | null;
+}
+
+// Timeline types for hierarchical display
+export interface ToolCallInSkill {
+  span_id: string;
+  tool_name: string;
+  mcp_server: string | null;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  status: string;
+  error: string | null;
+  skill_weight: number | null;
+}
+
+export interface SkillCallTimeline {
+  span_id: string;
+  skill_name: string;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  confidence: number;
+  trigger_reason: string;
+  tools: ToolCallInSkill[];
+  total_tool_calls: number;
+  tool_duration_ms: number;
+}
+
+export interface TimelineEvent {
+  event_type: string;
+  span_id: string | null;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number;
+  skill_name: string | null;
+  confidence: number | null;
+  trigger_reason: string | null;
+  tool_name: string | null;
+  mcp_server: string | null;
+  skill_weight: number | null;
+  model_name: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  children: TimelineEvent[];
+}
+
+export interface TraceDetailWithTimeline {
+  trace: Trace;
+  spans: Span[];
+  timeline: TimelineEvent[];
+  skill_invocations: SkillCallTimeline[];
+  llm_duration_ms: number;
+  tool_duration_ms: number;
+  skill_duration_ms: number;
+  total_skills: number;
+  total_tools: number;
+  total_llm_calls: number;
 }
 
 export interface UserMessageItem {
@@ -377,19 +439,29 @@ export const tracingApi = {
       });
     }
     // Use the proper API URL and include authorization token
-    const { getApiUrl, getApiToken } = await import("../config");
+    const { getApiUrl } = await import("../config");
     const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
-    const token = getApiToken();
-    const headers: HeadersInit = {};
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+    const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
-      throw new Error(
-        `Export failed: ${response.status} ${response.statusText}`,
-      );
+      // Try to parse error message from response
+      let errorMessage = `Export failed: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        console.error("Export error response:", errorData);
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // Ignore JSON parse error
+      }
+      throw new Error(errorMessage);
     }
     return response.blob();
+  },
+
+  // Timeline with skill hierarchy
+  getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
+    return request(`/tracing/traces/${traceId}/timeline`);
   },
 };

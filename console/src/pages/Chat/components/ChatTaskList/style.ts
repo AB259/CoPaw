@@ -39,21 +39,29 @@ export default createGlobalStyle`
   &-items {
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 4px;
   }
 
   &-item {
-    padding: 12px 0;
+    position: relative;
+    padding: 10px 12px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+    border-radius: 4px;
+    background-color: transparent;
     transition: background-color 0.15s ease;
-
-    &:last-child {
-      border-bottom: none;
-    }
+    overflow: hidden;
 
     &:hover {
-      background-color: rgba(0, 0, 0, 0.02);
+      background: rgba(55, 105, 252, 0.03);
+
+      .chat-task-list-item-actions {
+        opacity: 1;
+        pointer-events: auto;
+      }
+    }
+
+    &--paused {
+      background: rgba(223, 146, 33, 0.06);
     }
   }
 
@@ -66,7 +74,8 @@ export default createGlobalStyle`
 
   &-item-title {
     font-size: 14px;
-    line-height: 21px;
+    line-height: 20px;
+    font-weight: 500;
     color: ${DESIGN_TOKENS.colorTextPrimary};
     white-space: nowrap;
     overflow: hidden;
@@ -88,10 +97,78 @@ export default createGlobalStyle`
     text-align: center;
   }
 
+  &-item-actions {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+
+  &-item-action {
+    flex-shrink: 0;
+    height: 24px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(55, 105, 252, 0.1);
+    color: ${DESIGN_TOKENS.colorPrimary};
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 24px;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+
+    &:hover {
+      background: rgba(55, 105, 252, 0.16);
+    }
+
+    &--delete {
+      background: rgba(254, 40, 66, 0.1);
+      color: ${DESIGN_TOKENS.colorBadgeRed};
+
+      &:hover {
+        background: rgba(254, 40, 66, 0.16);
+      }
+    }
+  }
+
+  &-item-status {
+    margin-bottom: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+
+    &--auto {
+      color: #A15C07;
+    }
+
+    &--manual {
+      color: ${DESIGN_TOKENS.colorTextMuted};
+    }
+  }
+
   &-item-subtitle {
     font-size: 12px;
     line-height: 16px;
     color: ${DESIGN_TOKENS.colorTextMuted};
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &-item-next-run {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    color: ${DESIGN_TOKENS.colorTextSecondary};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

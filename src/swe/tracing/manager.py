@@ -34,14 +34,19 @@ class TraceContext:
         user_id: str,
         session_id: str,
         channel: str,
+        source_id: str,
     ):
         self.trace_id = trace_id
         self.user_id = user_id
         self.session_id = session_id
         self.channel = channel
+        self.source_id = source_id
         self.start_time = datetime.now()
         self.trace: Optional[Trace] = None
         self._span_stack: list[str] = []
+        self._active_skills: list[str] = []  # Active skill context stack
+        self.skill_detector: Optional[Any] = None  # SkillInvocationDetector
+        self.enabled_skills: list[str] = []  # Skills enabled for this trace
 
     def push_span(self, span_id: str) -> None:
         """Push a span ID onto the stack."""
@@ -55,6 +60,38 @@ class TraceContext:
     def current_span_id(self) -> Optional[str]:
         """Get current span ID."""
         return self._span_stack[-1] if self._span_stack else None
+
+    def push_skill(self, skill_name: str) -> None:
+        """Push a skill onto the active skill stack."""
+        self._active_skills.append(skill_name)
+
+    def pop_skill(self) -> Optional[str]:
+        """Pop a skill from the active skill stack."""
+        return self._active_skills.pop() if self._active_skills else None
+
+    @property
+    def current_skill(self) -> Optional[str]:
+        """Get the currently active skill (top of stack)."""
+        return self._active_skills[-1] if self._active_skills else None
+
+    @property
+    def active_skills(self) -> list[str]:
+        """Get all active skills in the stack (copy)."""
+        return list(self._active_skills)
+
+    def set_skill_detector(
+        self,
+        detector: Any,
+        enabled_skills: list[str],
+    ) -> None:
+        """Set the skill invocation detector.
+
+        Args:
+            detector: SkillInvocationDetector instance
+            enabled_skills: List of enabled skill names
+        """
+        self.skill_detector = detector
+        self.enabled_skills = enabled_skills
 
 
 def get_current_trace() -> Optional[TraceContext]:
@@ -131,45 +168,38 @@ class TraceManager:
     async def initialize(self) -> None:
         """Initialize the trace manager.
 
-        Requires a database connection to be configured.
+        If database connection is available, uses database storage.
+        Otherwise, runs in log-only mode for debugging.
         """
         if not self.config.enabled:
             logger.info("Tracing is disabled")
             return
 
-        # Create database connection if not provided
-        if self._db is None:
-            if self.config.database:
-                try:
-                    self._db = DatabaseConnection(self.config.database)
-                    await self._db.connect()
-                    self._owns_db = True  # We created it, so we own it
-                    logger.info(
-                        "Database connection established: %s",
-                        self.config.database.host,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to connect to database: %s",
-                        e,
-                    )
-                    raise RuntimeError(
-                        "Database connection is required for tracing. "
-                        "Please configure database in tracing config.",
-                    ) from e
-            else:
-                raise RuntimeError(
-                    "Database configuration is required for tracing. "
-                    "Please set tracing.database in config.",
+        # Try to create database connection if not provided
+        if self._db is None and self.config.database:
+            try:
+                self._db = DatabaseConnection(self.config.database)
+                await self._db.connect()
+                self._owns_db = True  # We created it, so we own it
+                logger.info(
+                    "Database connection established: %s",
+                    self.config.database.host,
                 )
+            except Exception as e:
+                logger.warning(
+                    "Failed to connect to database, using log-only mode: %s",
+                    e,
+                )
+                self._db = None
 
-        # Create store (owns_db=False means shared connection, won't close it)
+        # Create store (with or without database)
         self._store = TraceStore(self.config, self._db, owns_db=self._owns_db)
         await self._store.initialize()
 
-        # Start flush task
+        # Start flush task only if we have a database
         self._running = True
-        self._flush_task = asyncio.create_task(self._flush_loop())
+        if self._db is not None:
+            self._flush_task = asyncio.create_task(self._flush_loop())
 
         # Start cleanup task if retention is configured
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -177,8 +207,9 @@ class TraceManager:
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
         logger.info(
-            "TraceManager initialized (database storage: %s)",
+            "TraceManager initialized (database=%s, mode=%s)",
             self.config.database.host if self.config.database else "N/A",
+            "database" if self._db else "log-only",
         )
 
     async def close(self) -> None:
@@ -217,6 +248,7 @@ class TraceManager:
         user_id: str,
         session_id: str,
         channel: str,
+        source_id: str,
         trace_id: Optional[str] = None,
         user_message: Optional[str] = None,
     ) -> str:
@@ -226,6 +258,7 @@ class TraceManager:
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
+            source_id: Source identifier for data isolation
             trace_id: Optional trace ID (generated if not provided)
             user_message: Optional user's input message
 
@@ -246,6 +279,7 @@ class TraceManager:
 
         trace = Trace(
             trace_id=trace_id,
+            source_id=source_id,
             user_id=user_id,
             session_id=session_id,
             channel=channel,
@@ -258,12 +292,91 @@ class TraceManager:
         self._active_traces[trace_id] = trace
 
         # Create context
-        ctx = TraceContext(trace_id, user_id, session_id, channel)
+        ctx = TraceContext(trace_id, user_id, session_id, channel, source_id)
         ctx.trace = trace
         set_current_trace(ctx)
 
-        logger.debug("Started trace: %s", trace_id)
         return trace_id
+
+    async def setup_skill_detector(
+        self,
+        trace_id: str,
+        enabled_skills: list[str],
+    ) -> None:
+        """Set up skill invocation detector for a trace.
+
+        This should be called after start_trace() to enable skill
+        detection during the trace. Also performs Layer 0 detection
+        on the user message if available.
+
+        Args:
+            trace_id: Trace identifier
+            enabled_skills: List of skill names enabled for this trace
+        """
+        if not self.enabled:
+            return
+
+        ctx = get_current_trace()
+        if not ctx or ctx.trace_id != trace_id:
+            return
+
+        try:
+            from ..agents.skill_invocation_detector import (
+                SkillInvocationDetector,
+            )
+            from ..agents.skill_context_manager import (
+                get_skill_context_manager,
+            )
+            from ..agents.skill_tool_registry import get_skill_tool_registry
+
+            # Create detector with dependencies
+            detector = SkillInvocationDetector(
+                registry=get_skill_tool_registry(),
+                context_manager=get_skill_context_manager(),
+                trace_manager=self,
+                trace_id=trace_id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id,
+                channel=ctx.channel,
+                source_id=ctx.source_id,
+            )
+            detector.set_enabled_skills(enabled_skills)
+
+            # Attach to context
+            ctx.set_skill_detector(detector, enabled_skills)
+
+            # Layer 0: Detect skill from user message
+            if ctx.trace and ctx.trace.user_message:
+                skill, confidence = detector.detect_from_user_message(
+                    ctx.trace.user_message,
+                )
+                if skill:
+                    logger.info(
+                        "Layer 0 result: skill='%s', confidence=%.2f",
+                        skill,
+                        confidence,
+                    )
+                if skill and confidence >= 0.7:
+                    # Start skill through detector to properly track span_id
+                    await detector.start_skill(
+                        skill_name=skill,
+                        trigger_tool="user_message",
+                        trigger_reason="declared",
+                        confidence=confidence,
+                    )
+                    logger.info(
+                        "Skill started: '%s' (confidence: %.2f)",
+                        skill,
+                        confidence,
+                    )
+                elif skill:
+                    logger.info(
+                        "Skill detected but confidence too low: '%s' (confidence: %.2f < 0.5)",
+                        skill,
+                        confidence,
+                    )
+        except Exception as e:
+            logger.warning("Failed to setup skill detector: %s", e)
 
     async def end_trace(
         self,
@@ -284,6 +397,14 @@ class TraceManager:
         # Flush pending spans before ending trace
         await self._flush_spans()
 
+        # End skill detection
+        ctx = get_current_trace()
+        if ctx and ctx.trace_id == trace_id and ctx.skill_detector:
+            try:
+                await ctx.skill_detector.on_reasoning_end()
+            except Exception as e:
+                logger.warning("Failed to end skill detection: %s", e)
+
         trace = self._active_traces.pop(
             trace_id,
             None,
@@ -302,16 +423,8 @@ class TraceManager:
         await self.store.update_trace(trace)
 
         # Clear context
-        ctx = get_current_trace()
         if ctx and ctx.trace_id == trace_id:
             set_current_trace(None)
-
-        logger.debug(
-            "Ended trace: %s (status: %s, duration: %dms)",
-            trace_id,
-            status,
-            trace.duration_ms,
-        )
 
     # Span operations
 
@@ -320,6 +433,7 @@ class TraceManager:
         trace_id: str,
         event_type: EventType,
         name: str,
+        source_id: str,
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
@@ -338,6 +452,7 @@ class TraceManager:
             trace_id: Trace identifier
             event_type: Event type
             name: Span name
+            source_id: Source identifier for data isolation
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
@@ -374,6 +489,7 @@ class TraceManager:
         span = Span(
             span_id=span_id,
             trace_id=trace_id,
+            source_id=source_id,
             parent_span_id=parent_span_id,
             name=name,
             event_type=event_type,
@@ -388,6 +504,9 @@ class TraceManager:
             tool_input=tool_input,
             mcp_server=mcp_server,
         )
+
+        # Update trace statistics (skills_used, tools_used)
+        self._update_trace_totals(trace_id, span, None)
 
         # Add to pending cache and queue atomically
         async with self._span_queue_lock:
@@ -520,6 +639,7 @@ class TraceManager:
         trace_id: str,
         model_name: str,
         input_tokens: int,
+        source_id: str,
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
@@ -530,6 +650,7 @@ class TraceManager:
             trace_id: Trace identifier
             model_name: Model name
             input_tokens: Input token count
+            source_id: Source identifier for data isolation
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
@@ -541,6 +662,7 @@ class TraceManager:
             trace_id=trace_id,
             event_type=EventType.LLM_INPUT,
             name=f"llm_call_{model_name}",
+            source_id=source_id,
             user_id=user_id,
             session_id=session_id,
             channel=channel,
@@ -575,17 +697,23 @@ class TraceManager:
         trace_id: str,
         tool_name: str,
         tool_input: Optional[dict[str, Any]],
+        source_id: str,
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
         mcp_server: Optional[str] = None,
     ) -> str:
-        """Emit tool call start event.
+        """Emit tool call start event with multi-skill attribution.
+
+        This method uses the SkillInvocationDetector to determine skill
+        attribution, which combines explicit declarations and inference
+        for comprehensive coverage.
 
         Args:
             trace_id: Trace identifier
             tool_name: Tool name
             tool_input: Tool input
+            source_id: Source identifier for data isolation
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
@@ -594,6 +722,37 @@ class TraceManager:
         Returns:
             Span ID
         """
+        # Determine skill attribution using detector
+        ctx = get_current_trace()
+        primary_skill: Optional[str] = None
+
+        if ctx and ctx.trace_id == trace_id:
+            try:
+                # Use the detector if available on context
+                detector = getattr(ctx, "skill_detector", None)
+                if detector:
+                    primary_skill, _ = await detector.on_tool_call(
+                        tool_name=tool_name,
+                        tool_input=tool_input or {},
+                        mcp_server=mcp_server,
+                    )
+                else:
+                    # Fallback to registry-based attribution
+                    from ..agents.skill_tool_registry import (
+                        get_skill_tool_registry,
+                    )
+
+                    registry = get_skill_tool_registry()
+
+                    declared_skills = registry.get_skills_for_tool(tool_name)
+                    active_skills = ctx.active_skills
+                    all_skills = list(set(active_skills + declared_skills))
+
+                    if all_skills:
+                        primary_skill = sorted(all_skills)[0]
+            except Exception as e:
+                logger.warning("Failed to resolve skill attribution: %s", e)
+
         return await self.emit_span(
             trace_id=trace_id,
             event_type=EventType.TOOL_CALL_START,
@@ -601,9 +760,11 @@ class TraceManager:
             user_id=user_id,
             session_id=session_id,
             channel=channel,
+            source_id=source_id,
             tool_name=tool_name,
             tool_input=tool_input,
             mcp_server=mcp_server,
+            skill_name=primary_skill,
         )
 
     async def emit_tool_call_end(
@@ -650,6 +811,7 @@ class TraceManager:
         self,
         trace_id: str,
         skill_name: str,
+        source_id: str,
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
@@ -660,6 +822,7 @@ class TraceManager:
         Args:
             trace_id: Trace identifier
             skill_name: Skill name
+            source_id: Source identifier for data isolation
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
@@ -672,6 +835,7 @@ class TraceManager:
             trace_id=trace_id,
             event_type=EventType.SKILL_INVOCATION,
             name=f"skill_{skill_name}",
+            source_id=source_id,
             user_id=user_id,
             session_id=session_id,
             channel=channel,
@@ -727,8 +891,19 @@ class TraceManager:
 
         if spans:
             try:
-                await self.store.batch_create_spans(spans)
-                logger.debug("Flushed %d spans", len(spans))
+                if self._db is None:
+                    # Log-only mode: output spans directly (only skill-related)
+                    for span in spans:
+                        if span.skill_name:
+                            logger.info(
+                                "[SKILL SPAN] skill='%s', type=%s",
+                                span.skill_name,
+                                span.event_type.value
+                                if hasattr(span.event_type, "value")
+                                else span.event_type,
+                            )
+                else:
+                    await self.store.batch_create_spans(spans)
             except Exception as e:
                 logger.error("Failed to flush spans: %s", e)
 

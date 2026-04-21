@@ -21,7 +21,7 @@ from ..constant import (
     WORKING_DIR,
 )
 from ..__version__ import __version__
-from ..utils.logging import setup_logger, add_swe_file_handler
+from ..utils.my_logging import setup_logger, add_swe_file_handler
 from .auth import AuthMiddleware
 from .middleware.tenant_identity import TenantIdentityMiddleware
 from .middleware.tenant_workspace import TenantWorkspaceMiddleware
@@ -220,31 +220,38 @@ async def lifespan(
         database_config.database,
     )
 
-    if database_config.host and database_config.host != "localhost":
-        try:
-            from ..database import DatabaseConnection
+    if database_config.host != "localhost":
+        if database_config.host:
+            try:
+                from ..database import DatabaseConnection
 
-            db_connection = DatabaseConnection(database_config)
-            await db_connection.connect()
-            logger.info(
-                "Database connection established: %s",
-                database_config.host,
-            )
-        except Exception as e:
-            import traceback
+                db_connection = DatabaseConnection(database_config)
+                await db_connection.connect()
+                if not db_connection.is_connected:
+                    raise RuntimeError(
+                        "Database connection failed. Please check database configuration.",
+                    )
+                logger.info(
+                    "Database connection established: %s",
+                    database_config.host,
+                )
+            except Exception as e:
+                import traceback
 
-            logger.error(
-                "Failed to initialize database connection: %s\n%s",
-                e,
-                traceback.format_exc(),
-            )
-            raise RuntimeError(
-                "Database connection is required. Please check database configuration.",
-            ) from e
+                logger.error(
+                    "Failed to initialize database connection: %s\n%s",
+                    e,
+                    traceback.format_exc(),
+                )
+                raise RuntimeError(
+                    "Database connection is required. Please check database configuration.",
+                ) from e
+        # else:
+        #     raise RuntimeError(
+        #         "Database host is required. Please configure SWE_DB_HOST environment variable.",
+        #     )
     else:
-        raise RuntimeError(
-            "Database host is required. Please configure SWE_DB_HOST environment variable.",
-        )
+        logger.info("Database connection is disabled for localhost")
 
     # --- Initialize tracing manager ---
     try:
@@ -278,10 +285,13 @@ async def lifespan(
                     "SWE_TRACING_MAX_OUTPUT_LENGTH",
                     500,
                 ),
-                database=db_connection.config,
+                database=db_connection.config if db_connection else None,
             )
             await init_trace_manager(tracing_config, db_connection)
-            logger.info("Tracing manager initialized")
+            logger.info(
+                "Tracing manager initialized (db_mode=%s)",
+                db_connection is not None,
+            )
         else:
             logger.info("Tracing is disabled via SWE_TRACING_ENABLED")
     except Exception as e:
@@ -293,11 +303,33 @@ async def lifespan(
             traceback.format_exc(),
         )
 
-    # --- Initialize instance module ---
-    from .instance.router import init_instance_module
+    # --- Initialize instance module config---
+    # from .instance.router import init_instance_module
 
-    init_instance_module(db_connection)
+    # init_instance_module(db_connection)
     logger.info("Instance module initialized")
+
+    # --- Initialize greeting and featured_case modules ---
+    if db_connection is not None:
+        try:
+            from .greeting.router import init_greeting_module
+            from .featured_case.router import init_featured_case_module
+
+            init_greeting_module(db_connection)
+            init_featured_case_module(db_connection)
+            logger.info("Greeting and FeaturedCase modules initialized")
+
+            from .workspace.tenant_init_source_store import (
+                init_tenant_init_source_module,
+            )
+
+            init_tenant_init_source_module(db_connection)
+            logger.info("TenantInitSource module initialized")
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize greeting/featured_case modules: %s",
+                e,
+            )
 
     startup_elapsed = time.time() - startup_start_time
     logger.info(

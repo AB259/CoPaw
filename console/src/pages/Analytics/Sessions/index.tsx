@@ -4,6 +4,7 @@ import {
   Table,
   Card,
   Input,
+  Button,
   DatePicker,
   Spin,
   Tag,
@@ -88,7 +89,12 @@ export default function SessionsPage() {
     }
 
     fetchSessions();
-  }, [page, pageSize, searchQuery, dateRange]);
+  }, [page, pageSize, dateRange]);
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchSessions();
+  };
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -233,8 +239,8 @@ export default function SessionsPage() {
       title: t("analytics.lastActive", "Last Active"),
       dataIndex: "last_active",
       key: "last_active",
-      width: 120,
-      render: (v) => (v ? dayjs(v).format("MM-DD HH:mm") : "-"),
+      width: 150,
+      render: (v) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
     },
   ];
 
@@ -255,9 +261,13 @@ export default function SessionsPage() {
             prefix={<Search size={16} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onPressEnter={handleSearch}
             style={{ width: 250 }}
             allowClear
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
         </div>
       </div>
 
@@ -319,6 +329,10 @@ export default function SessionsPage() {
                 </div>
                 <div className={styles.label}>
                   {t("analytics.tokens", "Tokens")}
+                </div>
+                <div className={styles.subLabel}>
+                  <span>输入: {formatTokens(sessionStats.input_tokens)}</span>
+                  <span style={{ marginLeft: 8 }}>输出: {formatTokens(sessionStats.output_tokens)}</span>
                 </div>
               </div>
               <div className={styles.statItem}>
@@ -444,7 +458,7 @@ export default function SessionsPage() {
                     >
                       <div className={styles.traceHeader}>
                         <span className={styles.traceId}>
-                          {trace.trace_id.slice(0, 8)}...
+                          {trace.trace_id}
                         </span>
                         <Tag color={getStatusColor(trace.status)}>
                           {trace.status}
@@ -455,7 +469,10 @@ export default function SessionsPage() {
                           {dayjs(trace.start_time).format("HH:mm:ss")}
                         </span>
                         <span>{formatDuration(trace.duration_ms)}</span>
-                        <span>{formatTokens(trace.total_tokens)} tokens</span>
+                        <span>
+                          <span style={{ color: "#52c41a" }}>输入: {formatTokens(trace.total_input_tokens)}</span>
+                          <span style={{ marginLeft: 8, color: "#1890ff" }}>输出: {formatTokens(trace.total_output_tokens)}</span>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -480,6 +497,19 @@ export default function SessionsPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Token 统计 */}
+                <div className={styles.traceTokenStats}>
+                  <span>
+                    <strong>输入:</strong> {formatTokens(traceDetail.trace.total_input_tokens)}
+                  </span>
+                  <span style={{ marginLeft: 16 }}>
+                    <strong>输出:</strong> {formatTokens(traceDetail.trace.total_output_tokens)}
+                  </span>
+                  <span style={{ marginLeft: 16 }}>
+                    <strong>总计:</strong> {formatTokens(traceDetail.trace.total_input_tokens + traceDetail.trace.total_output_tokens)}
+                  </span>
+                </div>
 
                 <h4>
                   <Clock size={14} />
@@ -506,6 +536,28 @@ export default function SessionsPage() {
                               }}
                             >
                               {formatDuration(span.duration_ms)}
+                            </span>
+                          )}
+                          {(span.input_tokens != null && span.input_tokens > 0) && (
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                color: "#52c41a",
+                                fontSize: 12,
+                              }}
+                            >
+                              输入: {formatTokens(span.input_tokens)}
+                            </span>
+                          )}
+                          {(span.output_tokens != null && span.output_tokens > 0) && (
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                color: "#1890ff",
+                                fontSize: 12,
+                              }}
+                            >
+                              输出: {formatTokens(span.output_tokens)}
                             </span>
                           )}
                         </div>

@@ -1,18 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  Card,
-  Input,
-  Select,
-  Tag,
-  Drawer,
-  Descriptions,
-  Timeline,
-  Spin,
-  Empty,
-  DatePicker,
-} from "antd";
+import { Table, Card, Input, Select, Button, Tag, Drawer, Descriptions, Timeline, Spin, Empty, DatePicker } from "antd";
 import { FileText, Clock, Zap } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -107,13 +95,14 @@ export default function TracesPage() {
   };
 
   const formatDuration = (ms: number | null) => {
-    if (ms === null) return "-";
+    if (!ms) return "-";
     if (ms < 1000) return `${ms}ms`;
     if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
     return `${(ms / 60000).toFixed(1)}m`;
   };
 
   const formatTokens = (tokens: number) => {
+    if (!tokens) return "0";
     if (tokens < 1000) return tokens.toString();
     if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
     return `${(tokens / 1000000).toFixed(2)}M`;
@@ -139,16 +128,11 @@ export default function TracesPage() {
       title: t("analytics.traceId", "Trace ID"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 100,
+      width: 280,
+      ellipsis: true,
       render: (v) => (
-        <span
-          style={{
-            cursor: "pointer",
-            color: "#1890ff",
-            fontFamily: "monospace",
-          }}
-        >
-          {v.slice(0, 8)}...
+        <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
+          {v}
         </span>
       ),
     },
@@ -163,20 +147,21 @@ export default function TracesPage() {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 130,
-      render: (v) => dayjs(v).format("MM-DD HH:mm:ss"),
+      width: 160,
+      render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
       dataIndex: "duration_ms",
       key: "duration_ms",
-      width: 80,
+      width: 100,
       render: (v) => formatDuration(v),
     },
     {
       title: t("analytics.model", "Model"),
       dataIndex: "model_name",
       key: "model_name",
+      width: 150,
       ellipsis: true,
     },
     {
@@ -237,6 +222,9 @@ export default function TracesPage() {
               { value: "cancelled", label: "Cancelled" },
             ]}
           />
+          <Button type="primary" onClick={handleSearch}>
+            {t("common.search", "Search")}
+          </Button>
         </div>
       </div>
 
@@ -338,6 +326,23 @@ export default function TracesPage() {
                 <pre className={styles.errorText}>
                   {selectedTrace.trace.error}
                 </pre>
+              </div>
+            )}
+
+            {/* 使用技能 - 与 Sessions 页面一致 */}
+            {selectedTrace.trace.skills_used && selectedTrace.trace.skills_used.length > 0 && (
+              <div className={styles.section}>
+                <h4>
+                  <Zap size={14} style={{ marginRight: 8 }} />
+                  {t("analytics.skillsUsed", "Skills Used")}
+                </h4>
+                <div className={styles.tagList}>
+                  {selectedTrace.trace.skills_used.map((skill) => (
+                    <Tag key={skill} color="blue">
+                      {skill}
+                    </Tag>
+                  ))}
+                </div>
               </div>
             )}
 

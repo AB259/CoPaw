@@ -1,11 +1,16 @@
 // ==================== 组件引入方式变更 (Kun He) ====================
 import {
-  AgentScopeRuntimeWebUI,
+  AgentScopeRuntimeWebUILayout,
+  AgentScopeRuntimeWebUIComposedProvider,
   IAgentScopeRuntimeWebUIOptions,
+  type IAgentScopeRuntimeWebUISenderOptions,
   type IAgentScopeRuntimeWebUIRef,
+  useChatAnywhereSessionsState,
 } from "@/components/agentscope-chat";
+import AgentScopeRuntimeRequestCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Request/Card";
+import AgentScopeRuntimeResponseCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Card";
 // ==================== 组件引入方式变更结束 ====================
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
@@ -34,15 +39,21 @@ import { getUserId, getChannel } from "../../utils/identity";
 // ==================== 品牌主题 (Kun He) ====================
 import { useBrandTheme } from "../../contexts/BrandThemeContext";
 // ==================== 品牌主题结束 ====================
+// ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
+import { useIframeStore } from "../../stores/iframeStore";
+// ==================== URL 导航参数结束 ====================
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
-import ChatActionGroup from "./components/ChatActionGroup";
+// import ChatActionGroup from "./components/ChatActionGroup";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
 // ==================== 首页改版 (Kun He) ====================
 import WelcomeCenterLayout from "@/components/agentscope-chat/WelcomeCenterLayout";
 import ChatSidebar from "./components/ChatSidebar";
 // ==================== 首页改版结束 ====================
+// ==================== 自定义工具渲染器 (customToolRenderConfig) ====================
+import CopyFileToStatic from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/customToolRenders/CopyFileToStatic";
+// ==================== 自定义工具渲染器结束 ====================
 import {
   toDisplayUrl,
   copyText,
@@ -53,10 +64,24 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
+import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
+import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
+
+// ==================== 会话状态轮询 (自动 reconnect) ====================
+import { emit } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
+import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
+// ==================== 会话状态轮询 (自动 reconnect) ====================
+import RuntimeRequestCard from "./components/RuntimeRequestCard";
+import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import type {
+  ChatRuntimeRequestCardData,
+  ChatRuntimeResponseCardData,
+} from "./messageMeta";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
-const TASK_PAGE_POLL_MS = 10_000;
-const TASK_PENDING_POLL_MS = 2_000;
+const TASK_PAGE_POLL_MS = 30_000;
+const TASK_PENDING_POLL_MS = 30_000;
+const SESSION_RUNNING_POLL_MS = 5_000;
 
 interface SessionInfo {
   session_id?: string;
@@ -77,6 +102,15 @@ interface CommandSuggestion {
   value: string;
   description: string;
 }
+
+type InputMessage = {
+  role?: string;
+  content?: unknown;
+};
+
+type AttachmentTriggerProps = {
+  disabled?: boolean;
+};
 
 function renderSuggestionLabel(command: string, description: string) {
   return (
@@ -125,7 +159,7 @@ function useIMEComposition(isChatActive: () => boolean) {
       if (target?.tagName === "TEXTAREA" && e.key === "Enter" && !e.shiftKey) {
         // e.isComposing is the standard flag; isComposingRef covers the
         // post-compositionend grace period needed by Safari.
-        if (isComposingRef.current || (e as any).isComposing) {
+        if (isComposingRef.current || e.isComposing) {
           e.stopPropagation();
           e.stopImmediatePropagation();
           e.preventDefault();
@@ -293,18 +327,33 @@ export default function ChatPage() {
     return match?.[1];
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
-  const [currentTask, setCurrentTask] = useState<CronJobSpecOutput | null>(null);
-  const [taskProbeDone, setTaskProbeDone] = useState(false);
+  const [jobs, setJobs] = useState<CronJobSpecOutput[]>([]);
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
   const { message } = useAppMessage();
+  const { setSessionLoading } = useChatAnywhereSessionsState();
+
+  // useTransition for non-urgent state updates (badge clearing)
+  const [, startTransition] = useTransition();
+  // Debounce flag for markTaskRead API calls
+  const markTaskReadPendingRef = useRef(false);
 
   const isChatActiveRef = useRef(false);
   isChatActiveRef.current =
     location.pathname === "/" || location.pathname.startsWith("/chat");
+
+  useEffect(() => {
+    const handler = () => {
+      message.error(t("chat.followUp.autoSubmitFailed"));
+    };
+
+    document.addEventListener(FOLLOW_UP_SUBMIT_FAILED_EVENT, handler);
+    return () =>
+      document.removeEventListener(FOLLOW_UP_SUBMIT_FAILED_EVENT, handler);
+  }, [message, t]);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -321,6 +370,7 @@ export default function ChatPage() {
   /** Tracks the stale auto-selected session ID that was skipped on init, so we can suppress its late-arriving onSessionSelected callback. */
   const staleAutoSelectedIdRef = useRef<string | null>(null);
   const taskHadResultRef = useRef(false);
+  const previousCurrentTaskRef = useRef<CronJobSpecOutput | null>(null);
   const chatIdRef = useRef(chatId);
   const navigateRef = useRef(navigate);
   const chatRef = useRef<IAgentScopeRuntimeWebUIRef>(null);
@@ -366,6 +416,17 @@ export default function ChatPage() {
       const targetId = realId || sessionId;
       if (!targetId) return;
 
+      // If current URL's chatId differs from targetId, skip this callback.
+      // This happens when user quickly switches sessions via sidebar:
+      // 1. User clicks A → getSession(A) starts
+      // 2. User clicks B → URL becomes /chat/B
+      // 3. A's request completes → onSessionSelected(A) fires
+      // 4. Should NOT navigate back to A since user already chose B
+      const currentUrlChatId = chatIdRef.current;
+      if (currentUrlChatId && currentUrlChatId !== targetId) {
+        return;
+      }
+
       // If a preferred chatId from the URL exists and no navigation has happened yet,
       // skip the library's initial auto-selection (always first session).
       // ChatSessionInitializer will apply the correct selection afterward.
@@ -410,6 +471,55 @@ export default function ChatPage() {
     };
   }, []);
 
+  // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
+  // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
+  // sessionId: 直接导航到 /chat/:sessionId
+  // taskId: 查找 task.chat_id 后导航
+  const sessionIdRef = useRef<string | null>(null);
+  const taskIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const store = useIframeStore.getState();
+    const { sessionId, taskId } = store;
+
+    // 只在首次加载时处理，避免重复导航
+    if (sessionId) {
+      sessionIdRef.current = sessionId;
+      taskIdRef.current = null; // sessionId 优先，忽略 taskId
+      store.clearNavigationParams();
+      console.info("[Chat] Navigating to sessionId:", sessionId);
+      navigate(`/chat/${sessionId}`, { replace: true });
+      return;
+    }
+
+    if (taskId) {
+      taskIdRef.current = taskId;
+      store.clearNavigationParams();
+      console.info("[Chat] taskId set, waiting for jobs:", taskId);
+    }
+  }, [navigate]);
+
+  // taskId 导航需要等待 jobs 加载完成
+  useEffect(() => {
+    if (!taskIdRef.current || jobs.length === 0) return;
+
+    const task = jobs.find((j) => j.id === taskIdRef.current);
+    const chatId = task?.task?.chat_id;
+
+    if (chatId) {
+      console.info("[Chat] Navigating from taskId to chatId:", {
+        taskId: taskIdRef.current,
+        chatId,
+      });
+      navigate(`/chat/${chatId}`, { replace: true });
+      taskIdRef.current = null;
+    } else {
+      console.warn("[Chat] taskId not found or no chat_id:", taskIdRef.current);
+      taskIdRef.current = null;
+    }
+  }, [jobs, navigate]);
+  // ==================== URL 导航参数结束 ====================
+
   // Setup multimodal capabilities tracking via custom hook
 
   // Refresh chat when selectedAgent changes
@@ -426,69 +536,260 @@ export default function ChatPage() {
     prevSelectedAgentRef.current = selectedAgent;
   }, [selectedAgent]);
 
-  const fetchCurrentTask = useCallback(async () => {
-    if (!chatId) {
-      setCurrentTask(null);
-      setTaskProbeDone(true);
-      taskHadResultRef.current = false;
-      return;
-    }
+  const refreshJobs = useCallback(async () => {
     try {
-      const jobs = await cronJobApi.listCronJobs();
-      const nextTask =
-        (Array.isArray(jobs)
-          ? jobs.find((job) => job.task?.chat_id === chatId) || null
-          : null) ?? null;
-      const hadResult = Boolean(nextTask?.task?.has_scheduled_result);
-      if (hadResult && !taskHadResultRef.current) {
-        setRefreshKey((prev) => prev + 1);
-      }
-      taskHadResultRef.current = hadResult;
-      setCurrentTask(nextTask);
+      const nextJobs = await cronJobApi.listCronJobs();
+      setJobs(Array.isArray(nextJobs) ? nextJobs : []);
     } catch {
-      setCurrentTask(null);
-    } finally {
-      setTaskProbeDone(true);
+      setJobs([]);
     }
-  }, [chatId]);
+  }, []);
+
+  const { tasks, currentTask } = useMemo(
+    () => deriveChatTaskState(jobs, chatId),
+    [jobs, chatId],
+  );
 
   useEffect(() => {
-    setTaskProbeDone(false);
-    taskHadResultRef.current = false;
-    void fetchCurrentTask();
-  }, [fetchCurrentTask]);
+    void refreshJobs();
+
+    // 仅从其他标签页切换回来时刷新（移除 window.focus 触发，减少不必要的 API 调用）
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void refreshJobs();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [refreshJobs]);
 
   useEffect(() => {
-    if (!chatId || !taskProbeDone || !currentTask) return;
-
-    const pollMs = currentTask.task?.has_scheduled_result
-      ? TASK_PAGE_POLL_MS
-      : TASK_PENDING_POLL_MS;
+    const pollMs =
+      currentTask?.task?.has_scheduled_result === false
+        ? TASK_PENDING_POLL_MS
+        : TASK_PAGE_POLL_MS;
 
     const intervalId = window.setInterval(() => {
-      void fetchCurrentTask();
+      void refreshJobs();
     }, pollMs);
 
     return () => window.clearInterval(intervalId);
-  }, [chatId, currentTask, fetchCurrentTask, taskProbeDone]);
+  }, [currentTask?.task?.has_scheduled_result, refreshJobs]);
+
+  useEffect(() => {
+    const hadResult = Boolean(currentTask?.task?.has_scheduled_result);
+    if (hadResult && !taskHadResultRef.current) {
+      setRefreshKey((prev) => prev + 1);
+    }
+    taskHadResultRef.current = hadResult;
+  }, [currentTask?.task?.has_scheduled_result]);
 
   useEffect(() => {
     if (!currentTask?.id) return;
     if ((currentTask.task?.unread_execution_count || 0) <= 0) return;
+    if (!shouldMarkTaskReadOnOpen(currentTask)) return;
 
-    setCurrentTask((prev) =>
-      prev?.id === currentTask.id && prev.task
-        ? {
-            ...prev,
-            task: {
-              ...prev.task,
-              unread_execution_count: 0,
-            },
-          }
-        : prev,
-    );
-    void cronJobApi.markTaskRead(currentTask.id).catch(() => {});
+    // Debounce: skip if there's already a pending markTaskRead request
+    if (markTaskReadPendingRef.current) return;
+
+    markTaskReadPendingRef.current = true;
+
+    // Non-urgent update: badge clearing can be delayed
+    startTransition(() => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === currentTask.id && job.task
+            ? {
+                ...job,
+                task: {
+                  ...job.task,
+                  unread_execution_count: 0,
+                },
+              }
+            : job,
+        ),
+      );
+    });
+
+    void cronJobApi
+      .markTaskRead(currentTask.id)
+      .catch(() => {})
+      .finally(() => {
+        markTaskReadPendingRef.current = false;
+      });
   }, [currentTask?.id, currentTask?.task?.unread_execution_count]);
+
+  // ==================== 会话状态轮询 (自动 reconnect) ====================
+  // 当用户已在当前会话页面时，如果会话状态变为 running，自动触发 reconnect
+  // 注意：需要排除用户主动发起提问的情况（已在 generating 状态）
+  const sessionReconnectingRef = useRef(false);
+  const prevSessionStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!chatId) return;
+
+    const pollSessionStatus = async () => {
+      try {
+        // 如果当前已经在 generating/loading 状态，说明用户主动发起的提问正在进行
+        // 此时不应触发 reconnect，避免重复创建 SSE 连接
+        const isLoading = runtimeLoadingBridgeRef.current?.getLoading?.() ?? false;
+        if (isLoading) {
+          // 正在进行中，跳过轮询，但记录状态为 running 以便下次正确判断
+          prevSessionStatusRef.current = "running";
+          return;
+        }
+
+        const chatHistory = await chatApi.getChat(chatId);
+        const status = chatHistory?.status;
+        const generating = status === "running";
+
+        // 状态从非 running 变为 running 时触发 reconnect
+        // 条件：1. 状态变为 running  2. 之前不是 running  3. 没有正在 reconnect  4. 当前没有正在 generating
+        if (
+          generating &&
+          prevSessionStatusRef.current !== "running" &&
+          !sessionReconnectingRef.current &&
+          !isLoading
+        ) {
+          sessionReconnectingRef.current = true;
+          // 使用 chatId（UUID）作为 session_id，后端会正确处理
+          console.info("[Chat] Session running, auto reconnect:", chatId);
+          emit({
+            type: "handleReconnect",
+            data: { session_id: chatId },
+          });
+        }
+
+        // 状态变为非 running 时重置 reconnecting 标记
+        if (!generating) {
+          sessionReconnectingRef.current = false;
+        }
+
+        prevSessionStatusRef.current = status;
+      } catch (err) {
+        console.warn("[Chat] Failed to poll session status:", err);
+      }
+    };
+
+    pollSessionStatus();
+    const intervalId = window.setInterval(pollSessionStatus, SESSION_RUNNING_POLL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [chatId]);
+  // ==================== 会话状态轮询结束 ====================
+
+  const handleTaskOpen = useCallback(
+    (task: CronJobSpecOutput) => {
+      const taskChatId = task.task?.chat_id;
+      if (!taskChatId) return;
+
+      // Set loading first to avoid blocking, then navigate
+      setSessionLoading(true);
+      navigate(`/chat/${taskChatId}`, { replace: true });
+    },
+    [navigate, setSessionLoading],
+  );
+
+  const handleTaskResume = useCallback(
+    async (task: CronJobSpecOutput) => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id
+            ? {
+                ...job,
+                enabled: true,
+                task: job.task
+                  ? {
+                      ...job.task,
+                      is_paused: false,
+                      pause_reason: null,
+                      auto_paused_at: null,
+                      unread_execution_count: 0,
+                    }
+                  : job.task,
+              }
+            : job,
+        ),
+      );
+
+      try {
+        await cronJobApi.resumeCronJob(task.id);
+        message.success("任务已恢复");
+        void refreshJobs();
+      } catch {
+        message.error("恢复失败");
+        void refreshJobs();
+      }
+    },
+    [message, refreshJobs],
+  );
+
+  const handleTaskDelete = useCallback(
+    (task: CronJobSpecOutput) => {
+      Modal.confirm({
+        title: "删除暂停任务",
+        content: `确认删除任务“${task.name || task.id}”？`,
+        okText: "删除",
+        okType: "danger",
+        cancelText: "取消",
+        onOk: async () => {
+          setJobs((prev) => prev.filter((job) => job.id !== task.id));
+          if (task.task?.chat_id && task.task.chat_id === chatIdRef.current) {
+            navigate("/chat", { replace: true });
+          }
+          try {
+            await cronJobApi.deleteCronJob(task.id);
+            message.success("任务已删除");
+            void refreshJobs();
+          } catch {
+            message.error("删除失败");
+            void refreshJobs();
+          }
+        },
+      });
+    },
+    [message, navigate, refreshJobs],
+  );
+
+  useEffect(() => {
+    const previousTask = previousCurrentTaskRef.current;
+    previousCurrentTaskRef.current = currentTask;
+
+    if (
+      !shouldRefreshCurrentTaskMessages({
+        previousTask,
+        currentTask,
+      })
+    ) {
+      return;
+    }
+
+    void chatRef.current?.refreshSession?.();
+  }, [
+    currentTask?.id,
+    currentTask?.task?.has_scheduled_result,
+    currentTask?.task?.last_scheduled_run_at,
+    currentTask?.task?.unread_execution_count,
+  ]);
+
+  // Show toast when task has no scheduled result yet
+  const taskNoResultShownRef = useRef(false);
+  useEffect(() => {
+    if (currentTask && !currentTask.task?.has_scheduled_result) {
+      if (!taskNoResultShownRef.current) {
+        taskNoResultShownRef.current = true;
+        message.info("当前任务暂未启动，等下次收到提醒再来看看哟~");
+      }
+    } else {
+      taskNoResultShownRef.current = false;
+    }
+  }, [currentTask?.id, currentTask?.task?.has_scheduled_result]);
 
   const copyResponse = useCallback(
     async (response: CopyableResponse) => {
@@ -562,7 +863,7 @@ export default function ChatPage() {
         requestBody.session_id;
       if (backendChatId) {
         const userText = rewrittenInput
-          .filter((m: any) => m.role === "user")
+          .filter((m: InputMessage) => m.role === "user")
           .map(extractUserMessageText)
           .join("\n")
           .trim();
@@ -676,7 +977,7 @@ export default function ChatPage() {
   // ==================== Drag & drop end ====================
 
   const options = useMemo(() => {
-    const i18nConfig = getDefaultConfig(t);
+    const i18nConfig = getDefaultConfig(t) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
     const commandSuggestions: CommandSuggestion[] = [
       {
         command: "/clear",
@@ -700,6 +1001,10 @@ export default function ChatPage() {
       },
     ];
 
+    const senderConfig = i18nConfig.sender as
+      | IAgentScopeRuntimeWebUISenderOptions
+      | undefined;
+
     const handleBeforeSubmit = async () => {
       if (isComposingRef.current) return false;
       return true;
@@ -720,7 +1025,7 @@ export default function ChatPage() {
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
             <ModelSelector />
-            <ChatActionGroup />
+            {/* <ChatActionGroup /> */}
           </>
         ),
       },
@@ -735,29 +1040,24 @@ export default function ChatPage() {
         // ==================== 品牌主题结束 ====================
         // ==================== 首页改版 (Kun He) ====================
         // 使用自定义欢迎页渲染，替代默认 WelcomePrompts
-        render: ({ greeting, prompts, onSubmit }) => (
+        render: ({ greeting, onSubmit }) => (
           <WelcomeCenterLayout
             greeting={
               typeof greeting === "string"
                 ? greeting
                 : "你好，你的专属小龙虾，前来报到！"
             }
-            prompts={prompts?.map((p) =>
-              typeof p === "string"
-                ? { label: p, value: p }
-                : { label: p.label || p.value, value: p.value },
-            )}
             onSubmit={(data) => onSubmit(data)}
           />
         ),
         // ==================== 首页改版结束 ====================
       },
       sender: {
-        ...(i18nConfig as any)?.sender,
+        ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
-        allowSpeech: true,
+        allowSpeech: false,
         attachments: {
-          trigger: function (props: any) {
+          trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
             const tooltipKey = multimodalCaps.supportsMultimodal
               ? multimodalCaps.supportsImage && !multimodalCaps.supportsVideo
                 ? "chat.attachments.tooltipImageOnly"
@@ -786,6 +1086,15 @@ export default function ChatPage() {
         multiple: true,
         hideBuiltInSessionList: true,
         api: sessionApi,
+      },
+      cards: {
+        AgentScopeRuntimeRequestCard: (props: {
+          data: ChatRuntimeRequestCardData;
+        }) => <RuntimeRequestCard {...props} />,
+        AgentScopeRuntimeResponseCard: (props: {
+          data: ChatRuntimeResponseCardData;
+          isLast?: boolean;
+        }) => <RuntimeResponseCard {...props} />,
       },
       api: {
         ...defaultConfig.api,
@@ -824,6 +1133,11 @@ export default function ChatPage() {
           });
         },
       },
+      // ==================== 自定义工具渲染器 ====================
+      customToolRenderConfig: {
+        copy_file_to_static: CopyFileToStatic,
+      },
+      // ==================== 自定义工具渲染器结束 ====================
       actions: {
         list: [
           {
@@ -840,7 +1154,17 @@ export default function ChatPage() {
         replace: true,
       },
     } as unknown as IAgentScopeRuntimeWebUIOptions;
-  }, [customFetch, copyResponse, handleFileUpload, t, isDark, multimodalCaps]);
+  }, [
+    brandTheme.avatar,
+    brandTheme.brandName,
+    customFetch,
+    copyResponse,
+    handleFileUpload,
+    isComposingRef,
+    isDark,
+    multimodalCaps,
+    t,
+  ]);
 
   // ==================== 首页改版 (Kun He) ====================
   // 新建聊天：通过 chatRef 调用后端 createSession API
@@ -854,107 +1178,93 @@ export default function ChatPage() {
   }, [navigate]);
   // ==================== 首页改版结束 ====================
 
-  return (
-    <div
-      style={{
-        height: "100%",
-        width: "100%",
-        display: "flex",
-        flexDirection: "row",
-      }}
-    >
-      {/* ==================== 首页改版 (Kun He) ==================== */}
-      {/* 聊天专用侧栏：支持折叠为64px工具条 */}
-      <ChatSidebar onCreateSession={handleCreateSessionFromSidebar} />
-      {/* ==================== 首页改版结束 ==================== */}
-      <div
-        className={styles.chatMessagesArea}
-        style={{ flex: 1, minWidth: 0, position: "relative" }}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      >
-        <AgentScopeRuntimeWebUI
-          ref={chatRef}
-          key={refreshKey}
-          options={options}
-        />
-        {currentTask && !currentTask.task?.has_scheduled_result && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              pointerEvents: 'none',
-              zIndex: 2,
-            }}
-          >
-            <div
-              style={{
-                padding: '10px 18px',
-                borderRadius: 999,
-                background: 'rgba(255,255,255,0.92)',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
-                color: '#1f1f1f',
-                fontSize: 14,
-                fontWeight: 500,
-              }}
-            >
-              任务执行中
-            </div>
-          </div>
-        )}
-        <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
-      </div>
+  // 定义 cards 配置（与 AgentScopeRuntimeWebUI 内部一致）
+  const cards = useMemo(() => {
+    return {
+      AgentScopeRuntimeRequestCard,
+      AgentScopeRuntimeResponseCard,
+      ...options.cards,
+    };
+  }, [options.cards]);
 
-      <Modal
-        open={showModelPrompt}
-        closable={false}
-        footer={null}
-        width={480}
-        styles={{
-          content: isDark
-            ? { background: "#1f1f1f", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }
-            : undefined,
+  return (
+    <AgentScopeRuntimeWebUIComposedProvider options={options} cards={cards}>
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          flexDirection: "row",
         }}
       >
-        <Result
-          icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
-          title={
-            <span
-              style={{ color: isDark ? "rgba(255,255,255,0.88)" : undefined }}
-            >
-              {t("modelConfig.promptTitle")}
-            </span>
-          }
-          subTitle={
-            <span
-              style={{ color: isDark ? "rgba(255,255,255,0.55)" : undefined }}
-            >
-              {t("modelConfig.promptMessage")}
-            </span>
-          }
-          extra={[
-            <Button key="skip" onClick={() => setShowModelPrompt(false)}>
-              {t("modelConfig.skipButton")}
-            </Button>,
-            <Button
-              key="configure"
-              type="primary"
-              icon={<SettingOutlined />}
-              onClick={() => {
-                setShowModelPrompt(false);
-                navigate("/models");
-              }}
-            >
-              {t("modelConfig.configureButton")}
-            </Button>,
-          ]}
+        {/* ==================== 首页改版 (Kun He) ==================== */}
+        {/* 聊天专用侧栏：支持折叠为64px工具条 */}
+        <ChatSidebar
+          tasks={tasks}
+          onCreateSession={handleCreateSessionFromSidebar}
+          onTaskClick={handleTaskOpen}
+          onTaskResume={handleTaskResume}
+          onTaskDelete={handleTaskDelete}
         />
-      </Modal>
-    </div>
+        {/* ==================== 首页改版结束 ==================== */}
+          <div
+            className={styles.chatMessagesArea}
+            style={{ flex: 1, minWidth: 0, position: "relative" }}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
+            <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
+          </div>
+
+        <Modal
+          open={showModelPrompt}
+          closable={false}
+          footer={null}
+          width={480}
+          styles={{
+            content: isDark
+              ? { background: "#1f1f1f", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }
+              : undefined,
+          }}
+        >
+          <Result
+            icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
+            title={
+              <span
+                style={{ color: isDark ? "rgba(255,255,255,0.88)" : undefined }}
+              >
+                {t("modelConfig.promptTitle")}
+              </span>
+            }
+            subTitle={
+              <span
+                style={{ color: isDark ? "rgba(255,255,255,0.55)" : undefined }}
+              >
+                {t("modelConfig.promptMessage")}
+              </span>
+            }
+            extra={[
+              <Button key="skip" onClick={() => setShowModelPrompt(false)}>
+                {t("modelConfig.skipButton")}
+              </Button>,
+              <Button
+                key="configure"
+                type="primary"
+                icon={<SettingOutlined />}
+                onClick={() => {
+                  setShowModelPrompt(false);
+                  navigate("/models");
+                }}
+              >
+                {t("modelConfig.configureButton")}
+              </Button>,
+            ]}
+          />
+        </Modal>
+      </div>
+    </AgentScopeRuntimeWebUIComposedProvider>
   );
 }

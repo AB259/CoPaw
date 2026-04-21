@@ -8,13 +8,11 @@ import {
 } from "../../AgentScopeRuntime/types";
 import { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat";
 import { IAgentScopeRuntimeWebUIInputData } from "../../types";
+import { withResponseHeaderMeta } from "./headerMeta";
+import type { CurrentQARef } from "./currentQARef";
 
 interface UseChatRequestOptions {
-  currentQARef: React.MutableRefObject<{
-    request?: IAgentScopeRuntimeWebUIMessage;
-    response?: IAgentScopeRuntimeWebUIMessage;
-    abortController?: AbortController;
-  }>;
+  currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
   getCurrentSessionId: () => string;
   onFinish: () => void;
@@ -35,7 +33,15 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     apiOptionsRef.current = apiOptions;
   }, [apiOptions]);
 
+  const getResponseHeaderTimestamp = useCallback(() => {
+    return (
+      currentQARef.current.response?.cards?.[0]?.data?.headerMeta?.timestamp ??
+      currentQARef.current.response?.liveHeaderTimestamp
+    );
+  }, [currentQARef]);
+
   const mockRequest = useCallback(async (mockdata) => {
+    const responseHeaderTimestamp = getResponseHeaderTimestamp();
     const agentScopeRuntimeResponseBuilder =
       new AgentScopeRuntimeResponseBuilder({
         id: "",
@@ -48,7 +54,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       currentQARef.current.response.cards = [
         {
           code: "AgentScopeRuntimeResponseCard",
-          data: res,
+          data: withResponseHeaderMeta(res, responseHeaderTimestamp),
         },
       ];
 
@@ -60,13 +66,61 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
   const processSSEResponse = useCallback(
     async (response: Response) => {
-      const currentApiOptions = apiOptionsRef.current;
-      const agentScopeRuntimeResponseBuilder =
-        new AgentScopeRuntimeResponseBuilder({
-          id: "",
-          status: AgentScopeRuntimeRunStatus.Created,
-          created_at: 0,
+      const responseHeaderTimestamp = getResponseHeaderTimestamp();
+      const buildResponseCard = () => {
+        const responseData = currentQARef.current.response?.cards?.[0]
+          ?.data as
+          | {
+              id?: string;
+              status?: AgentScopeRuntimeRunStatus;
+              created_at?: number;
+              output?: unknown[];
+            }
+          | undefined;
+
+        const builder = new AgentScopeRuntimeResponseBuilder({
+          id: responseData?.id || "",
+          status: responseData?.status || AgentScopeRuntimeRunStatus.Created,
+          created_at: responseData?.created_at || 0,
         });
+
+        if (responseData) {
+          builder.handle(responseData as never);
+        }
+
+        return builder;
+      };
+
+      const cancelActiveRequest = async () => {
+        currentQARef.current.abortController?.abort();
+
+        const currentApiOptions = apiOptionsRef.current;
+        if (currentApiOptions.cancel) {
+          await Promise.resolve(
+            currentApiOptions.cancel({
+              session_id: getCurrentSessionId(),
+            }),
+          ).catch((error) => {
+            console.error(error);
+          });
+        }
+
+        if (currentQARef.current.response) {
+          currentQARef.current.response.cards = [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: withResponseHeaderMeta(
+                buildResponseCard().cancel(),
+                responseHeaderTimestamp,
+              ),
+            },
+          ];
+
+          updateMessage(currentQARef.current.response);
+        }
+      };
+
+      const agentScopeRuntimeResponseBuilder = buildResponseCard();
 
       if (!response.ok) {
         response.json().then((data) => {
@@ -84,7 +138,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           currentQARef.current.response.cards = [
             {
               code: "AgentScopeRuntimeResponseCard",
-              data: res,
+              data: withResponseHeaderMeta(res, responseHeaderTimestamp),
             },
           ];
           onFinish();
@@ -97,21 +151,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           readableStream: response.body,
         })) {
           if (currentQARef.current.response?.msgStatus === "interrupted") {
-            currentQARef.current.abortController?.abort();
-            if (currentApiOptions.cancel) {
-              currentApiOptions.cancel({
-                session_id: getCurrentSessionId(),
-              });
-            }
-
-            currentQARef.current.response.cards = [
-              {
-                code: "AgentScopeRuntimeResponseCard",
-                data: agentScopeRuntimeResponseBuilder.cancel(),
-              },
-            ];
-
-            updateMessage(currentQARef.current.response);
+            await cancelActiveRequest();
             break;
           }
 
@@ -130,7 +170,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
             currentQARef.current.response.cards = [
               {
                 code: "AgentScopeRuntimeResponseCard",
-                data: res,
+                data: withResponseHeaderMeta(res, responseHeaderTimestamp),
               },
             ];
 
@@ -148,7 +188,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         console.error(error);
       }
     },
-    [getCurrentSessionId, currentQARef, updateMessage, onFinish],
+    [getCurrentSessionId, currentQARef, getResponseHeaderTimestamp, updateMessage, onFinish],
   );
 
   const request = useCallback(
@@ -213,5 +253,52 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     [currentQARef, processSSEResponse],
   );
 
-  return { request, reconnect, mockRequest };
+  const cancelActiveRequest = useCallback(async () => {
+    const responseHeaderTimestamp = getResponseHeaderTimestamp();
+    const responseData = currentQARef.current.response?.cards?.[0]?.data as
+      | {
+          id?: string;
+          status?: AgentScopeRuntimeRunStatus;
+          created_at?: number;
+        }
+      | undefined;
+    const responseBuilder = new AgentScopeRuntimeResponseBuilder({
+      id: responseData?.id || "",
+      status: responseData?.status || AgentScopeRuntimeRunStatus.Created,
+      created_at: responseData?.created_at || 0,
+    });
+
+    if (responseData) {
+      responseBuilder.handle(responseData as never);
+    }
+
+    currentQARef.current.abortController?.abort();
+
+    const currentApiOptions = apiOptionsRef.current;
+    if (currentApiOptions.cancel) {
+      await Promise.resolve(
+        currentApiOptions.cancel({
+          session_id: getCurrentSessionId(),
+        }),
+      ).catch((error) => {
+        console.error(error);
+      });
+    }
+
+    if (currentQARef.current.response) {
+      currentQARef.current.response.cards = [
+        {
+          code: "AgentScopeRuntimeResponseCard",
+          data: withResponseHeaderMeta(
+            responseBuilder.cancel(),
+            responseHeaderTimestamp,
+          ),
+        },
+      ];
+
+      updateMessage(currentQARef.current.response);
+    }
+  }, [currentQARef, getCurrentSessionId, getResponseHeaderTimestamp, updateMessage]);
+
+  return { request, reconnect, mockRequest, cancelActiveRequest };
 }

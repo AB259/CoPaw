@@ -41,6 +41,7 @@ class Span(BaseModel):
 
     span_id: str = Field(description="Unique span identifier")
     trace_id: str = Field(description="Parent trace identifier")
+    source_id: str = Field(description="Source identifier for data isolation")
     parent_span_id: Optional[str] = Field(
         default=None,
         description="Parent span identifier for nested operations",
@@ -111,6 +112,7 @@ class Trace(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     trace_id: str = Field(description="Unique trace identifier")
+    source_id: str = Field(description="Source identifier for data isolation")
     user_id: str = Field(description="User identifier")
     session_id: str = Field(description="Session identifier")
     channel: str = Field(description="Channel identifier")
@@ -180,11 +182,17 @@ class ToolUsage(BaseModel):
 
 
 class SkillUsage(BaseModel):
-    """Skill usage statistics."""
+    """Skill usage statistics with weighted attribution."""
 
     skill_name: str
     count: int = 0
+    weighted_count: float = 0.0
     avg_duration_ms: int = 0
+    weighted_duration_ms: int = 0
+    tool_attribution: dict[str, float] = Field(
+        default_factory=dict,
+        description="Tool name -> weighted usage count mapping",
+    )
 
 
 class MCPToolUsage(BaseModel):
@@ -226,6 +234,7 @@ class OverviewStats(BaseModel):
     """Overview dashboard statistics."""
 
     online_users: int = 0
+    online_user_ids: list[str] = Field(default_factory=list)
     total_users: int = 0
     model_distribution: list[ModelUsage] = Field(default_factory=list)
     total_tokens: int = 0
@@ -276,6 +285,104 @@ class TraceDetail(BaseModel):
     tools_called: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# Timeline models for hierarchical display
+
+
+class ToolCallInSkill(BaseModel):
+    """Tool call within a skill invocation."""
+
+    span_id: str
+    tool_name: str
+    mcp_server: Optional[str] = None
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration_ms: int = 0
+    status: str = "success"  # success / error
+    error: Optional[str] = None
+    skill_weight: Optional[float] = None
+
+
+class SkillCallTimeline(BaseModel):
+    """Skill invocation in timeline with tool hierarchy."""
+
+    span_id: str
+    skill_name: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration_ms: int = 0
+    confidence: float = 1.0
+    trigger_reason: str = "declared"  # declared / inferred / keyword
+
+    # Tools called within this skill (hierarchical)
+    tools: list[ToolCallInSkill] = Field(default_factory=list)
+
+    # Statistics
+    total_tool_calls: int = 0
+    tool_duration_ms: int = 0
+
+
+class TimelineEvent(BaseModel):
+    """Timeline event with hierarchical structure.
+
+    Supports nested events for skill -> tool hierarchy.
+    """
+
+    event_type: str  # skill_invocation / tool_call / llm_call
+    span_id: Optional[str] = None
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration_ms: int = 0
+
+    # Skill invocation fields
+    skill_name: Optional[str] = None
+    confidence: Optional[float] = None
+    trigger_reason: Optional[str] = None
+
+    # Tool call fields
+    tool_name: Optional[str] = None
+    mcp_server: Optional[str] = None
+    skill_weight: Optional[float] = None
+
+    # LLM call fields
+    model_name: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+
+    # Hierarchical children (tools under skill)
+    children: list["TimelineEvent"] = Field(default_factory=list)
+
+
+# Update forward reference for recursive model
+TimelineEvent.model_rebuild()
+
+
+class TraceDetailWithTimeline(BaseModel):
+    """Trace detail with hierarchical timeline.
+
+    Provides both flat spans (backward compatible) and
+    hierarchical timeline for enhanced visualization.
+    """
+
+    trace: Trace
+
+    # Flat list (backward compatible)
+    spans: list[Span] = Field(default_factory=list)
+
+    # Hierarchical timeline
+    timeline: list[TimelineEvent] = Field(default_factory=list)
+
+    # Skill invocations summary
+    skill_invocations: list[SkillCallTimeline] = Field(default_factory=list)
+
+    # Statistics
+    llm_duration_ms: int = 0
+    tool_duration_ms: int = 0
+    skill_duration_ms: int = 0
+    total_skills: int = 0
+    total_tools: int = 0
+    total_llm_calls: int = 0
+
+
 class UserListItem(BaseModel):
     """User list item with stats."""
 
@@ -291,12 +398,15 @@ class TraceListItem(BaseModel):
     """Trace list item."""
 
     trace_id: str
+    source_id: str
     user_id: str
     session_id: str
     channel: str
     start_time: datetime
     duration_ms: Optional[int] = None
     total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
@@ -338,6 +448,7 @@ class UserMessageItem(BaseModel):
     """User message with token info for cost analysis."""
 
     trace_id: str
+    source_id: str
     user_id: str
     session_id: str
     channel: str

@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
+from ..mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_dispatch import (
     _get_last_user_text,
     _is_command,
@@ -44,7 +45,10 @@ from ...tracing import (
     get_trace_manager,
 )
 from ...tracing.models import TraceStatus
-from ...config.context import get_current_passthrough_headers
+from ...config.context import (
+    get_current_passthrough_headers,
+)
+from ..suggestions import generate_suggestions, store_suggestions
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
@@ -100,7 +104,8 @@ async def _build_and_connect_mcp_clients(
             if client is not None:
                 await client.connect()
                 clients.append(client)
-                logger.debug(f"MCP client '{key}' created and connected")
+                logger.info(f"MCP client '{key}' created and connected")
+                print("passthrough_headers",passthrough_headers)
         except Exception as e:
             logger.warning(
                 f"Failed to create MCP client '{key}': {e}",
@@ -138,14 +143,29 @@ async def _create_mcp_client_with_headers(
     }
 
     if client_config.transport == "stdio":
+        launch_config = build_tenant_aware_stdio_launch_config(
+            client_config.command,
+            client_config.args,
+            client_config.env,
+            client_config.cwd or None,
+        )
         client = StdIOStatefulClient(
             name=client_config.name,
-            command=client_config.command,
-            args=client_config.args,
-            env=client_config.env,
-            cwd=client_config.cwd or None,
+            command=launch_config.launch_command,
+            args=launch_config.launch_args,
+            env=launch_config.env,
+            cwd=launch_config.cwd,
         )
-        setattr(client, "_swe_rebuild_info", rebuild_info)
+        setattr(
+            client,
+            "_swe_rebuild_info",
+            {
+                **rebuild_info,
+                "launch_command": launch_config.launch_command,
+                "launch_args": launch_config.launch_args,
+                "launch_diagnostic": launch_config.diagnostic,
+            },
+        )
         setattr(client, "_swe_temp_client", True)
         return client
 
@@ -182,12 +202,16 @@ async def _create_mcp_client_with_headers(
 
     client.client = client_context
 
-    setattr(client, "_swe_rebuild_info", {
-        **rebuild_info,
-        "headers": merged_headers,
-        "_temp_client": True,
-        "_http_client": http_client,
-    })
+    setattr(
+        client,
+        "_swe_rebuild_info",
+        {
+            **rebuild_info,
+            "headers": merged_headers,
+            "_temp_client": True,
+            "_http_client": http_client,
+        },
+    )
     setattr(client, "_swe_temp_client", True)
 
     return client
@@ -209,6 +233,77 @@ async def _cleanup_mcp_clients(clients: list[Any]) -> None:
                 await http_client.aclose()
         except Exception as e:
             logger.warning(f"Error closing MCP client: {e}")
+
+
+def _extract_text_from_blocks(blocks: list) -> str:
+    """从 content blocks 中提取文本."""
+    texts = []
+    for block in blocks:
+        if hasattr(block, "text"):
+            texts.append(block.text)
+        elif isinstance(block, dict) and "text" in block:
+            texts.append(block["text"])
+    return "\n".join(texts) if texts else ""
+
+
+def _extract_assistant_response(agent: SWEAgent) -> str:
+    """从 agent memory 中提取最后的助手响应文本."""
+    if not agent or not hasattr(agent, "memory"):
+        return ""
+
+    try:
+        # memory.content 是 list of (Msg, marks) tuples
+        for msg, _marks in reversed(agent.memory.content):
+            if msg.role != "assistant" or not hasattr(msg, "content"):
+                continue
+            # content 可能是 list of blocks 或 string
+            if isinstance(msg.content, str):
+                return msg.content
+            if isinstance(msg.content, list):
+                return _extract_text_from_blocks(msg.content)
+    except Exception as e:
+        logger.debug("Failed to extract assistant response: %s", e)
+
+    return ""
+
+
+async def _generate_and_store_suggestions(
+    session_id: str,
+    user_message: str,
+    assistant_response: str,
+    config,  # SuggestionConfig
+) -> None:
+    """异步生成并存储建议（后台任务）."""
+    logger.info(
+        "Generating suggestions for session %s: user_msg=%s chars, assistant_msg=%s chars",
+        session_id,
+        len(user_message),
+        len(assistant_response),
+    )
+    try:
+        suggestions = await generate_suggestions(
+            user_message=user_message,
+            assistant_response=assistant_response,
+            max_suggestions=config.max_suggestions,
+            timeout_seconds=config.timeout_seconds,
+            user_message_max_length=config.user_message_max_length,
+            assistant_response_max_length=config.assistant_response_max_length,
+        )
+        logger.info(
+            "Generated %d suggestions for session %s",
+            len(suggestions),
+            session_id,
+        )
+        if suggestions:
+            await store_suggestions(session_id, suggestions)
+            logger.info(
+                "Stored %d suggestions for session %s: %s",
+                len(suggestions),
+                session_id,
+                suggestions,
+            )
+    except Exception as e:
+        logger.warning("Suggestion generation task failed: %s", e)
 
 
 class AgentRunner(Runner):
@@ -413,12 +508,25 @@ class AgentRunner(Runner):
                         "channel",
                         DEFAULT_CHANNEL,
                     )
+                    source_id_for_trace = getattr(
+                        request,
+                        "source_id",
+                        None,
+                    ) or getattr(
+                        request,
+                        "channel_meta",
+                        {},
+                    ).get(
+                        "source_id",
+                        "default",
+                    )
                     user_message = _get_last_user_text(msgs)
 
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
                         channel=channel_for_trace,
+                        source_id=source_id_for_trace,
                         user_message=user_message,
                     )
             except Exception as e:
@@ -462,10 +570,16 @@ class AgentRunner(Runner):
             )
 
             # Create MCP clients directly from agent config for this request
-            passthrough_headers = get_current_passthrough_headers()
+            auth_token = getattr(request, "auth_token", None)
+            cookie_header = getattr(request, "cookie", None)
+            passthrough_headers = dict[str, str](
+                get_current_passthrough_headers() or {},
+            )
+            if cookie_header:
+                passthrough_headers["cookie"] = cookie_header
             mcp_clients = await _build_and_connect_mcp_clients(
                 agent_config.mcp,
-                passthrough_headers=passthrough_headers,
+                passthrough_headers=passthrough_headers or None,
             )
 
             agent = SWEAgent(
@@ -478,6 +592,13 @@ class AgentRunner(Runner):
                     "user_id": user_id,
                     "channel": channel,
                     "agent_id": self.agent_id,
+                    **(
+                        {
+                            "auth_token": auth_token,
+                        }
+                        if auth_token
+                        else {}
+                    ),
                     **(
                         {
                             "forced_tool_call_json": json.dumps(
@@ -494,6 +615,10 @@ class AgentRunner(Runner):
             )
             await agent.register_mcp_clients()
             agent.set_console_output_enabled(enabled=False)
+
+            # Setup skill detector for tracing
+            if trace_id:
+                await agent.setup_skill_detector(trace_id)
 
             logger.debug(
                 f"Agent Query msgs {msgs}",
@@ -533,6 +658,8 @@ class AgentRunner(Runner):
                     f"session_id={session_id}",
                 )
 
+            _was_cancelled = False
+
             try:
                 await self.session.load_session_state(
                     session_id=session_id,
@@ -570,6 +697,7 @@ class AgentRunner(Runner):
                     logger.warning("Failed to end trace: %s", trace_err)
 
         except asyncio.CancelledError as exc:
+            _was_cancelled = True
             logger.info(f"query_handler: {session_id} cancelled!")
             # End trace with cancelled status
             if trace_id and has_trace_manager():
@@ -617,6 +745,12 @@ class AgentRunner(Runner):
                 ) + e.args[1:]
             raise
         finally:
+            # INFO 日志确认 finally 块执行
+            logger.info(
+                "Runner finally block executing for session %s",
+                session_id,
+            )
+
             if agent is not None and session_state_loaded:
                 await self.session.save_session_state(
                     session_id=session_id,
@@ -629,6 +763,47 @@ class AgentRunner(Runner):
 
             # Close all MCP clients created for this request
             await _cleanup_mcp_clients(mcp_clients)
+
+            # 异步生成猜你想问建议（如果启用）
+            logger.debug(
+                "Suggestions check: enabled=%s, agent=%s, query=%s",
+                agent_config.running.suggestions.enabled,
+                agent is not None,
+                query[:50] if query else None,
+            )
+            if (
+                agent_config.running.suggestions.enabled
+                and not _was_cancelled
+                and agent is not None
+                and query
+                and chat
+                is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
+            ):
+                # 提取助手响应文本
+                assistant_response = _extract_assistant_response(agent)
+                logger.debug(
+                    "Extracted assistant response: %s chars",
+                    len(assistant_response) if assistant_response else 0,
+                )
+                if assistant_response:
+                    # 使用 chat.id (UUID) 作为 session_id，与前端轮询时使用的 session_id 保持一致
+                    logger.info(
+                        "Starting suggestions generation task for chat %s (session_id=%s)",
+                        chat.id,
+                        session_id,
+                    )
+                    asyncio.create_task(
+                        _generate_and_store_suggestions(
+                            session_id=chat.id,  # 使用 chat.id (UUID)
+                            user_message=query,
+                            assistant_response=assistant_response,
+                            config=agent_config.running.suggestions,
+                        ),
+                    )
+                else:
+                    logger.debug(
+                        "No assistant response to generate suggestions from",
+                    )
 
     async def _cleanup_denied_session_memory(
         self,

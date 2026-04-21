@@ -22,6 +22,15 @@ export type RuntimeLoadingBridgeApi = {
   setLoading?: (loading: boolean | string) => void;
 };
 
+type UserMessagePart = {
+  type?: string;
+  text?: string;
+};
+
+type UserMessageLike = {
+  content?: string | UserMessagePart[];
+};
+
 // ---------------------------------------------------------------------------
 // Text extraction utilities
 // ---------------------------------------------------------------------------
@@ -60,12 +69,12 @@ export function extractCopyableText(response: CopyableResponse): string {
 }
 
 /** Extract plain text from user message content. */
-export function extractUserMessageText(m: any): string {
+export function extractUserMessageText(m: UserMessageLike): string {
   if (typeof m.content === "string") return m.content;
   if (!Array.isArray(m.content)) return "";
   return m.content
-    .filter((p: any) => p.type === "text")
-    .map((p: any) => p.text || "")
+    .filter((p) => p.type === "text")
+    .map((p) => p.text || "")
     .join("\n");
 }
 
@@ -73,18 +82,28 @@ export function extractUserMessageText(m: any): string {
 // Clipboard utilities
 // ---------------------------------------------------------------------------
 
-/** Copy text to clipboard with fallback for non-secure contexts. */
+/** Copy text to clipboard with fallback for blocked permissions or non-secure contexts. */
 export async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
+  if (!text) return;
+
+  // Try Clipboard API first
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Clipboard API blocked or failed, fallback to execCommand
+    }
   }
 
+  // Fallback using execCommand
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "");
-  textarea.style.position = "absolute";
+  textarea.style.position = "fixed";
   textarea.style.left = "-9999px";
+  textarea.style.top = "-9999px";
+  textarea.style.opacity = "0";
   document.body.appendChild(textarea);
 
   let copied = false;
@@ -157,7 +176,9 @@ export function toStoredName(v: string): string {
 }
 
 /** Convert content part URLs to stored name format. */
-export function normalizeContentUrls(part: any): any {
+export function normalizeContentUrls(
+  part: Record<string, unknown>,
+): Record<string, unknown> {
   const p = { ...part };
   if (p.type === "image" && typeof p.image_url === "string")
     p.image_url = toStoredName(p.image_url);

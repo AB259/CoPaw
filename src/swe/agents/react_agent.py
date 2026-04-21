@@ -18,6 +18,7 @@ from agentscope.tool import Toolkit
 from anyio import ClosedResourceError
 from pydantic import BaseModel
 
+from ..app.mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_handler import CommandHandler
 from ..app.mcp import HttpStatefulClient, StdIOStatefulClient
 from .hooks import BootstrapHook, MemoryCompactionHook
@@ -35,8 +36,6 @@ from .skills_manager import (
 )
 from .tool_guard_mixin import ToolGuardMixin
 from .tools import (
-    browser_use,
-    desktop_screenshot,
     edit_file,
     execute_shell_command,
     get_current_time,
@@ -44,10 +43,7 @@ from .tools import (
     glob_search,
     grep_search,
     read_file,
-    send_file_to_user,
     set_user_timezone,
-    view_image,
-    view_video,
     write_file,
     create_memory_search_tool,
     copy_file_to_static,
@@ -57,7 +53,7 @@ from ..utils.fs_text import sanitize_text_for_json
 from ..constant import (
     WORKING_DIR,
 )
-from ..agents.memory import BaseMemoryManager
+from ..agents.memory.base_memory_manager import BaseMemoryManager
 
 if TYPE_CHECKING:
     from ..config.config import AgentProfileConfig
@@ -241,31 +237,17 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             "edit_file": edit_file,
             "grep_search": grep_search,
             "glob_search": glob_search,
-            "browser_use": browser_use,
-            "desktop_screenshot": desktop_screenshot,
-            "view_image": view_image,
-            "view_video": view_video,
-            "send_file_to_user": send_file_to_user,
             "get_current_time": get_current_time,
             "set_user_timezone": set_user_timezone,
             "get_token_usage": get_token_usage,
             "copy_file_to_static": copy_file_to_static,
         }
 
-        multimodal = get_active_model_supports_multimodal()
-
         # Register only enabled tools
         for tool_name, tool_func in tool_functions.items():
             # If tool not in config, enable by default (backward compatibility)
             if not enabled_tools.get(tool_name, True):
                 logger.debug("Skipped disabled tool: %s", tool_name)
-                continue
-
-            if tool_name in ("view_image", "view_video") and not multimodal:
-                logger.debug(
-                    "Skipped %s — model does not support multimodal",
-                    tool_name,
-                )
                 continue
 
             # Get async_execution setting (default to False for backward
@@ -352,6 +334,74 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                     )
 
         self._sanitize_registered_skill_dirs(toolkit)
+
+        # Build skill-tool registry for multi-skill attribution
+        self._build_skill_tool_registry(Path(workspace_dir), effective_skills)
+
+        # Store effective skills for later detector setup
+        self._effective_skills = effective_skills
+
+    def get_effective_skills(self) -> list[str]:
+        """Get the list of effective skills for this agent.
+
+        Returns:
+            List of enabled skill names
+        """
+        return self._effective_skills
+
+    def _build_skill_tool_registry(
+        self,
+        workspace_dir: Path,
+        effective_skills: list[str],
+    ) -> None:
+        """Build skill-tool registry for tool attribution.
+
+        Args:
+            workspace_dir: Workspace directory
+            effective_skills: List of enabled skill names
+        """
+        from .skill_tool_registry import build_skill_tool_registry
+
+        try:
+            build_skill_tool_registry(workspace_dir, effective_skills)
+        except Exception as e:
+            logger.warning("Failed to build skill-tool registry: %s", e)
+
+    async def setup_skill_detector(self, trace_id: str) -> None:
+        """Setup skill invocation detector for a trace.
+
+        This should be called after start_trace() to enable skill
+        detection during the trace.
+
+        Args:
+            trace_id: The trace ID to setup detector for
+        """
+        try:
+            from ..tracing.manager import (
+                get_trace_manager,
+                has_trace_manager,
+                get_current_trace,
+            )
+
+            if not has_trace_manager():
+                return
+
+            trace_mgr = get_trace_manager()
+            if not trace_mgr.enabled:
+                return
+
+            # Check if detector already setup
+            ctx = get_current_trace()
+            if ctx and ctx.skill_detector:
+                return
+
+            # Setup detector with effective skills
+            await trace_mgr.setup_skill_detector(
+                trace_id=trace_id,
+                enabled_skills=self._effective_skills,
+            )
+        except Exception as e:
+            logger.debug("Failed to setup skill detector: %s", e)
 
     @staticmethod
     def _sanitize_registered_skill_dirs(toolkit: Toolkit) -> None:
@@ -644,14 +694,32 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
 
         try:
             if transport == "stdio":
+                command = rebuild_info.get("command")
+                if not isinstance(command, str) or not command:
+                    return None
+                launch_config = build_tenant_aware_stdio_launch_config(
+                    command,
+                    rebuild_info.get("args", []),
+                    rebuild_info.get("env", {}),
+                    rebuild_info.get("cwd"),
+                )
                 rebuilt_client = StdIOStatefulClient(
                     name=name,
-                    command=rebuild_info.get("command"),
-                    args=rebuild_info.get("args", []),
-                    env=rebuild_info.get("env", {}),
-                    cwd=rebuild_info.get("cwd"),
+                    command=launch_config.launch_command,
+                    args=launch_config.launch_args,
+                    env=launch_config.env,
+                    cwd=launch_config.cwd,
                 )
-                setattr(rebuilt_client, "_swe_rebuild_info", rebuild_info)
+                setattr(
+                    rebuilt_client,
+                    "_swe_rebuild_info",
+                    {
+                        **rebuild_info,
+                        "launch_command": launch_config.launch_command,
+                        "launch_args": launch_config.launch_args,
+                        "launch_diagnostic": launch_config.diagnostic,
+                    },
+                )
                 return rebuilt_client
 
             raw_headers = rebuild_info.get("headers") or {}
