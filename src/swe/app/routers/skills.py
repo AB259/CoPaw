@@ -56,6 +56,7 @@ from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
 )
+from ...config.context import resolve_effective_tenant_id
 from ...security.skill_scanner import SkillScanError
 from ..utils import schedule_agent_reload
 
@@ -267,8 +268,15 @@ def _request_tenant_id(request: Request) -> str | None:
     return getattr(request.state, "tenant_id", None)
 
 
+def _request_effective_tenant_id(request: Request) -> str | None:
+    tenant_id = _request_tenant_id(request)
+    if tenant_id is None:
+        return None
+    return resolve_effective_tenant_id(tenant_id, _request_source_id(request))
+
+
 def _request_tenant_working_dir(request: Request) -> Path:
-    return get_tenant_working_dir_strict(_request_tenant_id(request))
+    return get_tenant_working_dir_strict(_request_effective_tenant_id(request))
 
 
 def _request_source_id(request: Request) -> str | None:

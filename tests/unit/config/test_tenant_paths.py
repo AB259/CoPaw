@@ -182,7 +182,31 @@ class TestLogicalTenantListing:
             ],
         )
 
-        assert list_logical_tenant_ids("ruice") == ["default", "tenant-a"]
+        assert list_logical_tenant_ids("ruice") == [
+            "default",
+            "default_other",
+            "tenant-a",
+        ]
+
+    def test_source_id_keeps_legitimate_default_prefixed_tenants(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            utils_module,
+            "list_all_tenant_ids",
+            lambda: [
+                "default_ruice",
+                "default_sales",
+                "tenant-a",
+            ],
+        )
+
+        assert list_logical_tenant_ids("ruice") == [
+            "default",
+            "default_sales",
+            "tenant-a",
+        ]
 
 
 class TestTenantPathBackwardCompatibility:

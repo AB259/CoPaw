@@ -32,7 +32,11 @@ from .config import (
     load_agent_config,
     save_agent_config,
 )
-from .context import get_current_tenant_id, TenantContextError
+from .context import (
+    TenantContextError,
+    get_current_tenant_id,
+    resolve_effective_tenant_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -831,14 +835,15 @@ def list_logical_tenant_ids(source_id: str | None = None) -> list[str]:
         return tenant_ids
 
     logical_tenant_ids: list[str] = []
-    effective_default_tenant_id = f"default_{source_id}"
+    effective_default_tenant_id = resolve_effective_tenant_id(
+        "default",
+        source_id,
+    )
     has_default_tenant = False
 
     for tenant_id in tenant_ids:
         if tenant_id in {"default", effective_default_tenant_id}:
             has_default_tenant = True
-            continue
-        if tenant_id.startswith("default_"):
             continue
         logical_tenant_ids.append(tenant_id)
 

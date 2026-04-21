@@ -551,6 +551,69 @@ def test_broadcast_pool_skills_bootstraps_missing_tenant(
     ).exists()
 
 
+def test_broadcast_pool_skills_uses_source_scoped_default_as_source(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source_tenant = tmp_path / "default_ruice"
+    target_tenant = tmp_path / "tenant-b"
+    target_workspace = target_tenant / "workspaces" / "default"
+
+    _write_skill(
+        get_skill_pool_dir(working_dir=source_tenant) / "guidance",
+        "source scoped guidance",
+    )
+    reconcile_pool_manifest(working_dir=source_tenant)
+    _write_workspace_scaffold(target_workspace)
+    reconcile_workspace_manifest(target_workspace)
+    reconcile_pool_manifest(working_dir=target_tenant)
+
+    monkeypatch.setattr(
+        skills_router,
+        "get_tenant_working_dir_strict",
+        lambda tenant_id=None: tmp_path / str(tenant_id),
+    )
+
+    class FakeInitializer:
+        def __init__(
+            self,
+            base_working_dir: Path,
+            tenant_id: str,
+            source_id: str | None = None,
+        ):
+            del base_working_dir, source_id
+            self.tenant_dir = tmp_path / tenant_id
+
+        def has_seeded_bootstrap(self) -> bool:
+            return True
+
+        def ensure_seeded_bootstrap(self) -> dict[str, object]:
+            raise AssertionError("should not bootstrap an existing tenant")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "swe.app.workspace.tenant_initializer",
+        SimpleNamespace(TenantInitializer=FakeInitializer),
+    )
+
+    result = asyncio.run(
+        skills_router.broadcast_pool_skills_to_default_agents(
+            _request("default", "ruice"),
+            skills_router.BroadcastDefaultAgentsRequest(
+                skill_names=["guidance"],
+                target_tenant_ids=["tenant-b"],
+                overwrite=True,
+            ),
+        ),
+    )
+
+    assert result.results[0].success is True
+    copied_skill = (
+        get_skill_pool_dir(working_dir=target_tenant) / "guidance" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "source scoped guidance" in copied_skill
+
+
 def test_broadcast_pool_skills_reports_partial_success(
     monkeypatch,
     tmp_path: Path,
