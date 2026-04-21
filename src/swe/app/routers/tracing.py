@@ -490,7 +490,7 @@ async def get_trace_detail(
 
     # Query model_output from Elasticsearch
     try:
-        from ..elasticsearch import get_es_client
+        from ...elasticsearch import get_es_client
 
         es_client = get_es_client()
         if es_client and es_client.is_connected:
