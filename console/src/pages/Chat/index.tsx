@@ -11,6 +11,7 @@ import AgentScopeRuntimeRequestCard from "@/components/agentscope-chat/AgentScop
 import AgentScopeRuntimeResponseCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Card";
 // ==================== 组件引入方式变更结束 ====================
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
@@ -70,7 +71,9 @@ import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
 import RuntimeRequestCard from "./components/RuntimeRequestCard";
 import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import ApprovalActionCard from "./components/ApprovalActionCard";
 import type {
+  ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
 } from "./messageMeta";
@@ -624,8 +627,11 @@ export default function ChatPage() {
       const taskChatId = task.task?.chat_id;
       if (!taskChatId) return;
 
-      // Set loading first to avoid blocking, then navigate
-      setSessionLoading(true);
+      // Force loading to render immediately before navigate triggers re-render
+      flushSync(() => {
+        setSessionLoading(true);
+      });
+
       navigate(`/chat/${taskChatId}`, { replace: true });
     },
     [navigate, setSessionLoading],
@@ -1030,6 +1036,9 @@ export default function ChatPage() {
           data: ChatRuntimeResponseCardData;
           isLast?: boolean;
         }) => <RuntimeResponseCard {...props} />,
+        ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
+          <ApprovalActionCard {...props} />
+        ),
       },
       api: {
         ...defaultConfig.api,

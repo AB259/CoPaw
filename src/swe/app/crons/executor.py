@@ -182,6 +182,7 @@ class CronExecutor:
         req["session_id"] = (
             req.get("session_id") or target_session_id or f"cron:{job.id}"
         )
+        req["skip_history"] = True  # 标记定时任务不加载历史会话
         return req
 
     def _apply_auth_token(
