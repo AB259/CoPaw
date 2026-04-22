@@ -333,6 +333,7 @@ function handleUrlOriginParam(): void {
 
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 读取 sessionId 和 taskId 参数，用于自动跳转到聊天页面
+  // sessionId 兼容 backend chat.id 与逻辑 session_id 两种入口
   const sessionIdParam = urlParams.get("sessionId");
   const taskIdParam = urlParams.get("taskId");
   // ==================== URL 导航参数结束 ====================

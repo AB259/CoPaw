@@ -476,7 +476,7 @@ export default function ChatPage() {
 
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
-  // sessionId: 直接导航到 /chat/:sessionId
+  // sessionId: 可传 backend chat.id 或逻辑 session_id，后续由初始选择逻辑解析
   // taskId: 查找 task.chat_id 后导航
   const sessionIdRef = useRef<string | null>(null);
   const taskIdRef = useRef<string | null>(null);

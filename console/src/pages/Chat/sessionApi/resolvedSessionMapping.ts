@@ -3,6 +3,10 @@ import type { IAgentScopeRuntimeWebUISession } from "@/components/agentscope-cha
 const STORAGE_KEY = "copaw_resolved_chat_ids";
 
 type ResolvedSessionMapping = Record<string, string>;
+type SessionWithIdentity = IAgentScopeRuntimeWebUISession & {
+  sessionId?: string;
+  createdAt?: string | null;
+};
 
 function readResolvedSessionMapping(): ResolvedSessionMapping {
   try {
@@ -86,6 +90,35 @@ export function getResolvedChatId(
   return readResolvedSessionMapping()[temporarySessionId] ?? null;
 }
 
+function getSessionCreatedAt(session: IAgentScopeRuntimeWebUISession): number {
+  const createdAt = (session as SessionWithIdentity).createdAt;
+  if (!createdAt) {
+    return 0;
+  }
+
+  const timestamp = Date.parse(createdAt);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function resolveLogicalSessionDeepLink(options: {
+  requestedSessionId: string;
+  sessionList: IAgentScopeRuntimeWebUISession[];
+}): string | null {
+  const { requestedSessionId, sessionList } = options;
+  const matches = sessionList.filter(
+    (session) =>
+      (session as SessionWithIdentity).sessionId === requestedSessionId,
+  );
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  return [...matches].sort(
+    (left, right) => getSessionCreatedAt(right) - getSessionCreatedAt(left),
+  )[0].id;
+}
+
 export function resolveRequestedSessionId(options: {
   requestedSessionId: string | undefined;
   sessionList: IAgentScopeRuntimeWebUISession[];
@@ -101,7 +134,12 @@ export function resolveRequestedSessionId(options: {
 
   const resolvedChatId = getResolvedChatId(requestedSessionId);
   if (!resolvedChatId) {
-    return requestedSessionId;
+    return (
+      resolveLogicalSessionDeepLink({
+        requestedSessionId,
+        sessionList,
+      }) ?? requestedSessionId
+    );
   }
 
   if (sessionList.some((session) => session.id === resolvedChatId)) {
@@ -109,7 +147,13 @@ export function resolveRequestedSessionId(options: {
   }
 
   forgetResolvedChatId(requestedSessionId);
-  return undefined;
+
+  return (
+    resolveLogicalSessionDeepLink({
+      requestedSessionId,
+      sessionList,
+    }) ?? undefined
+  );
 }
 
 export function matchesResolvedChatId(options: {

@@ -44,4 +44,28 @@ describe("getInitialSessionId", () => {
     ).toBeUndefined();
     expect(sessionStorage.getItem("copaw_resolved_chat_ids")).toBe("{}");
   });
+
+  it("resolves a logical session id deep link to the newest persisted chat", () => {
+    expect(
+      getInitialSessionId({
+        pathname: "/chat/channel:user-1",
+        sessionList: [
+          {
+            id: "chat-real-older",
+            name: "older chat",
+            messages: [],
+            sessionId: "channel:user-1",
+            createdAt: "2026-04-21T00:00:00Z",
+          } as any,
+          {
+            id: "chat-real-newer",
+            name: "newer chat",
+            messages: [],
+            sessionId: "channel:user-1",
+            createdAt: "2026-04-22T00:00:00Z",
+          } as any,
+        ],
+      }),
+    ).toBe("chat-real-newer");
+  });
 });
