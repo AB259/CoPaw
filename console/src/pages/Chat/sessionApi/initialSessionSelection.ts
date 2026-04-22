@@ -1,4 +1,5 @@
 import type { IAgentScopeRuntimeWebUISession } from "@/components/agentscope-chat";
+import { resolveRequestedSessionId } from "./resolvedSessionMapping";
 
 interface GetInitialSessionIdOptions {
   pathname: string;
@@ -15,7 +16,8 @@ export function getInitialSessionId({
   }
 
   const urlSessionId = match[1];
-  return sessionList.some((session) => session.id === urlSessionId)
-    ? urlSessionId
-    : urlSessionId;
+  return resolveRequestedSessionId({
+    requestedSessionId: urlSessionId,
+    sessionList,
+  });
 }

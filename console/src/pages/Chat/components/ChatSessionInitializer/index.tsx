@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 // ==================== 组件引入方式变更 (Kun He) ====================
 import { useChatAnywhereSessionsState } from "@/components/agentscope-chat";
 // ==================== 组件引入方式变更结束 ====================
+import { resolveRequestedSessionId } from "../../sessionApi/resolvedSessionMapping";
 
 /**
  * URL chatId → context currentSessionId (one direction of bidirectional sync).
@@ -26,7 +27,11 @@ const ChatSessionInitializer: React.FC = () => {
 
   useEffect(() => {
     if (!chatId || !sessions.length) return;
-    const matching = sessions.find((s) => s.id === chatId);
+    const requestedSessionId = resolveRequestedSessionId({
+      requestedSessionId: chatId,
+      sessionList: sessions,
+    });
+    const matching = sessions.find((s) => s.id === requestedSessionId);
     if (matching && currentSessionIdRef.current !== matching.id) {
       setCurrentSessionId(matching.id);
     }

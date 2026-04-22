@@ -66,6 +66,7 @@ import {
 } from "./utils";
 import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
+import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
 // ==================== 会话状态轮询 (自动 reconnect) ====================
 import { emit } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
@@ -381,7 +382,7 @@ export default function ChatPage() {
   // Register session API event callbacks for URL synchronization
 
   useEffect(() => {
-    sessionApi.onSessionIdResolved = (realId) => {
+    sessionApi.onSessionIdResolved = (_tempId, realId) => {
       if (!isChatActiveRef.current) return;
       // Update URL when realId is resolved, regardless of current chatId
       // (chatId may be undefined if URL was cleared in onSessionCreated)
@@ -418,7 +419,14 @@ export default function ChatPage() {
       // 3. A's request completes → onSessionSelected(A) fires
       // 4. Should NOT navigate back to A since user already chose B
       const currentUrlChatId = chatIdRef.current;
-      if (currentUrlChatId && currentUrlChatId !== targetId) {
+      if (
+        currentUrlChatId &&
+        currentUrlChatId !== targetId &&
+        !matchesResolvedChatId({
+          requestedSessionId: currentUrlChatId,
+          chatId: targetId,
+        })
+      ) {
         return;
       }
 
@@ -856,7 +864,9 @@ export default function ChatPage() {
 
       const requestBody = {
         input: rewrittenInput,
-        session_id: window.currentSessionId || session?.session_id || "",
+        session_id: sessionApi.getLogicalSessionId(
+          window.currentSessionId || session?.session_id || "",
+        ),
         // ==================== userId 统一整改 (Kun He) ====================
         // 使用 getUserId()/getChannel() 获取，优先级：iframe > window > session > default
         user_id: getUserId(session?.user_id),
@@ -867,7 +877,7 @@ export default function ChatPage() {
       };
 
       const backendChatId =
-        sessionApi.getRealIdForSession(requestBody.session_id) ??
+        sessionApi.getChatIdForSession(requestBody.session_id) ??
         chatIdRef.current ??
         requestBody.session_id;
       if (backendChatId) {
@@ -1113,7 +1123,7 @@ export default function ChatPage() {
         },
         cancel(data: { session_id: string }) {
           const chatId =
-            sessionApi.getRealIdForSession(data.session_id) ?? data.session_id;
+            sessionApi.getChatIdForSession(data.session_id) ?? data.session_id;
           if (chatId) {
             chatApi.stopChat(chatId).catch((err) => {
               console.error("Failed to stop chat:", err);
@@ -1131,7 +1141,10 @@ export default function ChatPage() {
             headers,
             body: JSON.stringify({
               reconnect: true,
-              session_id: window.currentSessionId || data.session_id,
+              session_id:
+                sessionApi.getChatIdForSession(data.session_id) ??
+                chatIdRef.current ??
+                data.session_id,
               // ==================== userId 统一整改 (Kun He) ====================
               // 使用 getUserId()/getChannel() 获取
               user_id: getUserId(),

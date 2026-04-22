@@ -10,12 +10,16 @@ import { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat";
 import { IAgentScopeRuntimeWebUIInputData } from "../../types";
 import { withResponseHeaderMeta } from "./headerMeta";
 import type { CurrentQARef } from "./currentQARef";
+import {
+  isActiveChatRequestOwner,
+  type ChatRequestOwner,
+} from "./requestOwnership";
 
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
   getCurrentSessionId: () => string;
-  onFinish: () => void;
+  onFinish: (owner: ChatRequestOwner) => void;
 }
 
 /**
@@ -65,8 +69,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
   }, []);
 
   const processSSEResponse = useCallback(
-    async (response: Response) => {
+    async (response: Response, owner: ChatRequestOwner) => {
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
+      const isOwnerActive = () =>
+        isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, owner);
       const buildResponseCard = () => {
         const responseData = currentQARef.current.response?.cards?.[0]
           ?.data as
@@ -98,7 +104,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         if (currentApiOptions.cancel) {
           await Promise.resolve(
             currentApiOptions.cancel({
-              session_id: getCurrentSessionId(),
+              session_id: owner.sessionId,
             }),
           ).catch((error) => {
             console.error(error);
@@ -141,7 +147,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               data: withResponseHeaderMeta(res, responseHeaderTimestamp),
             },
           ];
-          onFinish();
+          onFinish(owner);
         });
         return;
       }
@@ -150,6 +156,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         for await (const chunk of Stream({
           readableStream: response.body,
         })) {
+          if (!isOwnerActive()) {
+            return;
+          }
+
           if (currentQARef.current.response?.msgStatus === "interrupted") {
             await cancelActiveRequest();
             break;
@@ -166,7 +176,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           )
             continue;
 
-          if (currentQARef.current.response) {
+          if (currentQARef.current.response && isOwnerActive()) {
             currentQARef.current.response.cards = [
               {
                 code: "AgentScopeRuntimeResponseCard",
@@ -178,7 +188,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               res.status === AgentScopeRuntimeRunStatus.Completed ||
               res.status === AgentScopeRuntimeRunStatus.Failed
             ) {
-              onFinish();
+              onFinish(owner);
             } else {
               updateMessage(currentQARef.current.response);
             }
@@ -195,7 +205,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     async (
       historyMessages: any[],
       biz_params?: IAgentScopeRuntimeWebUIInputData["biz_params"],
+      owner?: ChatRequestOwner,
     ) => {
+      const requestOwner = owner ?? currentQARef.current.activeRequestOwner;
+      if (!requestOwner) {
+        return;
+      }
+
       const currentApiOptions = apiOptionsRef.current;
       const { enableHistoryMessages = false } = currentApiOptions;
       const abortSignal = currentQARef.current.abortController?.signal;
@@ -226,14 +242,19 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       } catch (error) {}
 
       if (response && response.body) {
-        await processSSEResponse(response);
+        await processSSEResponse(response, requestOwner);
       }
     },
     [getCurrentSessionId, currentQARef, processSSEResponse],
   );
 
   const reconnect = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, owner?: ChatRequestOwner) => {
+      const requestOwner = owner ?? currentQARef.current.activeRequestOwner;
+      if (!requestOwner) {
+        return;
+      }
+
       const currentApiOptions = apiOptionsRef.current;
       if (!currentApiOptions.reconnect) return;
 
@@ -247,7 +268,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       } catch (error) {}
 
       if (response && response.body) {
-        await processSSEResponse(response);
+        await processSSEResponse(response, requestOwner);
       }
     },
     [currentQARef, processSSEResponse],
@@ -275,10 +296,12 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     currentQARef.current.abortController?.abort();
 
     const currentApiOptions = apiOptionsRef.current;
+    const activeSessionId =
+      currentQARef.current.activeRequestOwner?.sessionId ?? getCurrentSessionId();
     if (currentApiOptions.cancel) {
       await Promise.resolve(
         currentApiOptions.cancel({
-          session_id: getCurrentSessionId(),
+          session_id: activeSessionId,
         }),
       ).catch((error) => {
         console.error(error);
