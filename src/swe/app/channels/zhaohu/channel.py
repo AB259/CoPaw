@@ -1011,7 +1011,7 @@ class ZhaohuChannel(BaseChannel):
             user_id,
         )
 
-        # Get today's date
+        # Get today's date in UTC (scheduler uses UTC timezone)
         today = datetime.now(timezone.utc)
 
         # Query tasks from CronManager
