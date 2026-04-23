@@ -214,16 +214,20 @@ function HistoryContent({
   onClose: () => void;
 }) {
   const navigate = useNavigate();
-  const { setSessionLoading } = useChatAnywhereSessionsState();
+  const { currentSessionId, setSessionLoading } = useChatAnywhereSessionsState();
 
   const handleSessionClick = useCallback(
     (sessionId: string) => {
+      if (currentSessionId === sessionId) {
+        return;
+      }
+
       // 先设置 loading 状态，避免导航后闪现欢迎页
       setSessionLoading(true);
       navigate(`/chat/${sessionId}`, { replace: true });
       onClose();
     },
-    [navigate, onClose, setSessionLoading],
+    [currentSessionId, navigate, onClose, setSessionLoading],
   );
 
   return (
