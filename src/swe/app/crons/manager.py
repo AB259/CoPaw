@@ -590,13 +590,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
             user_id: User's sapId
 
         Returns:
-            List of jobs with tenant_id matching user_id
+            List of jobs with tenant_id matching user_id and task_type is agent
         """
         user_jobs = []
         for job in jobs:
-            # Check tenant_id match
+            # Check tenant_id match and task_type is agent
             if job.tenant_id and job.tenant_id == user_id:
-                user_jobs.append(job)
+                if job.task_type == "agent":
+                    user_jobs.append(job)
         return user_jobs
 
     def _calculate_run_times_on_date(
@@ -621,9 +622,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
             second=0,
             microsecond=0,
         )
-        # Ensure start_of_day is timezone-naive for local time comparison
-        if start_of_day.tzinfo is not None:
-            start_of_day = start_of_day.replace(tzinfo=None)
+        if start_of_day.tzinfo is None:
+            start_of_day = start_of_day.replace(tzinfo=timezone.utc)
 
         run_times: list[datetime] = []
         next_fire = trigger.get_next_fire_time(None, start_of_day)
@@ -633,9 +633,6 @@ class CronManager:  # pylint: disable=too-many-public-methods
             fire_date = next_fire.date()
             query_date = date.date()
             if fire_date == query_date:
-                # Convert to timezone-naive if it has timezone info
-                if next_fire.tzinfo is not None:
-                    next_fire = next_fire.replace(tzinfo=None)
                 run_times.append(next_fire)
                 next_fire = trigger.get_next_fire_time(next_fire, next_fire)
             elif fire_date > query_date:
@@ -661,7 +658,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         Returns:
             Status string: "completed", "in_progress", "pending", "error", "cancelled"
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         last_run = state.last_run_at
 
         if state.last_status == "running":
@@ -686,8 +683,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         Args:
             task_status: The task status
-            scheduled_time: Scheduled execution time
-            last_run: Last actual run time
+            scheduled_time: Scheduled execution time (UTC)
+            last_run: Last actual run time (UTC)
 
         Returns:
             Tuple of (status_text, time_info)
@@ -705,14 +702,26 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         status_text, default_info = status_map[task_status]
 
-        if task_status == "completed" and last_run:
-            time_info = f"{last_run.strftime('%H:%M')}已完成"
-        elif task_status == "in_progress" and last_run:
-            time_info = f"{last_run.strftime('%H:%M')}已启动"
-        elif task_status == "error" and last_run:
-            time_info = f"{last_run.strftime('%H:%M')}执行失败"
-        elif task_status == "pending" and scheduled_time:
-            time_info = f"将于{scheduled_time.strftime('%H:%M')}执行"
+        # Convert UTC to local time for display
+        def utc_to_local(dt: Optional[datetime]) -> Optional[datetime]:
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                # Assume UTC if no timezone
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone()
+
+        local_last_run = utc_to_local(last_run)
+        local_scheduled_time = utc_to_local(scheduled_time)
+
+        if task_status == "completed" and local_last_run:
+            time_info = f"{local_last_run.strftime('%H:%M')}已完成"
+        elif task_status == "in_progress" and local_last_run:
+            time_info = f"{local_last_run.strftime('%H:%M')}已启动"
+        elif task_status == "error" and local_last_run:
+            time_info = f"{local_last_run.strftime('%H:%M')}执行失败"
+        elif task_status == "pending" and local_scheduled_time:
+            time_info = f"将于{local_scheduled_time.strftime('%H:%M')}执行"
         else:
             time_info = default_info
 
@@ -974,6 +983,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
             (job.dispatch.target.user_id or "")[:40],
             (job.dispatch.target.session_id or "")[:40],
         )
+        st = self._states.get(job_id, CronJobState())
+        st.last_status = "running"
+        st.last_error = None
+        self._states[job_id] = st
         task = asyncio.create_task(
             self._execute_once(job),
             name=f"c ron-run-{job_id}",
@@ -1566,7 +1579,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 int(meta.get("task_unread_execution_count", 0) or 0) + 1
             )
             meta["task_unread_execution_count"] = unread_count
-            meta["task_last_scheduled_run_at"] = datetime.now()
+            meta["task_last_scheduled_run_at"] = datetime.now(timezone.utc)
             updated = job.model_copy(update={"meta": meta})
             auto_paused = False
             if unread_count >= AUTO_PAUSE_UNREAD_THRESHOLD and job.enabled:
@@ -1957,7 +1970,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 st = self._states.get(job_id, CronJobState())
                 st.last_status = "skipped"
                 st.last_error = "stale leader preflight rejected execution"
-                st.last_run_at = datetime.now()
+                st.last_run_at = datetime.now(timezone.utc)
                 self._states[job_id] = st
                 return
 
@@ -2000,7 +2013,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 st = self._states.get(HEARTBEAT_JOB_ID, CronJobState())
                 st.last_status = "skipped"
                 st.last_error = "stale leader preflight rejected execution"
-                st.last_run_at = datetime.now()
+                st.last_run_at = datetime.now(timezone.utc)
                 self._states[HEARTBEAT_JOB_ID] = st
                 return
 
@@ -2079,7 +2092,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 )
                 raise
             finally:
-                st.last_run_at = datetime.now()
+                st.last_run_at = datetime.now(timezone.utc)
                 self._states[job.id] = st
 
     # ----- Legacy API compatibility -----

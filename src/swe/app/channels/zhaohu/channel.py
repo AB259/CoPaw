@@ -1004,15 +1004,15 @@ class ZhaohuChannel(BaseChannel):
         Returns:
             True if card sent successfully, False otherwise
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         logger.info(
             "zhaohu _query_task_progress: querying for user_id=%s",
             user_id,
         )
 
-        # Get today's date (local time)
-        today = datetime.now()
+        # Get today's date in UTC (scheduler uses UTC timezone)
+        today = datetime.now(timezone.utc)
 
         # Query tasks from CronManager
         tasks: list = []
