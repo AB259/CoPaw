@@ -115,6 +115,34 @@ describe("SessionApi identity mapping", () => {
     expect(list[0]?.name).toBe("new chat");
   });
 
+  it("keeps multiple pending local sessions when backend persistence has not caught up yet", async () => {
+    const sessionApi = new SessionApi();
+
+    await sessionApi.createSession({
+      name: "chat A",
+      messages: [],
+    });
+    const firstSessionId = sessionApi.getPendingSessionId();
+
+    await sessionApi.createSession({
+      name: "chat B",
+      messages: [],
+    });
+    const secondSessionId = sessionApi.getPendingSessionId();
+
+    expect(firstSessionId).toBeTruthy();
+    expect(secondSessionId).toBeTruthy();
+    expect(secondSessionId).not.toBe(firstSessionId);
+
+    apiMocks.listChats.mockResolvedValue([]);
+
+    const list = await sessionApi.getSessionList();
+
+    expect(list.map((session) => session.id)).toEqual(
+      expect.arrayContaining([firstSessionId, secondSessionId]),
+    );
+  });
+
   it("keeps pending session messages accessible before backend persistence catches up", async () => {
     const sessionApi = new SessionApi();
 
@@ -127,7 +155,7 @@ describe("SessionApi identity mapping", () => {
     const localMessages = [
       {
         id: "user-msg-1",
-        role: "user",
+        role: "user" as const,
         cards: [],
       },
     ];
@@ -158,7 +186,7 @@ describe("SessionApi identity mapping", () => {
     const localMessages = [
       {
         id: "user-msg-1",
-        role: "user",
+        role: "user" as const,
         cards: [],
       },
     ];
@@ -195,6 +223,77 @@ describe("SessionApi identity mapping", () => {
     expect(list[0]?.id).toBe(logicalSessionId);
     expect(list[0]?.messages).toEqual(localMessages);
     expect(list[0]?.generating).toBe(true);
+  });
+
+  it("patches the last user message back into a resolved running session when backend history only has partial assistant output", async () => {
+    const sessionApi = new SessionApi();
+
+    await sessionApi.createSession({
+      name: "new chat",
+      messages: [],
+    });
+
+    const logicalSessionId = sessionApi.getPendingSessionId();
+    expect(logicalSessionId).toBeTruthy();
+
+    sessionApi.setLastUserMessage(logicalSessionId!, "hello from user");
+
+    apiMocks.listChats.mockResolvedValue([
+      {
+        id: "chat-real-1",
+        name: "new chat",
+        session_id: logicalSessionId,
+        user_id: "user-1",
+        channel: "console",
+        meta: {},
+        status: "running",
+        created_at: "2026-04-22T00:00:00Z",
+      },
+    ]);
+    apiMocks.getChat.mockResolvedValue({
+      id: "chat-real-1",
+      status: "running",
+      messages: [
+        {
+          id: "assistant-msg-1",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "partial reply" }],
+          timestamp: "2026-04-22T00:00:01Z",
+          metadata: {},
+        },
+      ],
+    });
+
+    await sessionApi.updateSession({
+      id: logicalSessionId!,
+      name: "new chat",
+      generating: true,
+    });
+
+    const session = await sessionApi.getSession(logicalSessionId!);
+
+    expect(session.generating).toBe(true);
+    expect(session.messages).toHaveLength(2);
+    expect(session.messages[0]).toMatchObject({
+      role: "assistant",
+    });
+    expect(session.messages[1]).toMatchObject({
+      role: "user",
+      cards: [
+        {
+          code: "AgentScopeRuntimeRequestCard",
+          data: {
+            input: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "hello from user" }],
+              },
+            ],
+          },
+        },
+      ],
+    });
   });
 
   it("does not treat a persisted logical session id as a unique backend chat id", async () => {
