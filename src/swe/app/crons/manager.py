@@ -774,6 +774,26 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 continue
 
             state = self.get_state(job.id)
+            # Use persisted last_run_at from job.meta if memory state is empty
+            job_meta = job.meta or {}
+            persisted_last_run = job_meta.get("task_last_scheduled_run_at")
+            if persisted_last_run and not state.last_run_at:
+                # Restore state from persisted meta (may be string from JSON)
+                if isinstance(persisted_last_run, str):
+                    # Parse ISO format datetime string
+                    try:
+                        persisted_last_run = datetime.fromisoformat(
+                            persisted_last_run.replace("Z", "+00:00"),
+                        )
+                    except ValueError:
+                        logger.warning(
+                            "Failed to parse task_last_scheduled_run_at: %s",
+                            persisted_last_run,
+                        )
+                        persisted_last_run = None
+                state.last_run_at = persisted_last_run
+                if job_meta.get("task_has_scheduled_result"):
+                    state.last_status = "success"
 
             try:
                 run_times = self._calculate_run_times_on_date(job, date)
