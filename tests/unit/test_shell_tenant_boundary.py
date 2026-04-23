@@ -497,6 +497,25 @@ class TestExecuteShellCommand:
     """Integration tests for execute_shell_command with tenant boundary."""
 
     @pytest.mark.asyncio
+    async def test_accepts_string_cwd_within_tenant(
+        self,
+        mock_working_dir: Path,
+    ):
+        """String cwd values from the tool layer should still execute."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        (tenant_dir / "test.txt").write_text("hello from string cwd")
+
+        from swe.agents.tools.shell import execute_shell_command
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = await execute_shell_command(
+                "cat test.txt",
+                cwd=str(tenant_dir),
+            )
+
+            assert result.content[0]["text"] == "hello from string cwd"
+
+    @pytest.mark.asyncio
     async def test_executes_within_tenant(self, mock_working_dir: Path):
         """Should execute command within tenant workspace."""
         tenant_dir = mock_working_dir / "test_tenant"
