@@ -747,7 +747,19 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     }
 
     if (isLocalTimestamp(sessionId)) {
-      return getResolvedChatId(sessionId);
+      const resolvedChatId = getResolvedChatId(sessionId);
+      if (resolvedChatId) {
+        return resolvedChatId;
+      }
+
+      const matches = this.sessionList.filter(
+        (session) => (session as ExtendedSession).sessionId === sessionId,
+      ) as ExtendedSession[];
+      if (matches.length === 1) {
+        return matches[0].realId || matches[0].id;
+      }
+
+      return null;
     }
 
     const matchesLogicalSessionId = this.sessionList.some(

@@ -424,6 +424,29 @@ describe("SessionApi identity mapping", () => {
     expect(sessionApi.getChatIdForSession("channel:user-1")).toBeNull();
   });
 
+  it("resolves a persisted local timestamp session id to its backend chat id", async () => {
+    const sessionApi = new SessionApi();
+
+    apiMocks.listChats.mockResolvedValue([
+      {
+        id: "3ec62b2e-c427-4778-bbab-f56188c602c4",
+        name: "running chat",
+        session_id: "1777001065201000",
+        user_id: "user-1",
+        channel: "console",
+        meta: {},
+        status: "running",
+        created_at: "2026-04-22T00:00:00Z",
+      },
+    ]);
+
+    await sessionApi.getSessionList();
+
+    expect(sessionApi.getChatIdForSession("1777001065201000")).toBe(
+      "3ec62b2e-c427-4778-bbab-f56188c602c4",
+    );
+  });
+
   it("does not resolve a logical session id to the first persisted chat when multiple chats share it", async () => {
     const sessionApi = new SessionApi();
 
