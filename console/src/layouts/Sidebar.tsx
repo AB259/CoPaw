@@ -172,12 +172,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       label: t("nav.heartbeat"),
     },
     // {
-    //   key: "cases-management",
-    //   icon: <SparkFileTxtLine size={18} />,
-    //   path: "/cases-management",
-    //   label: t("nav.casesManagement", "案例管理"),
-    // },
-    // {
     //   key: "greeting-management",
     //   icon: <SparkMessageLine size={18} />,
     //   path: "/greeting-management",
@@ -349,11 +343,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           label: collapsed ? null : t("nav.heartbeat"),
           icon: <SparkVoiceChat01Line size={16} />,
         },
-        // {
-        //   key: "cases-management",
-        //   label: collapsed ? null : t("nav.casesManagement", "案例管理"),
-        //   icon: <SparkFileTxtLine size={16} />,
-        // },
         // {
         //   key: "greeting-management",
         //   label: collapsed ? null : t("nav.greetingManagement", "引导文案管理"),

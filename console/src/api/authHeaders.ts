@@ -67,8 +67,11 @@ export function buildAuthHeaders(): Record<string, string> {
   // ==================== userId 统一整改结束 ====================
 
   // 5. Source ID（来自 iframe context，用于数据隔离）
-  // 非 iframe 模式下使用默认值
-  headers["X-Source-Id"] = iframeContext.source || DEFAULT_SOURCE_ID;
+  // 只有 iframe 模式下有值时才发送 X-Source-Id
+  const sourceId = iframeContext.source || DEFAULT_SOURCE_ID;
+  if (sourceId) {
+    headers["X-Source-Id"] = sourceId;
+  }
 
   // 6. BBK ID（来自 iframe context，用于维度配置匹配）
   if (iframeContext.bbk) {
