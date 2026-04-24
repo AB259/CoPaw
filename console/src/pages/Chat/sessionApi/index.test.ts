@@ -285,6 +285,53 @@ describe("SessionApi identity mapping", () => {
     expect(list[0]?.generating).toBe(true);
   });
 
+  it("clears stale local generating when the resolved backend chat is idle", async () => {
+    const sessionApi = new SessionApi();
+
+    await sessionApi.createSession({
+      name: "new chat",
+      messages: [],
+    });
+
+    const logicalSessionId = sessionApi.getPendingSessionId();
+    const localMessages = [
+      {
+        id: "user-msg-1",
+        role: "user" as const,
+        cards: [],
+      },
+    ];
+
+    apiMocks.listChats.mockResolvedValue([
+      {
+        id: "chat-real-1",
+        name: "new chat",
+        session_id: logicalSessionId,
+        user_id: "user-1",
+        channel: "console",
+        meta: {},
+        status: "idle",
+        created_at: "2026-04-22T00:00:00Z",
+      },
+    ]);
+    apiMocks.getChat.mockResolvedValue({
+      id: "chat-real-1",
+      status: "idle",
+      messages: [],
+    });
+
+    await sessionApi.updateSession({
+      id: logicalSessionId!,
+      messages: localMessages,
+      generating: true,
+    });
+
+    const session = await sessionApi.getSession(logicalSessionId!);
+
+    expect(session.messages).toEqual(localMessages);
+    expect(session.generating).toBe(false);
+  });
+
   it("patches the last user message back into a resolved running session when backend history only has partial assistant output", async () => {
     const sessionApi = new SessionApi();
 

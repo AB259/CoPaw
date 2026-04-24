@@ -371,6 +371,17 @@ const isGenerating = (chatHistory: ChatHistory): boolean => {
   return last.role === ROLE_USER;
 };
 
+const mergeGeneratingState = (
+  backendStatus?: string,
+  backendGenerating?: boolean,
+  localGenerating?: boolean,
+): boolean => {
+  if (backendStatus === "running") return true;
+  if (backendStatus === "idle") return false;
+  if (typeof backendGenerating === "boolean") return backendGenerating;
+  return Boolean(localGenerating);
+};
+
 /**
  * Resolve and persist the real backend UUID for a local timestamp session.
  * Stores the real UUID as realId while keeping the timestamp as id, so the
@@ -398,10 +409,11 @@ const mergeResolvedSession = (
       resolvedSession.messages?.length > 0
         ? resolvedSession.messages
         : localSession?.messages || [],
-    generating:
-      resolvedSession.status === "running" ||
-      Boolean(resolvedSession.generating) ||
-      Boolean(localSession?.generating),
+    generating: mergeGeneratingState(
+      resolvedSession.status,
+      resolvedSession.generating,
+      localSession?.generating,
+    ),
   } as ExtendedSession;
 };
 
@@ -896,9 +908,11 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
                 backendSession.messages?.length > 0
                   ? backendSession.messages
                   : localResolvedSession.messages || [],
-              generating:
-                backendSession.status === "running" ||
-                Boolean(localResolvedSession.generating),
+              generating: mergeGeneratingState(
+                backendSession.status,
+                backendSession.generating,
+                localResolvedSession.generating,
+              ),
             } as ExtendedSession;
           }
         });
@@ -981,7 +995,11 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
           backendMessages.length > 0
             ? backendMessages
             : fromList.messages || [];
-        const generating = backendGenerating || Boolean(fromList.generating);
+        const generating = mergeGeneratingState(
+          chatHistory.status,
+          backendGenerating,
+          fromList.generating,
+        );
         this.patchLastUserMessage(messages, generating, fromList.realId, [
           sessionId,
           fromList.sessionId,
