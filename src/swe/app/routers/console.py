@@ -193,6 +193,11 @@ async def post_console_chat(
             native_payload["sender_id"],
             native_payload["channel_id"],
             name=_derive_chat_name(native_payload),
+            meta={
+                "agent_id": workspace.agent_id,
+            }
+            if getattr(workspace, "agent_id", None)
+            else None,
         )
         queue, _ = await tracker.attach_or_start(
             chat.id,

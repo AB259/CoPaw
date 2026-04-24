@@ -52,6 +52,7 @@ class _FakeChatManager:
         user_id: str,
         channel_id: str,
         name: str,
+        _meta=None,
     ):
         self.get_or_create_calls.append(
             (session_id, user_id, channel_id, name),
