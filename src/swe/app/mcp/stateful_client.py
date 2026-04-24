@@ -322,7 +322,13 @@ class StdIOStatefulClient(StatefulClientBase):
         self._cached_tools = res.tools
         return res.tools
 
-    async def call_tool(self, name: str, arguments: dict | None = None, timeout: float = MCP_CALL_TIMEOUT):
+    async def call_tool(
+            self,
+            name: str,
+            arguments: dict | None = None,
+            timeout: float = MCP_CALL_TIMEOUT,
+            meta: dict[str, Any] | None = None,
+    ):
         """Call a tool on the MCP server.
 
         Args:
@@ -330,6 +336,8 @@ class StdIOStatefulClient(StatefulClientBase):
             arguments: Tool arguments (optional)
             timeout: Maximum seconds to wait for the server response
                 (default: ``MCP_CALL_TIMEOUT``).
+            meta: Optional meta dict forwarded as _meta in JSON-RPC request
+                (e.g. {"progressToken": "..."})
 
         Returns:
             Tool call result
@@ -341,7 +349,7 @@ class StdIOStatefulClient(StatefulClientBase):
         self._validate_connection()
 
         return await _call_with_timeout(
-            self.session.call_tool(name, arguments or {}),
+            self.session.call_tool(name, arguments or {}, meta=meta),
             timeout=timeout,
             operation=f"call_tool({name})",
             client_name=self.name,
@@ -620,7 +628,13 @@ class HttpStatefulClient(StatefulClientBase):
         self._cached_tools = res.tools
         return res.tools
 
-    async def call_tool(self, name: str, arguments: dict | None = None, timeout: float = MCP_CALL_TIMEOUT):
+    async def call_tool(
+            self,
+            name: str,
+            arguments: dict | None = None,
+            timeout: float = MCP_CALL_TIMEOUT,
+            meta: dict[str, Any] | None = None,
+    ):
         """Call a tool on the MCP server.
 
         Args:
@@ -628,6 +642,8 @@ class HttpStatefulClient(StatefulClientBase):
             arguments: Tool arguments (optional)
             timeout: Maximum seconds to wait for the server response
                 (default: ``MCP_CALL_TIMEOUT``).
+            meta: Optional meta dict forwarded as _meta in JSON-RPC request
+                (e.g. {"progressToken": "..."})
 
         Returns:
             Tool call result
@@ -639,7 +655,7 @@ class HttpStatefulClient(StatefulClientBase):
         self._validate_connection()
 
         return await _call_with_timeout(
-            self.session.call_tool(name, arguments or {}),
+            self.session.call_tool(name, arguments or {}, meta=meta),
             timeout=timeout,
             operation=f"call_tool({name})",
             client_name=self.name,
