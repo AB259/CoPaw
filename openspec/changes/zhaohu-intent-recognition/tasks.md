@@ -25,6 +25,13 @@
 - [x] 发送卡片通知
 - [x] 使用 `get_llm_response` 处理 LLM 请求
 
+### Task 5: 环境变量重命名
+- [x] 将 `SWE_ZHAOHU_CLIENT_SECRET` 重命名为 `SWE_ZHAOHU_CLIENT_SECRET_POSEIDON`
+- [x] 更新 `src/swe/config/config.py` 中的环境变量定义
+- [x] 更新 `src/swe/config/envs/prd.json` 配置字段
+- [x] 更新 `src/swe/config/envs/dev.json` 配置字段
+- [x] 更新设计文档记录此变更
+
 ## Verification
 
 - [x] 语法检查通过（py_compile）
