@@ -35,7 +35,12 @@ from ...constant import MCP_CALL_TIMEOUT
 logger = logging.getLogger(__name__)
 
 
-async def _call_with_timeout(coro, timeout: float, operation: str, client_name: str):
+async def _call_with_timeout(
+    coro,
+    timeout: float,
+    operation: str,
+    client_name: str,
+):
     """Execute an async coroutine with a timeout guard.
 
     Args:
@@ -322,7 +327,12 @@ class StdIOStatefulClient(StatefulClientBase):
         self._cached_tools = res.tools
         return res.tools
 
-    async def call_tool(self, name: str, arguments: dict | None = None, timeout: float = MCP_CALL_TIMEOUT):
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict | None = None,
+        timeout: float = MCP_CALL_TIMEOUT,
+    ):
         """Call a tool on the MCP server.
 
         Args:
@@ -620,7 +630,12 @@ class HttpStatefulClient(StatefulClientBase):
         self._cached_tools = res.tools
         return res.tools
 
-    async def call_tool(self, name: str, arguments: dict | None = None, timeout: float = MCP_CALL_TIMEOUT):
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict | None = None,
+        timeout: float = MCP_CALL_TIMEOUT,
+    ):
         """Call a tool on the MCP server.
 
         Args:

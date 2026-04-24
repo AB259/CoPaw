@@ -62,7 +62,7 @@ class TestCreateModelAndFormatterTenantIntegration:
 
         # Patch ProviderManager to return no active model
         with patch(
-            "swe.agents.model_factory.ProviderManager"
+            "swe.agents.model_factory.ProviderManager",
         ) as mock_pm_class:
             mock_manager = MagicMock()
             mock_manager.get_active_model.return_value = None
@@ -81,7 +81,7 @@ class TestCreateModelAndFormatterTenantIntegration:
 
         # Patch ProviderManager with active model
         with patch(
-            "swe.agents.model_factory.ProviderManager"
+            "swe.agents.model_factory.ProviderManager",
         ) as mock_pm_class:
             mock_manager = MagicMock()
             from swe.providers.models import ModelSlotConfig
@@ -102,7 +102,7 @@ class TestCreateModelAndFormatterTenantIntegration:
 
             # Patch formatter creation and wrappers
             with patch(
-                "swe.agents.model_factory._create_formatter_instance"
+                "swe.agents.model_factory._create_formatter_instance",
             ):
                 with patch(
                     "swe.agents.model_factory.TokenRecordingModelWrapper",
@@ -174,7 +174,7 @@ class TestBackwardCompatibility:
 
         # Patch ProviderManager to return no active model
         with patch(
-            "swe.agents.model_factory.ProviderManager"
+            "swe.agents.model_factory.ProviderManager",
         ) as mock_pm_class:
             mock_manager = MagicMock()
             mock_manager.get_active_model.return_value = None
@@ -182,7 +182,8 @@ class TestBackwardCompatibility:
             mock_pm_class.ensure_tenant_provider_storage = MagicMock()
 
             with pytest.raises(
-                ValueError, match="No tenant model configuration"
+                ValueError,
+                match="No tenant model configuration",
             ):
                 create_model_and_formatter()
 

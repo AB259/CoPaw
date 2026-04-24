@@ -279,7 +279,7 @@ class RetryChatModel(ChatModelBase):
                     )
                     raise TimeoutError(
                         f"LLM stream stalled: no chunk for {gap:.1f}s "
-                        f"(threshold={self._stream_stall_timeout:.0f}s)"
+                        f"(threshold={self._stream_stall_timeout:.0f}s)",
                     )
                 last_chunk_time = now
                 if first_chunk:

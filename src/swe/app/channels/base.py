@@ -790,7 +790,11 @@ class BaseChannel(ABC):
                 with bind_tenant_context(
                     tenant_id=getattr(self._workspace, "tenant_id", None),
                     user_id=getattr(request, "user_id", None),
-                    workspace_dir=getattr(self._workspace, "workspace_dir", None),
+                    workspace_dir=getattr(
+                        self._workspace,
+                        "workspace_dir",
+                        None,
+                    ),
                 ):
                     await self._consume_with_tracker(request, payload)
                 return

@@ -84,7 +84,12 @@ class _FakeCoordination:
     async def get_definition_version(self):
         return self.version
 
-    async def preflight_scheduler_execution(self, *, job_id: str, schedule_type: str):
+    async def preflight_scheduler_execution(
+        self,
+        *,
+        job_id: str,
+        schedule_type: str,
+    ):
         return True
 
     async def deactivate(self):
@@ -806,11 +811,7 @@ class TestCronManagerState:
         run_at = manager._compute_prefetch_run_at(spec, next_run_at)
 
         assert run_at is not None
-        assert (
-            next_run_at - timedelta(hours=1)
-            <= run_at
-            <= next_run_at
-        )
+        assert next_run_at - timedelta(hours=1) <= run_at <= next_run_at
 
     async def test_job_state_tracking(
         self,
@@ -970,8 +971,12 @@ class TestCronDefinitionMutationCoordination:
 
         repo1.save = delayed_save
 
-        job1 = sample_job_spec.model_copy(update={"id": "job-1", "name": "job-1"})
-        job2 = sample_job_spec.model_copy(update={"id": "job-2", "name": "job-2"})
+        job1 = sample_job_spec.model_copy(
+            update={"id": "job-1", "name": "job-1"},
+        )
+        job2 = sample_job_spec.model_copy(
+            update={"id": "job-2", "name": "job-2"},
+        )
 
         await asyncio.gather(
             manager1.create_or_replace_job(job1),
@@ -1007,8 +1012,12 @@ class TestCronDefinitionMutationCoordination:
             coordination_config=CoordinationConfig(enabled=False),
         )
         manager._coordination = MagicMock()
-        manager._coordination.get_definition_version = AsyncMock(return_value=3)
-        manager._coordination.ensure_definition_version = AsyncMock(return_value=3)
+        manager._coordination.get_definition_version = AsyncMock(
+            return_value=3,
+        )
+        manager._coordination.ensure_definition_version = AsyncMock(
+            return_value=3,
+        )
         manager._coordination.is_leader = True
         manager._definition_version = 1
         manager._started = True
@@ -1044,8 +1053,12 @@ class TestCronDefinitionMutationCoordination:
             coordination_config=CoordinationConfig(enabled=False),
         )
         manager._coordination = MagicMock()
-        manager._coordination.get_definition_version = AsyncMock(return_value=1)
-        manager._coordination.ensure_definition_version = AsyncMock(return_value=2)
+        manager._coordination.get_definition_version = AsyncMock(
+            return_value=1,
+        )
+        manager._coordination.ensure_definition_version = AsyncMock(
+            return_value=2,
+        )
         manager._coordination.is_leader = True
         manager._definition_version = 1
         manager._started = True
@@ -1053,7 +1066,9 @@ class TestCronDefinitionMutationCoordination:
 
         await manager._reconcile_definition_version_once()
 
-        manager._coordination.ensure_definition_version.assert_awaited_once_with(2)
+        manager._coordination.ensure_definition_version.assert_awaited_once_with(
+            2,
+        )
         manager.reload.assert_awaited_once()
 
     async def test_delete_job_keeps_local_scheduler_state_when_persistence_fails(
@@ -1163,7 +1178,8 @@ class TestCronManagerFailoverIntegration:
                     type="channel",
                     channel="console",
                     target=DispatchTarget(
-                        user_id="user1", session_id="session1",
+                        user_id="user1",
+                        session_id="session1",
                     ),
                 ),
             )
@@ -1181,7 +1197,10 @@ class TestCronManagerFailoverIntegration:
             assert follower.is_started
 
         except RuntimeError as e:
-            if "Redis coordination is enabled but Redis is not available" in str(e):
+            if (
+                "Redis coordination is enabled but Redis is not available"
+                in str(e)
+            ):
                 pytest.skip("Redis not available")
             raise
         finally:
@@ -1189,6 +1208,7 @@ class TestCronManagerFailoverIntegration:
             await follower.deactivate()
             await leader.disconnect_coordination()
             await follower.disconnect_coordination()
+
 
 class TestCronManagerLeaderStartupCallback:
     """Unit tests for manager callback/rollback behavior."""
@@ -1424,7 +1444,9 @@ class TestCronManagerLeaderStartupCallback:
         assert original_scheduler is not None
 
         manager._update_heartbeat = AsyncMock(
-            side_effect=RuntimeError("Simulated failure after scheduler start"),
+            side_effect=RuntimeError(
+                "Simulated failure after scheduler start",
+            ),
         )
 
         with patch.object(
