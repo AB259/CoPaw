@@ -188,6 +188,59 @@ async def test_cleanup_removes_only_idle_entries():
 
 
 @pytest.mark.asyncio
+async def test_cleanup_keeps_paused_limiter_state():
+    scope = RateLimiterScopeKey("tenant-a", "paused-agent")
+    limiter = await get_rate_limiter(
+        scope_key=scope,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    await limiter.report_rate_limit(retry_after=60.0)
+
+    removed = cleanup_idle_rate_limiters(max_idle_seconds=0)
+    same_limiter = await get_rate_limiter(
+        scope_key=scope,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    assert removed == 0
+    assert same_limiter is limiter
+    assert same_limiter.stats()["is_paused"] is True
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_recent_qpm_window_state():
+    scope = RateLimiterScopeKey("tenant-a", "qpm-agent")
+    limiter = await get_rate_limiter(
+        scope_key=scope,
+        max_concurrent=1,
+        max_qpm=1,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    await limiter.acquire()
+    limiter.release()
+
+    removed = cleanup_idle_rate_limiters(max_idle_seconds=0)
+    same_limiter = await get_rate_limiter(
+        scope_key=scope,
+        max_concurrent=1,
+        max_qpm=1,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    assert removed == 0
+    assert same_limiter is limiter
+    assert same_limiter.stats()["requests_last_60s"] == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_chat_model_without_explicit_scope_uses_current_agent(
     monkeypatch,
 ):

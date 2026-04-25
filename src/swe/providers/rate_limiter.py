@@ -423,10 +423,11 @@ async def get_rate_limiter(
 
 
 def cleanup_idle_rate_limiters(max_idle_seconds: float) -> int:
-    """Remove idle scoped limiter entries with no in-flight calls.
+    """Remove idle scoped limiter entries with no live limiter state.
 
     This helper is intentionally explicit so service lifecycle code can choose
-    when to run cleanup. Entries with active calls are never removed.
+    when to run cleanup. Entries with active calls, active streams, scoped
+    cooldowns, or recent QPM window entries are never removed.
     """
     now = time.monotonic()
     removed = 0
@@ -435,6 +436,8 @@ def cleanup_idle_rate_limiters(max_idle_seconds: float) -> int:
         if (
             stats["current_in_flight"] > 0
             or stats["current_active_streams"] > 0
+            or stats["is_paused"]
+            or stats["requests_last_60s"] > 0
         ):
             continue
         if now - entry.last_used_at < max_idle_seconds:
