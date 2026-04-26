@@ -925,6 +925,7 @@
     "llmMaxConcurrentPlaceholder": "请输入最大并发数",
     "llmMaxConcurrentRequired": "最大并发请求数为必填项",
     "llmMaxConcurrentRange": "最大并发请求数必须大于等于 1",
+    "llmMaxConcurrentInteger": "最大并发请求数必须是整数",
     "llmChatMaxConcurrent": "Chat 最大并发请求数",
     "llmChatMaxConcurrentTooltip": "Chat 请求允许同时发出的 LLM 请求上限。留空时使用默认最大并发请求数。",
     "llmChatMaxConcurrentPlaceholder": "默认最大并发请求数",

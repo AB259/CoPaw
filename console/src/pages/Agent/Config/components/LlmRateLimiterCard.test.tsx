@@ -42,11 +42,19 @@ function RateLimiterHarness({
   );
 }
 
+async function renderRateLimiterCard() {
+  let form: FormInstance | undefined;
+
+  render(<RateLimiterHarness onFormReady={(value) => (form = value)} />);
+
+  await waitFor(() => expect(form).toBeDefined());
+
+  return form!;
+}
+
 describe("LlmRateLimiterCard", () => {
   it("submits workload-specific limiter overrides with the running config", async () => {
-    let form: FormInstance | undefined;
-
-    render(<RateLimiterHarness onFormReady={(value) => (form = value)} />);
+    const form = await renderRateLimiterCard();
 
     expect(
       screen.getByText("agentConfig.llmChatMaxConcurrent"),
@@ -61,13 +69,57 @@ describe("LlmRateLimiterCard", () => {
       screen.getByText("agentConfig.llmCronAcquireTimeout"),
     ).toBeInTheDocument();
 
-    await waitFor(() => expect(form).toBeDefined());
-
-    await expect(form!.validateFields()).resolves.toMatchObject({
+    await expect(form.validateFields()).resolves.toMatchObject({
       llm_chat_max_concurrent: 4,
       llm_cron_max_concurrent: 2,
       llm_chat_acquire_timeout: 30,
       llm_cron_acquire_timeout: 90,
+    });
+  });
+
+  it("rejects workload acquire timeouts that do not exceed pause plus jitter", async () => {
+    const form = await renderRateLimiterCard();
+
+    form.setFieldsValue({
+      llm_rate_limit_pause: 20,
+      llm_rate_limit_jitter: 5,
+      llm_chat_acquire_timeout: 25,
+      llm_cron_acquire_timeout: 25,
+    });
+
+    await expect(form.validateFields()).rejects.toMatchObject({
+      errorFields: expect.arrayContaining([
+        expect.objectContaining({
+          name: ["llm_chat_acquire_timeout"],
+          errors: ["agentConfig.llmAcquireTimeoutGtPauseJitter"],
+        }),
+        expect.objectContaining({
+          name: ["llm_cron_acquire_timeout"],
+          errors: ["agentConfig.llmAcquireTimeoutGtPauseJitter"],
+        }),
+      ]),
+    });
+  });
+
+  it("rejects fractional workload concurrency overrides", async () => {
+    const form = await renderRateLimiterCard();
+
+    form.setFieldsValue({
+      llm_chat_max_concurrent: 1.5,
+      llm_cron_max_concurrent: 2.5,
+    });
+
+    await expect(form.validateFields()).rejects.toMatchObject({
+      errorFields: expect.arrayContaining([
+        expect.objectContaining({
+          name: ["llm_chat_max_concurrent"],
+          errors: ["agentConfig.llmMaxConcurrentInteger"],
+        }),
+        expect.objectContaining({
+          name: ["llm_cron_max_concurrent"],
+          errors: ["agentConfig.llmMaxConcurrentInteger"],
+        }),
+      ]),
     });
   });
 });

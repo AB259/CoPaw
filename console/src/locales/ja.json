@@ -880,6 +880,7 @@
     "llmMaxConcurrentPlaceholder": "最大同時リクエスト数を入力",
     "llmMaxConcurrentRequired": "最大同時リクエスト数は必須です",
     "llmMaxConcurrentRange": "最大同時リクエスト数は1以上である必要があります",
+    "llmMaxConcurrentInteger": "最大同時リクエスト数は整数である必要があります",
     "llmChatMaxConcurrent": "Chat最大同時リクエスト数",
     "llmChatMaxConcurrentTooltip": "Chatリクエストの同時LLMリクエスト上限です。空欄の場合はデフォルトの最大同時リクエスト数を使用します。",
     "llmChatMaxConcurrentPlaceholder": "デフォルトの最大同時リクエスト数",

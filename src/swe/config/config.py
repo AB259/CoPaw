@@ -552,6 +552,23 @@ class AgentsRunningConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_llm_acquire_timeout(self) -> "AgentsRunningConfig":
+        """Validate LLM acquire timeout relationships."""
+        cooldown = self.llm_rate_limit_pause + self.llm_rate_limit_jitter
+        for field_name in (
+            "llm_acquire_timeout",
+            "llm_chat_acquire_timeout",
+            "llm_cron_acquire_timeout",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value <= cooldown:
+                raise ValueError(
+                    f"{field_name} must be greater than "
+                    "llm_rate_limit_pause + llm_rate_limit_jitter",
+                )
+        return self
+
     max_input_length: int = Field(
         default=128 * 1024,  # 128K = 131072 tokens
         ge=1000,

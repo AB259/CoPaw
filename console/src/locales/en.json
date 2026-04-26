@@ -953,6 +953,7 @@
     "llmMaxConcurrentPlaceholder": "Enter max concurrent calls",
     "llmMaxConcurrentRequired": "Max concurrent calls is required",
     "llmMaxConcurrentRange": "Max concurrent calls must be at least 1",
+    "llmMaxConcurrentInteger": "Max concurrent calls must be an integer",
     "llmChatMaxConcurrent": "Chat Max Concurrent Calls",
     "llmChatMaxConcurrentTooltip": "Optional maximum number of in-flight LLM calls for chat requests. Leave empty to use the default max concurrent calls.",
     "llmChatMaxConcurrentPlaceholder": "Default max concurrent calls",

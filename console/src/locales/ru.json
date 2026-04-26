@@ -885,6 +885,7 @@
     "llmMaxConcurrentPlaceholder": "Введите макс. число одновременных запросов",
     "llmMaxConcurrentRequired": "Требуется указать макс. число одновременных запросов",
     "llmMaxConcurrentRange": "Макс. число одновременных запросов должно быть не менее 1",
+    "llmMaxConcurrentInteger": "Макс. число одновременных запросов должно быть целым числом",
     "llmChatMaxConcurrent": "Макс. одновременных Chat-запросов",
     "llmChatMaxConcurrentTooltip": "Необязательное максимальное число одновременно выполняемых LLM-запросов для Chat. Оставьте пустым, чтобы использовать значение по умолчанию.",
     "llmChatMaxConcurrentPlaceholder": "Макс. значение по умолчанию",
