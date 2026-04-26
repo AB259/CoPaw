@@ -44,6 +44,13 @@ from ..constant import (
     LLM_RATE_LIMIT_PAUSE,
     LLM_STREAM_STALL_TIMEOUT,
 )
+from ..config.llm_workload import (
+    LLM_WORKLOAD_CHAT,
+    LLM_WORKLOAD_CRON,
+    LLMWorkload,
+    get_current_llm_workload,
+    normalize_llm_workload,
+)
 from .rate_limiter import (
     LLMRateLimiter,
     RateLimiterScopeKey,
@@ -77,18 +84,57 @@ class RateLimitConfig:
     pauses when a 429 is received inside the tenant-local agent scope.
 
     Attributes:
-        max_concurrent: Maximum concurrent in-flight LLM calls.
-        max_qpm: Maximum queries per minute (sliding window). 0 = disabled.
+        max_concurrent: Default maximum concurrent in-flight LLM calls for
+            each workload when a workload-specific value is not set.
+        chat_max_concurrent: Optional chat workload concurrency override.
+        cron_max_concurrent: Optional cron workload concurrency override.
+        max_qpm: Shared maximum queries per minute. 0 = disabled.
         pause_seconds: Scope-local pause duration (s) on a 429 response.
         jitter_range: Random jitter (s) added on top of the pause.
-        acquire_timeout: Max seconds to wait for a slot before raising.
+        acquire_timeout: Default max seconds to wait for a slot.
+        chat_acquire_timeout: Optional chat workload acquire-timeout override.
+        cron_acquire_timeout: Optional cron workload acquire-timeout override.
     """
 
     max_concurrent: int = LLM_MAX_CONCURRENT
+    chat_max_concurrent: int | None = None
+    cron_max_concurrent: int | None = None
     max_qpm: int = LLM_MAX_QPM
     pause_seconds: float = LLM_RATE_LIMIT_PAUSE
     jitter_range: float = LLM_RATE_LIMIT_JITTER
     acquire_timeout: float = LLM_ACQUIRE_TIMEOUT
+    chat_acquire_timeout: float | None = None
+    cron_acquire_timeout: float | None = None
+
+    def max_concurrent_for(self, workload: str | None) -> int:
+        """Return the concurrency cap for *workload* with default fallback."""
+        normalized = normalize_llm_workload(workload)
+        if (
+            normalized == LLM_WORKLOAD_CHAT
+            and self.chat_max_concurrent is not None
+        ):
+            return self.chat_max_concurrent
+        if (
+            normalized == LLM_WORKLOAD_CRON
+            and self.cron_max_concurrent is not None
+        ):
+            return self.cron_max_concurrent
+        return self.max_concurrent
+
+    def acquire_timeout_for(self, workload: str | None) -> float:
+        """Return the acquire timeout for *workload* with default fallback."""
+        normalized = normalize_llm_workload(workload)
+        if (
+            normalized == LLM_WORKLOAD_CHAT
+            and self.chat_acquire_timeout is not None
+        ):
+            return self.chat_acquire_timeout
+        if (
+            normalized == LLM_WORKLOAD_CRON
+            and self.cron_acquire_timeout is not None
+        ):
+            return self.cron_acquire_timeout
+        return self.acquire_timeout
 
 
 def _get_openai_retryable() -> tuple[type[Exception], ...]:
@@ -192,10 +238,30 @@ def _normalize_rate_limit_config(
         return RateLimitConfig()
     return RateLimitConfig(
         max_concurrent=max(1, cfg.max_concurrent),
+        chat_max_concurrent=(
+            max(1, cfg.chat_max_concurrent)
+            if cfg.chat_max_concurrent is not None
+            else None
+        ),
+        cron_max_concurrent=(
+            max(1, cfg.cron_max_concurrent)
+            if cfg.cron_max_concurrent is not None
+            else None
+        ),
         max_qpm=max(0, cfg.max_qpm),
         pause_seconds=max(1.0, cfg.pause_seconds),
         jitter_range=max(0.0, cfg.jitter_range),
         acquire_timeout=max(10.0, cfg.acquire_timeout),
+        chat_acquire_timeout=(
+            max(10.0, cfg.chat_acquire_timeout)
+            if cfg.chat_acquire_timeout is not None
+            else None
+        ),
+        cron_acquire_timeout=(
+            max(10.0, cfg.cron_acquire_timeout)
+            if cfg.cron_acquire_timeout is not None
+            else None
+        ),
     )
 
 
@@ -311,6 +377,10 @@ class RetryChatModel(ChatModelBase):
         *args: Any,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        workload = get_current_llm_workload()
+        acquire_timeout = self._rate_limit_config.acquire_timeout_for(
+            workload,
+        )
         limiter_scope = resolve_rate_limiter_scope(
             self._explicit_limiter_scope,
             tenant_id=self._limiter_tenant_id,
@@ -318,7 +388,10 @@ class RetryChatModel(ChatModelBase):
         )
         limiter = await get_rate_limiter(
             scope_key=limiter_scope,
-            max_concurrent=self._rate_limit_config.max_concurrent,
+            workload=workload,
+            max_concurrent=self._rate_limit_config.max_concurrent_for(
+                workload,
+            ),
             max_qpm=self._rate_limit_config.max_qpm,
             default_pause_seconds=self._rate_limit_config.pause_seconds,
             jitter_range=self._rate_limit_config.jitter_range,
@@ -341,23 +414,25 @@ class RetryChatModel(ChatModelBase):
                 try:
                     await asyncio.wait_for(
                         limiter.acquire(),
-                        timeout=self._rate_limit_config.acquire_timeout,
+                        timeout=acquire_timeout,
                     )
                     acquired = True
                 except asyncio.TimeoutError as exc:
                     logger.warning(
                         "LLM rate limiter timed out: scope=%s/%s, "
+                        "workload=%s, "
                         "timeout=%.0fs",
                         limiter_scope.tenant_id,
                         limiter_scope.agent_id,
-                        self._rate_limit_config.acquire_timeout,
+                        workload,
+                        acquire_timeout,
                     )
                     raise RuntimeError(
                         f"LLM rate limiter: timed out waiting"
-                        f" {self._rate_limit_config.acquire_timeout:.0f}s "
+                        f" {acquire_timeout:.0f}s "
                         "for an execution slot "
                         f"(scope={limiter_scope.tenant_id}/"
-                        f"{limiter_scope.agent_id})",
+                        f"{limiter_scope.agent_id}, workload={workload})",
                     ) from exc
 
                 result = await asyncio.wait_for(
@@ -378,6 +453,8 @@ class RetryChatModel(ChatModelBase):
                         attempts,
                         limiter,
                         limiter_scope,
+                        workload,
+                        acquire_timeout,
                     )
 
                 return result
@@ -438,26 +515,30 @@ class RetryChatModel(ChatModelBase):
         self,
         limiter: LLMRateLimiter,
         limiter_scope: RateLimiterScopeKey,
+        workload: LLMWorkload,
+        acquire_timeout: float,
     ) -> None:
         """Acquire a limiter slot for a stream retry with scoped diagnostics."""
         try:
             await asyncio.wait_for(
                 limiter.acquire(),
-                timeout=self._rate_limit_config.acquire_timeout,
+                timeout=acquire_timeout,
             )
         except asyncio.TimeoutError as exc:
             logger.warning(
-                "LLM rate limiter timed out: scope=%s/%s, "
+                "LLM rate limiter timed out: scope=%s/%s, workload=%s, "
                 "timeout=%.0fs, stream_retry=true",
                 limiter_scope.tenant_id,
                 limiter_scope.agent_id,
-                self._rate_limit_config.acquire_timeout,
+                workload,
+                acquire_timeout,
             )
             raise RuntimeError(
                 f"LLM rate limiter: timed out waiting"
-                f" {self._rate_limit_config.acquire_timeout:.0f}s"
+                f" {acquire_timeout:.0f}s"
                 f" for an execution slot (stream retry, "
-                f"scope={limiter_scope.tenant_id}/{limiter_scope.agent_id})",
+                f"scope={limiter_scope.tenant_id}/{limiter_scope.agent_id}, "
+                f"workload={workload})",
             ) from exc
 
     async def _wrap_stream(
@@ -469,6 +550,8 @@ class RetryChatModel(ChatModelBase):
         max_attempts: int,
         limiter: LLMRateLimiter,
         limiter_scope: RateLimiterScopeKey,
+        workload: LLMWorkload,
+        acquire_timeout: float,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield chunks from *stream*; on transient failure, retry the full
         request and yield from the new stream instead."""
@@ -498,6 +581,8 @@ class RetryChatModel(ChatModelBase):
                     await self._acquire_stream_retry_slot(
                         limiter,
                         limiter_scope,
+                        workload,
+                        acquire_timeout,
                     )
                     acquired = True
 

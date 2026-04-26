@@ -758,6 +758,48 @@ def _get_retry_config(
         return None
 
 
+def _optional_int_config_value(obj: Any, name: str) -> int | None:
+    value = getattr(obj, name, None)
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _optional_float_config_value(obj: Any, name: str) -> float | None:
+    value = getattr(obj, name, None)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _build_rate_limit_config(running: Any) -> RateLimitConfig:
+    return RateLimitConfig(
+        max_concurrent=running.llm_max_concurrent,
+        chat_max_concurrent=_optional_int_config_value(
+            running,
+            "llm_chat_max_concurrent",
+        ),
+        cron_max_concurrent=_optional_int_config_value(
+            running,
+            "llm_cron_max_concurrent",
+        ),
+        max_qpm=running.llm_max_qpm,
+        pause_seconds=running.llm_rate_limit_pause,
+        jitter_range=running.llm_rate_limit_jitter,
+        acquire_timeout=running.llm_acquire_timeout,
+        chat_acquire_timeout=_optional_float_config_value(
+            running,
+            "llm_chat_acquire_timeout",
+        ),
+        cron_acquire_timeout=_optional_float_config_value(
+            running,
+            "llm_cron_acquire_timeout",
+        ),
+    )
+
+
 def _get_rate_limit_config(
     agent_id: Optional[str],
     tenant_id: Optional[str] = None,
@@ -772,13 +814,7 @@ def _get_rate_limit_config(
             agent_config = load_agent_config(agent_id, tenant_id=tenant_id)
         else:
             agent_config = load_agent_config(agent_id)
-        return RateLimitConfig(
-            max_concurrent=agent_config.running.llm_max_concurrent,
-            max_qpm=agent_config.running.llm_max_qpm,
-            pause_seconds=agent_config.running.llm_rate_limit_pause,
-            jitter_range=agent_config.running.llm_rate_limit_jitter,
-            acquire_timeout=agent_config.running.llm_acquire_timeout,
-        )
+        return _build_rate_limit_config(agent_config.running)
     except Exception:
         return None
 
@@ -804,13 +840,7 @@ def _get_model_runtime_configs(
                 backoff_base=agent_config.running.llm_backoff_base,
                 backoff_cap=agent_config.running.llm_backoff_cap,
             ),
-            RateLimitConfig(
-                max_concurrent=agent_config.running.llm_max_concurrent,
-                max_qpm=agent_config.running.llm_max_qpm,
-                pause_seconds=agent_config.running.llm_rate_limit_pause,
-                jitter_range=agent_config.running.llm_rate_limit_jitter,
-                acquire_timeout=agent_config.running.llm_acquire_timeout,
-            ),
+            _build_rate_limit_config(agent_config.running),
         )
     except Exception:
         return None, None

@@ -14,6 +14,11 @@ from swe.providers.rate_limiter import (
     reset_rate_limiter,
 )
 from swe.providers.retry_chat_model import RateLimitConfig, RetryChatModel
+from swe.config.llm_workload import (
+    LLM_WORKLOAD_CHAT,
+    LLM_WORKLOAD_CRON,
+    bind_llm_workload,
+)
 
 
 class _StaticChatModel(ChatModelBase):
@@ -128,6 +133,98 @@ async def test_rate_limit_cooldown_stays_inside_agent_scope():
 
     assert agent_x.stats()["is_paused"] is True
     assert agent_y.stats()["is_paused"] is False
+
+
+@pytest.mark.asyncio
+async def test_chat_and_cron_use_independent_concurrency_pools():
+    scope = RateLimiterScopeKey("tenant-a", "agent-x")
+    chat = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CHAT,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    cron = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CRON,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    await chat.acquire()
+    try:
+        await asyncio.wait_for(cron.acquire(), timeout=0.05)
+        cron.release()
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(chat.acquire(), timeout=0.05)
+    finally:
+        chat.release()
+
+
+@pytest.mark.asyncio
+async def test_qpm_window_is_shared_across_chat_and_cron_workloads():
+    scope = RateLimiterScopeKey("tenant-a", "agent-x")
+    chat = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CHAT,
+        max_concurrent=1,
+        max_qpm=1,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    await chat.acquire()
+    chat.release()
+
+    cron = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CRON,
+        max_concurrent=1,
+        max_qpm=1,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(cron.acquire(), timeout=0.05)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_cooldown_is_shared_across_workloads_same_agent():
+    scope = RateLimiterScopeKey("tenant-a", "agent-x")
+    cron = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CRON,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    chat = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CHAT,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    other_agent = await get_rate_limiter(
+        scope_key=RateLimiterScopeKey("tenant-a", "agent-y"),
+        workload=LLM_WORKLOAD_CHAT,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    await cron.report_rate_limit(retry_after=60.0)
+
+    assert chat.stats()["is_paused"] is True
+    assert other_agent.stats()["is_paused"] is False
 
 
 @pytest.mark.asyncio
@@ -274,6 +371,77 @@ async def test_retry_chat_model_without_explicit_scope_uses_current_agent(
     )
 
     assert limiter.stats()["total_acquired"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_chat_model_resolves_workload_at_call_time():
+    scope = RateLimiterScopeKey("tenant-a", "agent-x")
+    model = RetryChatModel(
+        _StaticChatModel(),
+        tenant_id=scope.tenant_id,
+        agent_id=scope.agent_id,
+        rate_limit_config=RateLimitConfig(
+            max_concurrent=1,
+            cron_max_concurrent=2,
+            max_qpm=0,
+            pause_seconds=10.0,
+            jitter_range=0.0,
+        ),
+    )
+
+    with bind_llm_workload(LLM_WORKLOAD_CRON):
+        await model()
+
+    cron = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CRON,
+        max_concurrent=2,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+    chat = await get_rate_limiter(
+        scope_key=scope,
+        workload=LLM_WORKLOAD_CHAT,
+        max_concurrent=1,
+        max_qpm=0,
+        default_pause_seconds=10.0,
+        jitter_range=0.0,
+    )
+
+    assert cron.stats()["total_acquired"] == 1
+    assert chat.stats()["total_acquired"] == 0
+
+
+@pytest.mark.asyncio
+async def test_retry_chat_model_timeout_error_identifies_workload(monkeypatch):
+    async def fake_wait_for(awaitable, timeout):
+        del timeout
+        awaitable.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(
+        "swe.providers.retry_chat_model.asyncio.wait_for",
+        fake_wait_for,
+    )
+    model = RetryChatModel(
+        _StaticChatModel(),
+        tenant_id="tenant-a",
+        agent_id="agent-x",
+        rate_limit_config=RateLimitConfig(
+            max_concurrent=1,
+            cron_acquire_timeout=30.0,
+            max_qpm=0,
+            pause_seconds=10.0,
+            jitter_range=0.0,
+        ),
+    )
+
+    with (
+        bind_llm_workload(LLM_WORKLOAD_CRON),
+        pytest.raises(RuntimeError, match="workload=cron"),
+    ):
+        await model()
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ These tests verify:
 - Timed execution uses lease preflight by default
 - Reload and definition convergence behavior
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,6 +32,12 @@ except ImportError:
 
 
 from swe.app.crons.manager import CronManager, HEARTBEAT_JOB_ID
+from swe.config.llm_workload import (
+    LLM_WORKLOAD_CHAT,
+    LLM_WORKLOAD_CRON,
+    bind_llm_workload,
+    get_current_llm_workload,
+)
 from swe.app.crons.coordination import CoordinationConfig
 from swe.app.crons.models import (
     CronJobSpec,
@@ -446,6 +453,66 @@ class TestCronManagerManualRun:
         await asyncio.sleep(0.1)
 
         await manager.deactivate()
+
+    async def test_run_job_binds_cron_workload_for_background_task(
+        self,
+        temp_jobs_file,
+        mock_runner,
+        mock_channel_manager,
+    ):
+        """Manual run_job task execution runs under cron LLM workload."""
+        observed = {}
+        config = CoordinationConfig(enabled=False)
+        repo = JsonJobRepository(temp_jobs_file)
+        manager = CronManager(
+            repo=repo,
+            runner=mock_runner,
+            channel_manager=mock_channel_manager,
+            agent_id="test-agent",
+            tenant_id="test-tenant",
+            coordination_config=config,
+        )
+
+        await manager.activate()
+
+        job = CronJobSpec(
+            id="test-job",
+            name="Test Job",
+            enabled=True,
+            tenant_id="test-tenant",
+            schedule=ScheduleSpec(
+                type="cron",
+                cron="0 0 * * *",
+                timezone="UTC",
+            ),
+            task_type="text",
+            text="Test message",
+            dispatch=DispatchSpec(
+                type="channel",
+                channel="console",
+                target=DispatchTarget(user_id="user1", session_id="session1"),
+            ),
+            runtime=JobRuntimeSpec(timeout_seconds=30),
+        )
+        await manager.create_or_replace_job(job)
+
+        async def fake_execute_once(executed_job):
+            observed["job_id"] = executed_job.id
+            observed["workload"] = get_current_llm_workload()
+
+        manager._execute_once = fake_execute_once
+
+        with bind_llm_workload(LLM_WORKLOAD_CHAT):
+            await manager.run_job("test-job")
+            await asyncio.sleep(0)
+            assert get_current_llm_workload() == LLM_WORKLOAD_CHAT
+
+        await manager.deactivate()
+
+        assert observed == {
+            "job_id": "test-job",
+            "workload": LLM_WORKLOAD_CRON,
+        }
 
     async def test_run_job_nonexistent_raises_keyerror(
         self,

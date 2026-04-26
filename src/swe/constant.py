@@ -267,8 +267,9 @@ LLM_BACKOFF_CAP = EnvVarLoader.get_float(
 )
 
 # LLM concurrency control
-# Maximum number of concurrent in-flight LLM calls per tenant-local agent
-# scope; excess requests for the same scope wait on the semaphore. Tune to
+# Default maximum number of concurrent in-flight LLM calls per workload inside
+# each tenant-local agent scope. Chat and cron can be split with agent config
+# overrides; when unset, each workload uses this value independently. Tune to
 # your API quota: start conservatively at 3-5 and increase carefully.
 LLM_MAX_CONCURRENT = EnvVarLoader.get_int(
     "SWE_LLM_MAX_CONCURRENT",
@@ -278,7 +279,8 @@ LLM_MAX_CONCURRENT = EnvVarLoader.get_int(
 
 # Maximum queries per minute (QPM) per tenant-local agent scope, enforced via
 # a 60-second sliding window. New requests that would exceed this limit wait
-# before being dispatched to the API, proactively preventing 429s.
+# before being dispatched to the API, proactively preventing 429s. This quota
+# remains shared across chat and cron workloads.
 # 0 = unlimited (disabled).
 # Examples: Anthropic Tier-1 ≈ 50 QPM; OpenAI Tier-1 ≈ 500 QPM.
 LLM_MAX_QPM = EnvVarLoader.get_int(
@@ -287,8 +289,9 @@ LLM_MAX_QPM = EnvVarLoader.get_int(
     min_value=0,
 )
 
-# Default pause duration (seconds) applied to the tenant-local agent scope
-# that receives a 429. Overridden by the API's Retry-After header when present.
+# Default pause duration (seconds) applied to the tenant-local agent scope that
+# receives a 429. The cooldown is shared across workloads and overridden by the
+# API's Retry-After header when present.
 LLM_RATE_LIMIT_PAUSE = EnvVarLoader.get_float(
     "SWE_LLM_RATE_LIMIT_PAUSE",
     5.0,
@@ -303,8 +306,9 @@ LLM_RATE_LIMIT_JITTER = EnvVarLoader.get_float(
     min_value=0.0,
 )
 
-# Maximum time (seconds) a caller waits for its agent-scoped semaphore slot
-# before giving up with a RuntimeError rather than blocking indefinitely.
+# Default maximum time (seconds) a caller waits for its workload-specific
+# semaphore slot before giving up with a RuntimeError rather than blocking
+# indefinitely.
 LLM_ACQUIRE_TIMEOUT = EnvVarLoader.get_float(
     "SWE_LLM_ACQUIRE_TIMEOUT",
     300.0,

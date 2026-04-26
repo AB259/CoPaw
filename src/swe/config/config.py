@@ -455,8 +455,30 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_MAX_CONCURRENT,
         ge=1,
         description=(
-            "Maximum number of concurrent in-flight LLM calls for this "
-            "tenant-local agent scope."
+            "Default maximum number of concurrent in-flight LLM calls for "
+            "each workload in this tenant-local agent scope. Chat and cron "
+            "workloads use separate pools; workload-specific fields override "
+            "this value when set."
+        ),
+    )
+
+    llm_chat_max_concurrent: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Optional maximum concurrent in-flight LLM calls for chat "
+            "workload traffic in this tenant-local agent scope. When unset, "
+            "llm_max_concurrent is used."
+        ),
+    )
+
+    llm_cron_max_concurrent: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Optional maximum concurrent in-flight LLM calls for cron and "
+            "heartbeat workload traffic in this tenant-local agent scope. "
+            "When unset, llm_max_concurrent is used."
         ),
     )
 
@@ -466,7 +488,8 @@ class AgentsRunningConfig(BaseModel):
         description=(
             "Maximum queries per minute for this tenant-local agent scope "
             "(60-second sliding window). New requests that would exceed this "
-            "limit wait before being dispatched; 0 = disabled."
+            "limit wait before being dispatched; 0 = disabled. This quota is "
+            "shared across chat and cron workloads."
         ),
     )
 
@@ -475,7 +498,8 @@ class AgentsRunningConfig(BaseModel):
         ge=1.0,
         description=(
             "Default pause duration (seconds) applied to this tenant-local "
-            "agent scope when a 429 rate-limit response is received."
+            "agent scope when a 429 rate-limit response is received. The "
+            "cooldown is shared across chat and cron workloads."
         ),
     )
 
@@ -492,8 +516,29 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_ACQUIRE_TIMEOUT,
         ge=10.0,
         description=(
-            "Maximum time (seconds) a caller waits to acquire this "
-            "agent-scoped rate-limiter slot before giving up with an error."
+            "Default maximum time (seconds) a caller waits to acquire its "
+            "workload-specific rate-limiter slot before giving up with an "
+            "error."
+        ),
+    )
+
+    llm_chat_acquire_timeout: Optional[float] = Field(
+        default=None,
+        ge=10.0,
+        description=(
+            "Optional maximum time (seconds) chat workload callers wait for "
+            "their LLM concurrency slot. When unset, llm_acquire_timeout is "
+            "used."
+        ),
+    )
+
+    llm_cron_acquire_timeout: Optional[float] = Field(
+        default=None,
+        ge=10.0,
+        description=(
+            "Optional maximum time (seconds) cron and heartbeat workload "
+            "callers wait for their LLM concurrency slot. When unset, "
+            "llm_acquire_timeout is used."
         ),
     )
 
