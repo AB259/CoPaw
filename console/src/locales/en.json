@@ -54,6 +54,7 @@
     "analyticsSessions": "Session Analytics",
     "analyticsMessages": "User Messages",
     "analyticsTraces": "Conversation Analytics",
+    "analyticsBusinessOverview": "Business Overview",
     "instance": "Instance",
     "instanceOverview": "Overview",
     "instanceInstances": "Instances",

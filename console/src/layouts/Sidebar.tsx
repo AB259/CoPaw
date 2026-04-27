@@ -292,6 +292,12 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       label: t("nav.analyticsTraces", "Traces"),
     },
     {
+      key: "analytics-business-overview",
+      icon: <SparkBarChartLine size={18} />,
+      path: "/analytics/business-overview",
+      label: t("nav.analyticsBusinessOverview", "业务概览"),
+    },
+    {
       key: "instance-overview",
       icon: <SparkAdvancedMonitoringLine size={18} />,
       path: "/instance/overview",
@@ -466,6 +472,13 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
+        },
+        {
+          key: "analytics-business-overview",
+          label: collapsed
+            ? null
+            : t("nav.analyticsBusinessOverview", "业务概览"),
+          icon: <SparkBarChartLine size={16} />,
         },
       ],
     },
