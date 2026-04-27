@@ -33,6 +33,10 @@ except ImportError:  # pragma: no cover - compatibility fallback
     GeminiChatModel = None
 
 from .utils.tool_message_utils import _sanitize_tool_messages
+from ..constant import (
+    DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+    DEFAULT_LLM_CRON_MAX_CONCURRENT,
+)
 from ..providers import ProviderManager
 from ..providers.retry_chat_model import (
     RetryChatModel,
@@ -758,11 +762,17 @@ def _get_retry_config(
         return None
 
 
-def _optional_int_config_value(obj: Any, name: str) -> int | None:
+def _optional_int_config_value(
+    obj: Any,
+    name: str,
+    default: int | None = None,
+) -> int | None:
     value = getattr(obj, name, None)
     if isinstance(value, bool):
-        return None
-    return value if isinstance(value, int) else None
+        return default
+    if value is None:
+        return default
+    return value if isinstance(value, int) else default
 
 
 def _optional_float_config_value(obj: Any, name: str) -> float | None:
@@ -780,10 +790,12 @@ def _build_rate_limit_config(running: Any) -> RateLimitConfig:
         chat_max_concurrent=_optional_int_config_value(
             running,
             "llm_chat_max_concurrent",
+            DEFAULT_LLM_CHAT_MAX_CONCURRENT,
         ),
         cron_max_concurrent=_optional_int_config_value(
             running,
             "llm_cron_max_concurrent",
+            DEFAULT_LLM_CRON_MAX_CONCURRENT,
         ),
         max_qpm=running.llm_max_qpm,
         pause_seconds=running.llm_rate_limit_pause,

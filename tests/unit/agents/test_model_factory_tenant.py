@@ -238,8 +238,8 @@ class TestCreateModelAndFormatterTenantIntegration:
         ]
         assert rate_limit_config.max_concurrent == 7
         assert rate_limit_config.max_qpm == 70
-        assert rate_limit_config.max_concurrent_for("chat") == 7
-        assert rate_limit_config.max_concurrent_for("cron") == 7
+        assert rate_limit_config.max_concurrent_for("chat") == 2
+        assert rate_limit_config.max_concurrent_for("cron") == 3
         assert rate_limit_config.acquire_timeout_for("chat") == 30.0
         assert rate_limit_config.acquire_timeout_for("cron") == 30.0
         mock_load_agent_config.assert_any_call(
@@ -315,7 +315,7 @@ class TestCreateModelAndFormatterTenantIntegration:
         rate_limit_config = mock_retry_model.call_args.kwargs[
             "rate_limit_config"
         ]
-        assert rate_limit_config.max_concurrent_for("chat") == 5
+        assert rate_limit_config.max_concurrent_for("chat") == 2
         assert rate_limit_config.max_concurrent_for("cron") == 2
         assert rate_limit_config.acquire_timeout_for("chat") == 15.0
         assert rate_limit_config.acquire_timeout_for("cron") == 30.0

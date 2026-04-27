@@ -276,6 +276,8 @@ LLM_MAX_CONCURRENT = EnvVarLoader.get_int(
     10,
     min_value=1,
 )
+DEFAULT_LLM_CHAT_MAX_CONCURRENT = 2
+DEFAULT_LLM_CRON_MAX_CONCURRENT = 3
 
 # Maximum queries per minute (QPM) per tenant-local agent scope, enforced via
 # a 60-second sliding window. New requests that would exceed this limit wait

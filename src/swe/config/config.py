@@ -8,6 +8,8 @@ import shortuuid
 
 from .timezone import detect_system_timezone
 from ..constant import (
+    DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+    DEFAULT_LLM_CRON_MAX_CONCURRENT,
     EnvVarLoader,
     HEARTBEAT_DEFAULT_EVERY,
     HEARTBEAT_DEFAULT_TARGET,
@@ -455,30 +457,29 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_MAX_CONCURRENT,
         ge=1,
         description=(
-            "Default maximum number of concurrent in-flight LLM calls for "
-            "each workload in this tenant-local agent scope. Chat and cron "
-            "workloads use separate pools; workload-specific fields override "
-            "this value when set."
+            "Fallback maximum number of concurrent in-flight LLM calls for "
+            "this tenant-local agent scope. Chat and cron workloads use "
+            "separate pools with workload-specific defaults."
         ),
     )
 
     llm_chat_max_concurrent: Optional[int] = Field(
-        default=None,
+        default=DEFAULT_LLM_CHAT_MAX_CONCURRENT,
         ge=1,
         description=(
-            "Optional maximum concurrent in-flight LLM calls for chat "
-            "workload traffic in this tenant-local agent scope. When unset, "
-            "llm_max_concurrent is used."
+            "Maximum concurrent in-flight LLM calls for chat workload "
+            "traffic in this tenant-local agent scope. When unset or null, "
+            "the chat default is used."
         ),
     )
 
     llm_cron_max_concurrent: Optional[int] = Field(
-        default=None,
+        default=DEFAULT_LLM_CRON_MAX_CONCURRENT,
         ge=1,
         description=(
-            "Optional maximum concurrent in-flight LLM calls for cron and "
-            "heartbeat workload traffic in this tenant-local agent scope. "
-            "When unset, llm_max_concurrent is used."
+            "Maximum concurrent in-flight LLM calls for cron and heartbeat "
+            "workload traffic in this tenant-local agent scope. When unset "
+            "or null, the cron default is used."
         ),
     )
 
@@ -541,6 +542,27 @@ class AgentsRunningConfig(BaseModel):
             "llm_acquire_timeout is used."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_workload_concurrency_defaults(
+        cls,
+        data: Any,
+    ) -> Any:
+        """Treat missing/null workload concurrency fields as defaults."""
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        if normalized.get("llm_chat_max_concurrent") is None:
+            normalized[
+                "llm_chat_max_concurrent"
+            ] = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+        if normalized.get("llm_cron_max_concurrent") is None:
+            normalized[
+                "llm_cron_max_concurrent"
+            ] = DEFAULT_LLM_CRON_MAX_CONCURRENT
+        return normalized
 
     @model_validator(mode="after")
     def validate_llm_retry_backoff(self) -> "AgentsRunningConfig":

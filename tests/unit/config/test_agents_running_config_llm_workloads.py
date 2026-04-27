@@ -7,13 +7,23 @@ from pydantic import ValidationError
 from swe.config.config import AgentsRunningConfig
 
 
-def test_workload_specific_llm_config_fields_are_optional() -> None:
+def test_workload_specific_llm_config_fields_use_defaults() -> None:
     config = AgentsRunningConfig()
 
-    assert config.llm_chat_max_concurrent is None
-    assert config.llm_cron_max_concurrent is None
+    assert config.llm_chat_max_concurrent == 2
+    assert config.llm_cron_max_concurrent == 3
     assert config.llm_chat_acquire_timeout is None
     assert config.llm_cron_acquire_timeout is None
+
+
+def test_workload_specific_llm_config_coerces_none_to_defaults() -> None:
+    config = AgentsRunningConfig(
+        llm_chat_max_concurrent=None,
+        llm_cron_max_concurrent=None,
+    )
+
+    assert config.llm_chat_max_concurrent == 2
+    assert config.llm_cron_max_concurrent == 3
 
 
 def test_workload_specific_llm_config_fields_accept_overrides() -> None:

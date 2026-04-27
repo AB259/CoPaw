@@ -33,6 +33,8 @@ from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
 
 from ..constant import (
+    DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+    DEFAULT_LLM_CRON_MAX_CONCURRENT,
     LLM_ACQUIRE_TIMEOUT,
     LLM_BACKOFF_BASE,
     LLM_BACKOFF_CAP,
@@ -84,10 +86,9 @@ class RateLimitConfig:
     pauses when a 429 is received inside the tenant-local agent scope.
 
     Attributes:
-        max_concurrent: Default maximum concurrent in-flight LLM calls for
-            each workload when a workload-specific value is not set.
-        chat_max_concurrent: Optional chat workload concurrency override.
-        cron_max_concurrent: Optional cron workload concurrency override.
+        max_concurrent: Fallback maximum concurrent in-flight LLM calls.
+        chat_max_concurrent: Chat workload concurrency cap.
+        cron_max_concurrent: Cron workload concurrency cap.
         max_qpm: Shared maximum queries per minute. 0 = disabled.
         pause_seconds: Scope-local pause duration (s) on a 429 response.
         jitter_range: Random jitter (s) added on top of the pause.
@@ -97,8 +98,8 @@ class RateLimitConfig:
     """
 
     max_concurrent: int = LLM_MAX_CONCURRENT
-    chat_max_concurrent: int | None = None
-    cron_max_concurrent: int | None = None
+    chat_max_concurrent: int | None = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+    cron_max_concurrent: int | None = DEFAULT_LLM_CRON_MAX_CONCURRENT
     max_qpm: int = LLM_MAX_QPM
     pause_seconds: float = LLM_RATE_LIMIT_PAUSE
     jitter_range: float = LLM_RATE_LIMIT_JITTER
@@ -114,11 +115,15 @@ class RateLimitConfig:
             and self.chat_max_concurrent is not None
         ):
             return self.chat_max_concurrent
+        if normalized == LLM_WORKLOAD_CHAT:
+            return DEFAULT_LLM_CHAT_MAX_CONCURRENT
         if (
             normalized == LLM_WORKLOAD_CRON
             and self.cron_max_concurrent is not None
         ):
             return self.cron_max_concurrent
+        if normalized == LLM_WORKLOAD_CRON:
+            return DEFAULT_LLM_CRON_MAX_CONCURRENT
         return self.max_concurrent
 
     def acquire_timeout_for(self, workload: str | None) -> float:
@@ -241,12 +246,12 @@ def _normalize_rate_limit_config(
         chat_max_concurrent=(
             max(1, cfg.chat_max_concurrent)
             if cfg.chat_max_concurrent is not None
-            else None
+            else DEFAULT_LLM_CHAT_MAX_CONCURRENT
         ),
         cron_max_concurrent=(
             max(1, cfg.cron_max_concurrent)
             if cfg.cron_max_concurrent is not None
-            else None
+            else DEFAULT_LLM_CRON_MAX_CONCURRENT
         ),
         max_qpm=max(0, cfg.max_qpm),
         pause_seconds=max(1.0, cfg.pause_seconds),

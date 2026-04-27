@@ -50,6 +50,17 @@ def _reset_limiter_registry():
     reset_rate_limiter()
 
 
+def test_rate_limit_config_uses_workload_defaults_for_none_concurrency():
+    config = RateLimitConfig(
+        max_concurrent=7,
+        chat_max_concurrent=None,
+        cron_max_concurrent=None,
+    )
+
+    assert config.max_concurrent_for(LLM_WORKLOAD_CHAT) == 2
+    assert config.max_concurrent_for(LLM_WORKLOAD_CRON) == 3
+
+
 @pytest.mark.asyncio
 async def test_same_tenant_same_agent_shares_limiter_state():
     scope = RateLimiterScopeKey("tenant-a", "agent-x")
@@ -353,6 +364,7 @@ async def test_retry_chat_model_without_explicit_scope_uses_current_agent(
         _StaticChatModel(),
         rate_limit_config=RateLimitConfig(
             max_concurrent=1,
+            chat_max_concurrent=1,
             max_qpm=0,
             pause_seconds=10.0,
             jitter_range=0.0,
@@ -382,6 +394,7 @@ async def test_retry_chat_model_resolves_workload_at_call_time():
         agent_id=scope.agent_id,
         rate_limit_config=RateLimitConfig(
             max_concurrent=1,
+            chat_max_concurrent=1,
             cron_max_concurrent=2,
             max_qpm=0,
             pause_seconds=10.0,
@@ -454,6 +467,7 @@ async def test_cleanup_keeps_limiter_with_active_stream_after_slot_release():
         agent_id=scope.agent_id,
         rate_limit_config=RateLimitConfig(
             max_concurrent=1,
+            chat_max_concurrent=1,
             max_qpm=0,
             pause_seconds=10.0,
             jitter_range=0.0,
