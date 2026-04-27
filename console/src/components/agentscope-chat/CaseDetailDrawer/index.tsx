@@ -109,6 +109,11 @@ export default function CaseDetailDrawer({
     setScheduledPopupVisible(false);
   };
 
+  const handleTaskCreatedSuccess = () => {
+    // 关闭 CaseDetailDrawer
+    onClose();
+  };
+
   const handleConfirmScheduledTask = async (
     cronExpression: string,
     config: ScheduleConfig
@@ -128,6 +133,9 @@ export default function CaseDetailDrawer({
     });
 
     await cronJobApi.createCronJob(spec);
+
+    // 通知 Chat 页面刷新任务列表
+    document.dispatchEvent(new CustomEvent("taskCreated"));
   };
 
   const handleIframeLoad = () => {
@@ -212,32 +220,32 @@ export default function CaseDetailDrawer({
               )}
             </div>
 
-            {/* Right: iframe */}
-            <div className="case-detail-drawer-iframe-panel">
-              <div className="case-detail-drawer-iframe-title">
-                {iframeTitle}
-              </div>
-              <div className="case-detail-drawer-iframe-container">
-                {iframeLoading && !iframeError && (
-                  <div className="case-detail-drawer-iframe-loading">
-                    <Spin />
-                    <span>加载中...</span>
-                  </div>
-                )}
-                {iframeError && (
-                  <div className="case-detail-drawer-iframe-error">
-                    <span>页面加载失败</span>
-                    <button
-                      className="case-detail-drawer-iframe-refresh"
-                      onClick={handleRefreshIframe}
-                      type="button"
-                    >
-                      <RefreshIcon />
-                      重新加载
-                    </button>
-                  </div>
-                )}
-                {iframeUrl && (
+            {/* Right: iframe - only show when iframeUrl exists */}
+            {iframeUrl && (
+              <div className="case-detail-drawer-iframe-panel">
+                <div className="case-detail-drawer-iframe-title">
+                  {iframeTitle}
+                </div>
+                <div className="case-detail-drawer-iframe-container">
+                  {iframeLoading && !iframeError && (
+                    <div className="case-detail-drawer-iframe-loading">
+                      <Spin />
+                      <span>加载中...</span>
+                    </div>
+                  )}
+                  {iframeError && (
+                    <div className="case-detail-drawer-iframe-error">
+                      <span>页面加载失败</span>
+                      <button
+                        className="case-detail-drawer-iframe-refresh"
+                        onClick={handleRefreshIframe}
+                        type="button"
+                      >
+                        <RefreshIcon />
+                        重新加载
+                      </button>
+                    </div>
+                  )}
                   <iframe
                     className="case-detail-drawer-iframe"
                     src={iframeUrl}
@@ -247,14 +255,9 @@ export default function CaseDetailDrawer({
                     onError={handleIframeError}
                     loading="lazy"
                   />
-                )}
-                {!iframeUrl && (
-                  <div className="case-detail-drawer-iframe-empty">
-                    暂无详情页面
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -283,6 +286,7 @@ export default function CaseDetailDrawer({
         open={scheduledPopupVisible}
         onClose={handleCloseScheduledPopup}
         onConfirm={handleConfirmScheduledTask}
+        onSuccess={handleTaskCreatedSuccess}
         caseValue={caseData?.value}
       />
     </>

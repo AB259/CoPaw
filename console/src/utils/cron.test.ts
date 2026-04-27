@@ -10,6 +10,7 @@ import {
   calculateNextRun,
   formatNextRunPreview,
   hasDateBoundaryWarning,
+  buildCronJobSpec,
   WEEKDAY_MAP,
   type ScheduleConfig,
 } from "./cron";
@@ -224,5 +225,74 @@ describe("hasDateBoundaryWarning", () => {
     expect(hasDateBoundaryWarning([30])).toBe(true);
     expect(hasDateBoundaryWarning([31])).toBe(true);
     expect(hasDateBoundaryWarning([1, 31])).toBe(true);
+  });
+});
+
+describe("buildCronJobSpec", () => {
+  it("builds agent type cron job spec with correct format", () => {
+    const result = buildCronJobSpec({
+      cronExpression: "30 09 * * 1,3,5",
+      name: "测试定时任务",
+      userId: "user-123",
+      sessionId: "session-456",
+      caseValue: "帮我分析存款到期客户",
+      channel: "console",
+    });
+
+    expect(result.task_type).toBe("agent");
+    expect(result.request?.input).toEqual([
+      {
+        role: "user",
+        type: "message",
+        content: [{ type: "text", text: "帮我分析存款到期客户" }],
+      },
+    ]);
+    expect(result.request?.user_id).toBe("user-123");
+    expect(result.request?.session_id).toBe("session-456");
+    expect(result.meta?.creator_user_id).toBe("user-123");
+    expect(result.text).toBeUndefined();
+    expect(result.enabled).toBe(true);
+    expect(result.schedule.type).toBe("cron");
+    expect(result.schedule.cron).toBe("30 09 * * 1,3,5");
+    expect(result.dispatch.type).toBe("channel");
+    expect(result.dispatch.channel).toBe("console");
+    expect(result.dispatch.target.user_id).toBe("user-123");
+    expect(result.dispatch.target.session_id).toBe("session-456");
+    expect(result.dispatch.mode).toBe("final");
+  });
+
+  it("builds agent type cron job without sessionId", () => {
+    const result = buildCronJobSpec({
+      cronExpression: "0 9 * * *",
+      name: "每日任务",
+      userId: "alice",
+      caseValue: "每日提醒",
+    });
+
+    expect(result.task_type).toBe("agent");
+    expect(result.request?.session_id).toBeUndefined();
+    expect(result.dispatch.target.session_id).toBe("");
+    expect(result.dispatch.channel).toBe("default");
+    expect(result.meta?.creator_user_id).toBe("alice");
+  });
+
+  it("generates unique id based on name and timestamp", () => {
+    const result1 = buildCronJobSpec({
+      cronExpression: "0 9 * * *",
+      name: "任务A",
+      userId: "user1",
+      caseValue: "内容",
+    });
+
+    const result2 = buildCronJobSpec({
+      cronExpression: "0 9 * * *",
+      name: "任务B",
+      userId: "user1",
+      caseValue: "内容",
+    });
+
+    expect(result1.id).toContain("任务A");
+    expect(result2.id).toContain("任务B");
+    expect(result1.id).not.toBe(result2.id);
   });
 });

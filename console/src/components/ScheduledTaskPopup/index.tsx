@@ -18,6 +18,7 @@ export interface ScheduledTaskPopupProps {
   open: boolean;
   onClose: () => void;
   onConfirm: (cronExpression: string, config: ScheduleConfig) => Promise<void>;
+  onSuccess?: () => void;
   caseValue?: string;
 }
 
@@ -34,6 +35,7 @@ export default function ScheduledTaskPopup({
   open,
   onClose,
   onConfirm,
+  onSuccess,
   caseValue,
 }: ScheduledTaskPopupProps) {
   const { message } = useAppMessage();
@@ -42,10 +44,15 @@ export default function ScheduledTaskPopup({
   const [weekdays, setWeekdays] = useState<number[]>(DEFAULT_WEEKDAYS);
   const [dates, setDates] = useState<number[]>(DEFAULT_DATES);
   const [loading, setLoading] = useState(false);
+  // 临时输入值，允许用户自由编辑
+  const [hourInput, setHourInput] = useState<string>(formatTimeValue(DEFAULT_TIME.hour));
+  const [minuteInput, setMinuteInput] = useState<string>(formatTimeValue(DEFAULT_TIME.minute));
 
   const handleFrequencyChange = useCallback((newFrequency: FrequencyType) => {
     setFrequency(newFrequency);
     setTime(DEFAULT_TIME);
+    setHourInput(formatTimeValue(DEFAULT_TIME.hour));
+    setMinuteInput(formatTimeValue(DEFAULT_TIME.minute));
     if (newFrequency === "weekly") {
       setWeekdays(DEFAULT_WEEKDAYS);
     } else if (newFrequency === "monthly") {
@@ -53,25 +60,31 @@ export default function ScheduledTaskPopup({
     }
   }, []);
 
-  const handleHourChange = useCallback((value: string) => {
-    const hour = validateHour(value);
+  const handleHourInputChange = useCallback((value: string) => {
+    // 允许用户自由输入，只过滤非数字字符
+    const filtered = value.replace(/[^\d]/g, "");
+    setHourInput(filtered);
+  }, []);
+
+  const handleMinuteInputChange = useCallback((value: string) => {
+    // 允许用户自由输入，只过滤非数字字符
+    const filtered = value.replace(/[^\d]/g, "");
+    setMinuteInput(filtered);
+  }, []);
+
+  const handleHourInputBlur = useCallback(() => {
+    // blur 时校验并格式化
+    const hour = validateHour(hourInput);
     setTime((prev) => ({ ...prev, hour }));
-  }, []);
+    setHourInput(formatTimeValue(hour));
+  }, [hourInput]);
 
-  const handleMinuteChange = useCallback((value: string) => {
-    const minute = validateMinute(value);
+  const handleMinuteInputBlur = useCallback(() => {
+    // blur 时校验并格式化
+    const minute = validateMinute(minuteInput);
     setTime((prev) => ({ ...prev, minute }));
-  }, []);
-
-  const handleHourBlur = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
-    const hour = validateHour(e.target.value);
-    setTime((prev) => ({ ...prev, hour }));
-  }, []);
-
-  const handleMinuteBlur = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
-    const minute = validateMinute(e.target.value);
-    setTime((prev) => ({ ...prev, minute }));
-  }, []);
+    setMinuteInput(formatTimeValue(minute));
+  }, [minuteInput]);
 
   const toggleWeekday = useCallback((day: number) => {
     setWeekdays((prev) => {
@@ -130,12 +143,13 @@ export default function ScheduledTaskPopup({
       await onConfirm(cronExpression, scheduleConfig);
       message.success("定时任务创建成功");
       onClose();
+      onSuccess?.();
     } catch (error) {
       message.error("创建失败，请重试");
     } finally {
       setLoading(false);
     }
-  }, [isConfirmDisabled, scheduleConfig, onConfirm, message, onClose]);
+  }, [isConfirmDisabled, scheduleConfig, onConfirm, message, onClose, onSuccess]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -243,9 +257,9 @@ export default function ScheduledTaskPopup({
             <input
               className={styles.timeInput}
               type="text"
-              value={formatTimeValue(time.hour)}
-              onChange={(e) => handleHourChange(e.target.value)}
-              onBlur={handleHourBlur}
+              value={hourInput}
+              onChange={(e) => handleHourInputChange(e.target.value)}
+              onBlur={handleHourInputBlur}
               maxLength={2}
             />
             <span className={styles.timeUnit}>时</span>
@@ -253,9 +267,9 @@ export default function ScheduledTaskPopup({
             <input
               className={styles.timeInput}
               type="text"
-              value={formatTimeValue(time.minute)}
-              onChange={(e) => handleMinuteChange(e.target.value)}
-              onBlur={handleMinuteBlur}
+              value={minuteInput}
+              onChange={(e) => handleMinuteInputChange(e.target.value)}
+              onBlur={handleMinuteInputBlur}
               maxLength={2}
             />
             <span className={styles.timeUnit}>分</span>

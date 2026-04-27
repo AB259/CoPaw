@@ -578,10 +578,17 @@ export default function ChatPage() {
       }
     };
 
+    // 监听定时任务创建成功事件
+    const handleTaskCreated = () => {
+      void refreshJobs();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    document.addEventListener("taskCreated", handleTaskCreated);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      document.removeEventListener("taskCreated", handleTaskCreated);
     };
   }, [refreshJobs]);
 
