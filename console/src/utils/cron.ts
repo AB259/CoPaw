@@ -219,10 +219,17 @@ export function buildCronJobSpec(options: CreateScheduledTaskOptions): import(".
       type: "cron",
       cron: cronExpression,
     },
-    task_type: "text",
-    text: caseValue,
+    task_type: "agent",
     request: {
-      input: caseValue,
+      input: [
+        {
+          role: "user",
+          type: "message",
+          content: [
+            { type: "text", text: caseValue }
+          ]
+        }
+      ],
       session_id: sessionId,
       user_id: userId,
     },
@@ -234,6 +241,9 @@ export function buildCronJobSpec(options: CreateScheduledTaskOptions): import(".
         session_id: sessionId || "",
       },
       mode: "final",
+    },
+    meta: {
+      creator_user_id: userId,
     },
   };
 }

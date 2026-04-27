@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Button, Card, Table, Modal, Input } from "antd";
+import { Button, Card, Table, Modal, Input, Select } from "antd";
 import { Form } from "@agentscope-ai/design";
 import { PageHeader } from "@/components/PageHeader";
 import { useFeaturedCases } from "./components/hooks";
@@ -120,19 +120,6 @@ function FeaturedCasesPage() {
       />
 
       <Card className={styles.tableCard}>
-        <div style={{ marginBottom: 16 }}>
-          <Input
-            placeholder="筛选 BBK ID"
-            allowClear
-            value={bbkIdFilter || ""}
-            onChange={(e) => {
-              setBbkIdFilter(e.target.value || undefined);
-              setPagination({ ...pagination, current: 1 });
-            }}
-            style={{ width: 200 }}
-          />
-        </div>
-
         <Table
           columns={columns}
           dataSource={cases}

@@ -4,10 +4,15 @@ import {
   Input,
   Switch,
   Button,
+  Select,
 } from "@agentscope-ai/design";
 import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
+import { useEffect } from "react";
 import type { FormInstance } from "antd";
 import type { FeaturedCase, CaseStep } from "@/api/types/featuredCases";
+import { useIframeStore } from "@/stores/iframeStore";
+import { DEFAULT_BBK_ID } from "@/constants/identity";
+import { BBK_ID_MAP } from "@/constants/bbk";
 
 interface CaseDrawerProps {
   open: boolean;
@@ -34,6 +39,15 @@ export function CaseDrawer({
   onClose,
   onSubmit,
 }: CaseDrawerProps) {
+  // 设置默认值从 iframeStore
+  useEffect(() => {
+    if(open && !editingCase){
+      const { bbk } = useIframeStore.getState();
+      console.log('store----bbk', bbk)
+      form.setFieldsValue({ bbk_id: bbk || DEFAULT_BBK_ID });
+    }
+  }, [open, editingCase, form]);
+
   return (
     <Drawer
       width={600}
@@ -59,8 +73,11 @@ export function CaseDrawer({
       >
         {/* source_id NOT displayed - comes from X-Source-Id header */}
 
-        <Form.Item name="bbk_id" label="BBK ID（可选）">
-          <Input placeholder="如 bbk-001，留空表示默认配置" />
+        <Form.Item name="bbk_id" label="机构">
+          <Select
+            disabled
+            options={BBK_ID_MAP}
+          />
         </Form.Item>
 
         <Form.Item

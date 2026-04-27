@@ -16,6 +16,15 @@ export interface FeaturedCasesProps {
   onViewCase?: (id: number) => void;
 }
 
+const DEFAULT_CASES: FeaturedCase[] = [
+  {
+    id: 1,
+    label: "默认案例",
+    value: "default",
+    image: caseIcon,
+  },
+];
+
 function MoreIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -59,13 +68,17 @@ export default function FeaturedCases(props: FeaturedCasesProps) {
     const loadCases = async () => {
       try {
         const apiCases = await featuredCasesApi.listCases();
-        const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
-          id: c.id,
-          label: c.label,
-          value: c.value,
-          image: c.image_url,
-        }));
-        setCases(featuredCases);
+        if(apiCases && apiCases.length > 0){
+          const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
+            id: c.id,
+            label: c.label,
+            value: c.value,
+            image: c.image_url,
+          }));
+          setCases(featuredCases);
+        }else{
+          setCases(DEFAULT_CASES);
+        }
       } catch (error) {
         console.error("Failed to load cases:", error);
         // Keep empty array on error
