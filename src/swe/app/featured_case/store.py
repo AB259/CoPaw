@@ -29,29 +29,57 @@ class FeaturedCaseStore:
         source_id: str,
         bbk_id: Optional[str] = None,
     ) -> list[dict]:
-        """Get cases for a specific dimension.
+        """Get cases for display on chat page (top 5).
 
-        Exact match: source_id=X AND bbk_id=Y
-        Returns empty list if no match.
+        Logic:
+        - bbk_id is None or "100" (total branch): return all active cases for source_id
+        - bbk_id is non-100: return specified bbk_id cases + default (bbk_id="100") cases,
+          with specified bbk_id cases first
+
+        Limited to top 5 results.
 
         Args:
             source_id: Source identifier
             bbk_id: BBK identifier (optional)
 
         Returns:
-            List of case dicts for display
+            List of case dicts for display (max 5 items)
         """
         if not self._use_db:
             return []
 
-        query = """
-            SELECT id, label, value, image_url,
-                   iframe_url, iframe_title, steps, sort_order
-            FROM swe_featured_case
-            WHERE source_id = %s AND bbk_id <=> %s AND is_active = 1
-            ORDER BY sort_order ASC
-        """
-        rows = await self.db.fetch_all(query, (source_id, bbk_id))
+        DEFAULT_BBK_ID = "100"
+
+        if bbk_id is None or bbk_id == DEFAULT_BBK_ID:
+            # Total branch or no filter - return all active cases for source_id
+            query = """
+                SELECT id, label, value, image_url,
+                       iframe_url, iframe_title, steps, sort_order
+                FROM swe_featured_case
+                WHERE source_id = %s AND is_active = 1
+                ORDER BY sort_order ASC
+                LIMIT 5
+            """
+            rows = await self.db.fetch_all(query, (source_id,))
+        else:
+            # Query both specified bbk_id and default (bbk_id="100")
+            # Sort: specified bbk_id first, then default
+            query = """
+                SELECT id, label, value, image_url,
+                       iframe_url, iframe_title, steps, sort_order
+                FROM swe_featured_case
+                WHERE source_id = %s
+                  AND (bbk_id <=> %s OR bbk_id <=> %s)
+                  AND is_active = 1
+                ORDER BY
+                    CASE WHEN bbk_id <=> %s THEN 0 ELSE 1 END,
+                    sort_order ASC
+                LIMIT 5
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, bbk_id, DEFAULT_BBK_ID, bbk_id),
+            )
 
         result = []
         for row in rows:
@@ -107,7 +135,12 @@ class FeaturedCaseStore:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[FeaturedCase], int]:
-        """List cases for a specific source_id with optional bbk_id filter.
+        """List cases for a specific source_id.
+
+        Logic:
+        - bbk_id is None or "100" (total branch): return all cases for source_id
+        - bbk_id is non-100: return specified bbk_id cases + default (bbk_id="100") cases,
+          with specified bbk_id cases first
 
         Args:
             source_id: Source identifier (required)
@@ -121,27 +154,35 @@ class FeaturedCaseStore:
         if not self._use_db:
             return [], 0
 
-        where_clauses = ["source_id = %s"]
-        params: list = [source_id]
+        DEFAULT_BBK_ID = "100"
 
-        if bbk_id is not None:
-            where_clauses.append("bbk_id <=> %s")
-            params.append(bbk_id)
+        if bbk_id is None or bbk_id == DEFAULT_BBK_ID:
+            # Total branch or no filter - return all cases for source_id
+            where_sql = "source_id = %s"
+            where_params: list = [source_id]
+            order_sql = "sort_order ASC, created_at DESC"
+            order_params: list = []
+        else:
+            # Query both specified bbk_id and default (bbk_id="100")
+            where_sql = "source_id = %s AND (bbk_id <=> %s OR bbk_id <=> %s)"
+            where_params = [source_id, bbk_id, DEFAULT_BBK_ID]
+            # Sort: specified bbk_id first, then default
+            order_sql = "CASE WHEN bbk_id <=> %s THEN 0 ELSE 1 END, sort_order ASC, created_at DESC"
+            order_params = [bbk_id]
 
-        where_sql = " AND ".join(where_clauses)
-
+        # Count query only uses where_params
         count_query = f"SELECT COUNT(*) as total FROM swe_featured_case WHERE {where_sql}"
-        count_row = await self.db.fetch_one(count_query, tuple(params))
+        count_row = await self.db.fetch_one(count_query, tuple(where_params))
         total = count_row["total"] if count_row else 0
 
         offset = (page - 1) * page_size
         query = f"""
             SELECT * FROM swe_featured_case
             WHERE {where_sql}
-            ORDER BY sort_order ASC, created_at DESC
+            ORDER BY {order_sql}
             LIMIT %s OFFSET %s
         """
-        params.extend([page_size, offset])
+        params = where_params + order_params + [page_size, offset]
         rows = await self.db.fetch_all(query, tuple(params))
         cases = [self._row_to_case(row) for row in rows]
         return cases, total
@@ -151,6 +192,7 @@ class FeaturedCaseStore:
 
         Sort order is automatically set to max(sort_order) + 1 for the
         current dimension (source_id + bbk_id).
+        First case starts at sort_order=1.
 
         Args:
             case: FeaturedCase to create
@@ -160,8 +202,9 @@ class FeaturedCaseStore:
         """
         if self._use_db:
             # Get max sort_order for current dimension
+            # COALESCE with 0 means first case gets sort_order=1
             max_query = """
-                SELECT COALESCE(MAX(sort_order), -1) as max_order
+                SELECT COALESCE(MAX(sort_order), 0) as max_order
                 FROM swe_featured_case
                 WHERE source_id = %s AND bbk_id <=> %s
             """
@@ -169,7 +212,7 @@ class FeaturedCaseStore:
                 max_query,
                 (case.source_id, case.bbk_id),
             )
-            next_order = (max_row["max_order"] if max_row else -1) + 1
+            next_order = (max_row["max_order"] if max_row else 0) + 1
 
             steps_json = (
                 json.dumps([s.model_dump() for s in case.steps])
