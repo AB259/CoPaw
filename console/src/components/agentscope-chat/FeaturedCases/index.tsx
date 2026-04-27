@@ -3,7 +3,7 @@ import Style from "./style";
 import { featuredCasesApi } from "@/api/modules/featuredCases";
 
 export interface FeaturedCase {
-  id: string;
+  id: number;
   label: string;
   value: string;
   image?: string;
@@ -12,7 +12,7 @@ export interface FeaturedCase {
 export interface FeaturedCasesProps {
   cases?: FeaturedCase[];
   onFillInput?: (text: string) => void;
-  onViewCase?: (caseId: string) => void;
+  onViewCase?: (id: number) => void;
 }
 
 function DocumentIcon() {
