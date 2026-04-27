@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Featured case store (simplified - merged tables)."""
+"""Featured case store (simplified - no case_id)."""
 
 import json
 import logging
@@ -45,7 +45,7 @@ class FeaturedCaseStore:
             return []
 
         query = """
-            SELECT case_id, label, value, image_url,
+            SELECT id, label, value, image_url,
                    iframe_url, iframe_title, steps, sort_order
             FROM swe_featured_case
             WHERE source_id = %s AND bbk_id <=> %s AND is_active = 1
@@ -72,7 +72,7 @@ class FeaturedCaseStore:
 
             result.append(
                 {
-                    "id": row["case_id"],
+                    "id": row["id"],
                     "label": row["label"],
                     "value": row["value"],
                     "image_url": row["image_url"],
@@ -82,11 +82,11 @@ class FeaturedCaseStore:
             )
         return result
 
-    async def get_case_by_id(self, case_id: str) -> Optional[FeaturedCase]:
-        """Get case by case_id (global unique lookup).
+    async def get_case_by_id(self, case_id: int) -> Optional[FeaturedCase]:
+        """Get case by id.
 
         Args:
-            case_id: Case identifier
+            case_id: Case database id
 
         Returns:
             FeaturedCase if found, None otherwise
@@ -94,7 +94,7 @@ class FeaturedCaseStore:
         if not self._use_db:
             return None
 
-        query = "SELECT * FROM swe_featured_case WHERE case_id = %s"
+        query = "SELECT * FROM swe_featured_case WHERE id = %s"
         row = await self.db.fetch_one(query, (case_id,))
         return self._row_to_case(row) if row else None
 
@@ -163,16 +163,15 @@ class FeaturedCaseStore:
             )
             query = """
                 INSERT INTO swe_featured_case
-                    (source_id, bbk_id, case_id, label, value, image_url,
+                    (source_id, bbk_id, label, value, image_url,
                      iframe_url, iframe_title, steps, sort_order, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             await self.db.execute(
                 query,
                 (
                     case.source_id,
                     case.bbk_id,
-                    case.case_id,
                     case.label,
                     case.value,
                     case.image_url,
@@ -187,7 +186,7 @@ class FeaturedCaseStore:
 
     async def update_case(
         self,
-        case_id: str,
+        case_id: int,
         bbk_id: Optional[str] = None,
         label: Optional[str] = None,
         value: Optional[str] = None,
@@ -201,7 +200,7 @@ class FeaturedCaseStore:
         """Update case.
 
         Args:
-            case_id: Case identifier
+            case_id: Case database id
             bbk_id: New bbk_id
             label: New label
             value: New value
@@ -258,51 +257,25 @@ class FeaturedCaseStore:
         query = f"""
             UPDATE swe_featured_case
             SET {', '.join(updates)}
-            WHERE case_id = %s
+            WHERE id = %s
         """
         await self.db.execute(query, tuple(params))
         return await self.get_case_by_id(case_id)
 
-    async def delete_case(self, case_id: str) -> bool:
+    async def delete_case(self, case_id: int) -> bool:
         """Delete case.
 
         Args:
-            case_id: Case identifier
+            case_id: Case database id
 
         Returns:
             True if deleted, False otherwise
         """
         if self._use_db:
-            query = "DELETE FROM swe_featured_case WHERE case_id = %s"
+            query = "DELETE FROM swe_featured_case WHERE id = %s"
             result = await self.db.execute(query, (case_id,))
             return result > 0
         return False
-
-    async def check_case_exists(
-        self,
-        source_id: str,
-        case_id: str,
-        bbk_id: Optional[str] = None,
-    ) -> bool:
-        """Check if case exists for given dimension.
-
-        Args:
-            source_id: Source identifier
-            case_id: Case identifier
-            bbk_id: BBK identifier (optional)
-
-        Returns:
-            True if exists, False otherwise
-        """
-        if not self._use_db:
-            return False
-
-        query = """
-            SELECT COUNT(*) as cnt FROM swe_featured_case
-            WHERE source_id = %s AND bbk_id <=> %s AND case_id = %s
-        """
-        row = await self.db.fetch_one(query, (source_id, bbk_id, case_id))
-        return row["cnt"] > 0 if row else False
 
     def _row_to_case(self, row: dict) -> FeaturedCase:
         """Convert row to FeaturedCase.
@@ -325,7 +298,6 @@ class FeaturedCaseStore:
             id=row["id"],
             source_id=row["source_id"],
             bbk_id=row["bbk_id"],
-            case_id=row["case_id"],
             label=row["label"],
             value=row["value"],
             image_url=row["image_url"],
