@@ -107,6 +107,7 @@ class ProviderManager:
         self.builtin_providers: Dict[str, Provider] = {}
         self.custom_providers: Dict[str, Provider] = {}
         self.active_model: ModelSlotConfig | None = None
+        self._file_mtimes: dict[str, float] = {}
         self.root_path = self._get_tenant_root_path(tenant_id)
         self.builtin_path = self.root_path / "builtin"
         self.custom_path = self.root_path / "custom"
@@ -118,6 +119,7 @@ class ProviderManager:
             logger.warning("Failed to migrate legacy providers: %s", e)
         self._init_from_storage()
         self._apply_default_annotations()
+        self._record_mtimes()
 
     @staticmethod
     def _get_tenant_root_path(tenant_id: str) -> Path:
@@ -477,7 +479,110 @@ class ProviderManager:
     def _add_builtin(self, provider: Provider):
         self.builtin_providers[provider.id] = provider
 
+    def _record_mtimes(self):
+        """Snapshot modification times of all provider config files."""
+        mtimes: dict[str, float] = {}
+        for provider_id in self.builtin_providers:
+            path = self.builtin_path / f"{provider_id}.json"
+            if path.exists():
+                mtimes[str(path)] = path.stat().st_mtime
+        for path in self.custom_path.glob("*.json"):
+            mtimes[str(path)] = path.stat().st_mtime
+        active_path = self.root_path / "active_model.json"
+        if active_path.exists():
+            mtimes[str(active_path)] = active_path.stat().st_mtime
+        self._file_mtimes = mtimes
+
+    def _update_mtime(self, path: Path):
+        """Update cached mtime for a single file after writing."""
+        if path.exists():
+            self._file_mtimes[str(path)] = path.stat().st_mtime
+        else:
+            self._file_mtimes.pop(str(path), None)
+
+    def _refresh_if_stale(self):
+        """Reload providers whose files changed on disk since last snapshot."""
+        changed_builtin: list[str] = []
+        changed_custom: list[Path] = []
+        new_custom: list[Path] = []
+        removed_custom: list[str] = []
+
+        for provider_id in self.builtin_providers:
+            path = self.builtin_path / f"{provider_id}.json"
+            path_str = str(path)
+            try:
+                if path.exists():
+                    mtime = path.stat().st_mtime
+                    if self._file_mtimes.get(path_str) != mtime:
+                        changed_builtin.append(provider_id)
+            except OSError:
+                pass
+
+        current_custom: set[str] = set()
+        for path in self.custom_path.glob("*.json"):
+            path_str = str(path)
+            current_custom.add(path_str)
+            try:
+                mtime = path.stat().st_mtime
+                if path_str not in self._file_mtimes:
+                    new_custom.append(path)
+                elif self._file_mtimes[path_str] != mtime:
+                    changed_custom.append(path)
+            except OSError:
+                pass
+
+        for path_str in list(self._file_mtimes):
+            custom_prefix = str(self.custom_path)
+            if path_str.startswith(custom_prefix) and path_str not in current_custom:
+                removed_custom.append(path_str)
+
+        active_changed = False
+        active_path = self.root_path / "active_model.json"
+        try:
+            if active_path.exists():
+                mtime = active_path.stat().st_mtime
+                if self._file_mtimes.get(str(active_path)) != mtime:
+                    active_changed = True
+        except OSError:
+            pass
+
+        if (
+            not changed_builtin
+            and not changed_custom
+            and not new_custom
+            and not removed_custom
+            and not active_changed
+        ):
+            return
+
+        for provider_id in changed_builtin:
+            provider = self.load_provider(provider_id, is_builtin=True)
+            if provider:
+                builtin = self.builtin_providers[provider_id]
+                if not builtin.freeze_url:
+                    builtin.base_url = provider.base_url
+                builtin.api_key = provider.api_key
+                builtin.extra_models = provider.extra_models
+                builtin.generate_kwargs.update(provider.generate_kwargs)
+
+        for path in changed_custom + new_custom:
+            provider = self.load_provider(path.stem, is_builtin=False)
+            if provider:
+                self.custom_providers[provider.id] = provider
+
+        for path_str in removed_custom:
+            provider_id = Path(path_str).stem
+            self.custom_providers.pop(provider_id, None)
+
+        if active_changed:
+            active_model = self.load_active_model()
+            if active_model:
+                self.active_model = active_model
+
+        self._record_mtimes()
+
     async def list_provider_info(self) -> List[ProviderInfo]:
+        self._refresh_if_stale()
         tasks = [
             provider.get_info() for provider in self.builtin_providers.values()
         ]
@@ -584,6 +689,7 @@ class ProviderManager:
             provider_path = self.custom_path / f"{provider_id}.json"
             if provider_path.exists():
                 os.remove(provider_path)
+            self._file_mtimes.pop(str(provider_path), None)
             return True
         return False
 
@@ -741,6 +847,7 @@ class ProviderManager:
             os.chmod(provider_path, 0o600)
         except OSError:
             pass
+        self._update_mtime(provider_path)
 
     def overwrite_provider_payload(self, payload: Dict) -> Provider:
         """Replace a tenant provider with the supplied payload.
@@ -819,6 +926,7 @@ class ProviderManager:
             os.chmod(active_path, 0o600)
         except OSError:
             pass
+        self._update_mtime(active_path)
 
     def load_active_model(self) -> ModelSlotConfig | None:
         """Load the active provider/model configuration from disk.
