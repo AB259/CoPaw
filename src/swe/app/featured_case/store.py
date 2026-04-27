@@ -31,8 +31,11 @@ class FeaturedCaseStore:
     ) -> list[dict]:
         """Get cases for display on chat page (top 5).
 
-        Returns both specified bbk_id data and default data (bbk_id="100").
-        Sorted: specified bbk_id first, then default rows.
+        Logic:
+        - bbk_id is None or "100" (total branch): return all active cases for source_id
+        - bbk_id is non-100: return specified bbk_id cases + default (bbk_id="100") cases,
+          with specified bbk_id cases first
+
         Limited to top 5 results.
 
         Args:
@@ -47,8 +50,8 @@ class FeaturedCaseStore:
 
         DEFAULT_BBK_ID = "100"
 
-        if bbk_id is None:
-            # No bbk_id filter - return all active cases for source_id
+        if bbk_id is None or bbk_id == DEFAULT_BBK_ID:
+            # Total branch or no filter - return all active cases for source_id
             query = """
                 SELECT id, label, value, image_url,
                        iframe_url, iframe_title, steps, sort_order
@@ -58,17 +61,6 @@ class FeaturedCaseStore:
                 LIMIT 5
             """
             rows = await self.db.fetch_all(query, (source_id,))
-        elif bbk_id == DEFAULT_BBK_ID:
-            # Already querying default - just return default rows
-            query = """
-                SELECT id, label, value, image_url,
-                       iframe_url, iframe_title, steps, sort_order
-                FROM swe_featured_case
-                WHERE source_id = %s AND bbk_id <=> %s AND is_active = 1
-                ORDER BY sort_order ASC
-                LIMIT 5
-            """
-            rows = await self.db.fetch_all(query, (source_id, DEFAULT_BBK_ID))
         else:
             # Query both specified bbk_id and default (bbk_id="100")
             # Sort: specified bbk_id first, then default
@@ -143,12 +135,12 @@ class FeaturedCaseStore:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[FeaturedCase], int]:
-        """List cases for a specific source_id with bbk_id and default data.
+        """List cases for a specific source_id.
 
-        When bbk_id is specified, returns both:
-        - Data matching the specified bbk_id
-        - Default data with bbk_id="100"
-        Results are sorted: specified bbk_id first, then default rows.
+        Logic:
+        - bbk_id is None or "100" (total branch): return all cases for source_id
+        - bbk_id is non-100: return specified bbk_id cases + default (bbk_id="100") cases,
+          with specified bbk_id cases first
 
         Args:
             source_id: Source identifier (required)
@@ -164,18 +156,12 @@ class FeaturedCaseStore:
 
         DEFAULT_BBK_ID = "100"
 
-        if bbk_id is None:
-            # No bbk_id filter - return all cases for source_id
+        if bbk_id is None or bbk_id == DEFAULT_BBK_ID:
+            # Total branch or no filter - return all cases for source_id
             where_sql = "source_id = %s"
             where_params: list = [source_id]
             order_sql = "sort_order ASC, created_at DESC"
             order_params: list = []
-        elif bbk_id == DEFAULT_BBK_ID:
-            # Already querying default - just return default rows
-            where_sql = "source_id = %s AND bbk_id <=> %s"
-            where_params = [source_id, DEFAULT_BBK_ID]
-            order_sql = "sort_order ASC, created_at DESC"
-            order_params = []
         else:
             # Query both specified bbk_id and default (bbk_id="100")
             where_sql = "source_id = %s AND (bbk_id <=> %s OR bbk_id <=> %s)"
