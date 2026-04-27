@@ -369,12 +369,15 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     currentQARef.current.abortController?.abort();
 
     const currentApiOptions = apiOptionsRef.current;
+    const activeOwner = currentQARef.current.activeRequestOwner;
     const activeSessionId =
-      currentQARef.current.activeRequestOwner?.sessionId ?? getCurrentSessionId();
+      activeOwner?.sessionId ?? getCurrentSessionId();
     if (currentApiOptions.cancel) {
       await Promise.resolve(
         currentApiOptions.cancel({
           session_id: activeSessionId,
+          logical_session_id: activeOwner?.logicalSessionId ?? activeSessionId,
+          chat_id: activeOwner?.chatId ?? null,
         }),
       ).catch((error) => {
         console.error(error);
