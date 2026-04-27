@@ -4,7 +4,7 @@ import { featuredCasesApi } from "@/api/modules/featuredCases";
 import caseIcon from '../../../assets/icons/default_case.svg'
 
 export interface FeaturedCase {
-  id: string;
+  id: number;
   label: string;
   value: string;
   image?: string;
@@ -13,7 +13,7 @@ export interface FeaturedCase {
 export interface FeaturedCasesProps {
   cases?: FeaturedCase[];
   onFillInput?: (text: string) => void;
-  onViewCase?: (caseId: string) => void;
+  onViewCase?: (id: number) => void;
 }
 
 function MoreIcon() {

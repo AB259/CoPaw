@@ -50,15 +50,15 @@ function FeaturedCasesPage() {
     setDrawerOpen(true);
   };
 
-  const handleDelete = (caseId: string) => {
+  const handleDelete = (id: number) => {
     Modal.confirm({
       title: "确认删除",
-      content: `确定要删除案例 "${caseId}" 吗？`,
+      content: `确定要删除该案例吗？`,
       okText: "删除",
       okType: "danger",
       cancelText: "取消",
       onOk: async () => {
-        await deleteCase(caseId);
+        await deleteCase(id);
         loadCases({
           bbk_id: bbkIdFilter,
           page: pagination.current,
@@ -77,7 +77,7 @@ function FeaturedCasesPage() {
     setSaving(true);
     try {
       if (editingCase) {
-        await updateCase(editingCase.case_id, values);
+        await updateCase(editingCase.id, values);
       } else {
         await createCase(values);
       }
@@ -137,7 +137,7 @@ function FeaturedCasesPage() {
           columns={columns}
           dataSource={cases}
           loading={loading}
-          rowKey="case_id"
+          rowKey="id"
           pagination={{
             current: pagination.current,
             pageSize: pagination.pageSize,
