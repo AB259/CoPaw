@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Featured case models (simplified - merged tables)."""
+"""Featured case models (simplified - no case_id)."""
 
 from datetime import datetime
 from typing import List, Optional
@@ -30,7 +30,6 @@ class FeaturedCase(BaseModel):
     id: Optional[int] = None
     source_id: str = Field(..., min_length=1, max_length=64)
     bbk_id: Optional[str] = Field(None, max_length=64)
-    case_id: str = Field(..., min_length=1, max_length=64)
     label: str = Field(..., min_length=1, max_length=512)
     value: str = Field(..., min_length=1)
     image_url: Optional[str] = Field(None, max_length=1024)
@@ -50,7 +49,6 @@ class FeaturedCaseCreate(BaseModel):
     """
 
     bbk_id: Optional[str] = Field(None, max_length=64)
-    case_id: str = Field(..., min_length=1, max_length=64)
     label: str = Field(..., min_length=1, max_length=512)
     value: str = Field(..., min_length=1)
     image_url: Optional[str] = Field(None, max_length=1024)
