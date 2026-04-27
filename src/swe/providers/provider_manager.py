@@ -502,60 +502,93 @@ class ProviderManager:
 
     def _refresh_if_stale(self):
         """Reload providers whose files changed on disk since last snapshot."""
-        changed_builtin: list[str] = []
-        changed_custom: list[Path] = []
-        new_custom: list[Path] = []
-        removed_custom: list[str] = []
+        changed_builtin = self._detect_changed_builtins()
+        (
+            changed_custom,
+            new_custom,
+            removed_custom,
+        ) = self._detect_custom_changes()
+        active_changed = self._detect_active_model_change()
 
-        for provider_id in self.builtin_providers:
-            path = self.builtin_path / f"{provider_id}.json"
-            path_str = str(path)
-            try:
-                if path.exists():
-                    mtime = path.stat().st_mtime
-                    if self._file_mtimes.get(path_str) != mtime:
-                        changed_builtin.append(provider_id)
-            except OSError:
-                pass
-
-        current_custom: set[str] = set()
-        for path in self.custom_path.glob("*.json"):
-            path_str = str(path)
-            current_custom.add(path_str)
-            try:
-                mtime = path.stat().st_mtime
-                if path_str not in self._file_mtimes:
-                    new_custom.append(path)
-                elif self._file_mtimes[path_str] != mtime:
-                    changed_custom.append(path)
-            except OSError:
-                pass
-
-        for path_str in list(self._file_mtimes):
-            custom_prefix = str(self.custom_path)
-            if path_str.startswith(custom_prefix) and path_str not in current_custom:
-                removed_custom.append(path_str)
-
-        active_changed = False
-        active_path = self.root_path / "active_model.json"
-        try:
-            if active_path.exists():
-                mtime = active_path.stat().st_mtime
-                if self._file_mtimes.get(str(active_path)) != mtime:
-                    active_changed = True
-        except OSError:
-            pass
-
-        if (
-            not changed_builtin
-            and not changed_custom
-            and not new_custom
-            and not removed_custom
-            and not active_changed
+        if not any(
+            [
+                changed_builtin,
+                changed_custom,
+                new_custom,
+                removed_custom,
+                active_changed,
+            ],
         ):
             return
 
-        for provider_id in changed_builtin:
+        self._apply_builtin_refresh(changed_builtin)
+        self._apply_custom_refresh(changed_custom, new_custom, removed_custom)
+        if active_changed:
+            self._apply_active_model_refresh()
+        self._record_mtimes()
+
+    def _detect_changed_builtins(self) -> list[str]:
+        """Detect builtin providers whose files have changed."""
+        changed: list[str] = []
+        for provider_id in self.builtin_providers:
+            path = self.builtin_path / f"{provider_id}.json"
+            if self._file_has_changed(path):
+                changed.append(provider_id)
+        return changed
+
+    def _detect_custom_changes(
+        self,
+    ) -> tuple[list[Path], list[Path], list[str]]:
+        """Detect custom provider changes, additions, and removals."""
+        changed: list[Path] = []
+        new: list[Path] = []
+        current: set[str] = set()
+
+        for path in self.custom_path.glob("*.json"):
+            path_str = str(path)
+            current.add(path_str)
+            try:
+                mtime = path.stat().st_mtime
+                if path_str not in self._file_mtimes:
+                    new.append(path)
+                elif self._file_mtimes[path_str] != mtime:
+                    changed.append(path)
+            except OSError:
+                pass
+
+        removed = self._detect_removed_custom(current)
+        return changed, new, removed
+
+    def _detect_removed_custom(self, current_paths: set[str]) -> list[str]:
+        """Detect custom provider files that were removed."""
+        removed: list[str] = []
+        custom_prefix = str(self.custom_path)
+        for path_str in list(self._file_mtimes):
+            if (
+                path_str.startswith(custom_prefix)
+                and path_str not in current_paths
+            ):
+                removed.append(path_str)
+        return removed
+
+    def _detect_active_model_change(self) -> bool:
+        """Check if active model file has changed."""
+        active_path = self.root_path / "active_model.json"
+        return self._file_has_changed(active_path)
+
+    def _file_has_changed(self, path: Path) -> bool:
+        """Check if a file has changed since last snapshot."""
+        try:
+            if path.exists():
+                mtime = path.stat().st_mtime
+                return self._file_mtimes.get(str(path)) != mtime
+        except OSError:
+            pass
+        return False
+
+    def _apply_builtin_refresh(self, provider_ids: list[str]) -> None:
+        """Apply changes for modified builtin providers."""
+        for provider_id in provider_ids:
             provider = self.load_provider(provider_id, is_builtin=True)
             if provider:
                 builtin = self.builtin_providers[provider_id]
@@ -565,21 +598,27 @@ class ProviderManager:
                 builtin.extra_models = provider.extra_models
                 builtin.generate_kwargs.update(provider.generate_kwargs)
 
-        for path in changed_custom + new_custom:
+    def _apply_custom_refresh(
+        self,
+        changed: list[Path],
+        new: list[Path],
+        removed: list[str],
+    ) -> None:
+        """Apply changes for custom providers."""
+        for path in changed + new:
             provider = self.load_provider(path.stem, is_builtin=False)
             if provider:
                 self.custom_providers[provider.id] = provider
 
-        for path_str in removed_custom:
+        for path_str in removed:
             provider_id = Path(path_str).stem
             self.custom_providers.pop(provider_id, None)
 
-        if active_changed:
-            active_model = self.load_active_model()
-            if active_model:
-                self.active_model = active_model
-
-        self._record_mtimes()
+    def _apply_active_model_refresh(self) -> None:
+        """Apply changes for active model."""
+        active_model = self.load_active_model()
+        if active_model:
+            self.active_model = active_model
 
     async def list_provider_info(self) -> List[ProviderInfo]:
         self._refresh_if_stale()
