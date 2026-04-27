@@ -37,7 +37,6 @@ export interface FeaturedCaseCreate {
   iframe_url?: string;
   iframe_title?: string;
   steps?: CaseStep[];
-  sort_order?: number;
 }
 
 export interface FeaturedCaseUpdate {

@@ -55,6 +55,7 @@ class TestModels:
         )
         assert case.steps is not None
         assert len(case.steps) == 2
+        # pylint: disable=unsubscriptable-object
         assert case.steps[0].title == "步骤1"
 
     def test_featured_case_create_validation(self):
@@ -247,7 +248,9 @@ class TestFeaturedCaseStoreWithMockDb:
 
     @pytest.mark.asyncio
     async def test_create_case_with_db(self, store, mock_db):
-        """Test create_case with database."""
+        """Test create_case with database auto-increments sort_order."""
+        # Mock max sort_order query returns 5
+        mock_db.fetch_one.return_value = {"max_order": 5}
         case = FeaturedCase(
             label="案例",
             value="内容",
@@ -256,8 +259,25 @@ class TestFeaturedCaseStoreWithMockDb:
             source_id="source1",
         )
         result = await store.create_case(case)
+        # Verify sort_order was auto-incremented
+        assert result.sort_order == 6
+        # Verify both queries were called
+        assert mock_db.fetch_one.call_count == 1
         mock_db.execute.assert_called_once()
-        assert result.label == "案例"
+
+    @pytest.mark.asyncio
+    async def test_create_case_first_in_dimension(self, store, mock_db):
+        """Test create_case when no existing cases (sort_order starts at 0)."""
+        # Mock max sort_order query returns -1 (no existing cases)
+        mock_db.fetch_one.return_value = {"max_order": -1}
+        case = FeaturedCase(
+            label="首个案例",
+            value="内容",
+            is_active=True,
+            source_id="source1",
+        )
+        result = await store.create_case(case)
+        assert result.sort_order == 0
 
     @pytest.mark.asyncio
     async def test_update_case_with_db(self, store, mock_db):

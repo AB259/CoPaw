@@ -147,7 +147,10 @@ class FeaturedCaseStore:
         return cases, total
 
     async def create_case(self, case: FeaturedCase) -> FeaturedCase:
-        """Create case.
+        """Create case with auto-increment sort_order.
+
+        Sort order is automatically set to max(sort_order) + 1 for the
+        current dimension (source_id + bbk_id).
 
         Args:
             case: FeaturedCase to create
@@ -156,6 +159,18 @@ class FeaturedCaseStore:
             Created FeaturedCase
         """
         if self._use_db:
+            # Get max sort_order for current dimension
+            max_query = """
+                SELECT COALESCE(MAX(sort_order), -1) as max_order
+                FROM swe_featured_case
+                WHERE source_id = %s AND bbk_id <=> %s
+            """
+            max_row = await self.db.fetch_one(
+                max_query,
+                (case.source_id, case.bbk_id),
+            )
+            next_order = (max_row["max_order"] if max_row else -1) + 1
+
             steps_json = (
                 json.dumps([s.model_dump() for s in case.steps])
                 if case.steps
@@ -178,10 +193,11 @@ class FeaturedCaseStore:
                     case.iframe_url,
                     case.iframe_title,
                     steps_json,
-                    case.sort_order,
+                    next_order,
                     int(case.is_active),
                 ),
             )
+            case.sort_order = next_order
         return case
 
     async def update_case(

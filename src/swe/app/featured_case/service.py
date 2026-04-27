@@ -100,7 +100,6 @@ class FeaturedCaseService:
             iframe_url=request.iframe_url,
             iframe_title=request.iframe_title,
             steps=request.steps,
-            sort_order=request.sort_order,
             is_active=True,
         )
         return await self.store.create_case(case)

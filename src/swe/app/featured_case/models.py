@@ -46,6 +46,7 @@ class FeaturedCaseCreate(BaseModel):
     """Create featured case request.
 
     Note: source_id is NOT a form field - it comes from X-Source-Id header.
+    Note: sort_order is auto-generated (max + 1 for current dimension).
     """
 
     bbk_id: Optional[str] = Field(None, max_length=64)
@@ -55,7 +56,6 @@ class FeaturedCaseCreate(BaseModel):
     iframe_url: Optional[str] = Field(None, max_length=1024)
     iframe_title: Optional[str] = Field(None, max_length=256)
     steps: Optional[List[CaseStep]] = None
-    sort_order: int = 0
 
 
 class FeaturedCaseUpdate(BaseModel):
