@@ -20,6 +20,7 @@ interface CaseDrawerProps {
 
 const DEFAULT_CASE: Partial<FeaturedCase> = {
   is_active: true,
+  bbk_id: "",
   iframe_url: "",
   iframe_title: "",
   steps: [],
@@ -56,15 +57,10 @@ export function CaseDrawer({
         onFinish={onSubmit}
         initialValues={DEFAULT_CASE}
       >
-        <Form.Item
-          name="case_id"
-          label="案例 ID"
-          rules={[{ required: true, message: "请输入案例 ID" }]}
-        >
-          <Input
-            placeholder="如 case-deposit-maturity"
-            disabled={!!editingCase}
-          />
+        {/* source_id NOT displayed - comes from X-Source-Id header */}
+
+        <Form.Item name="bbk_id" label="BBK ID（可选）">
+          <Input placeholder="如 bbk-001，留空表示默认配置" />
         </Form.Item>
 
         <Form.Item

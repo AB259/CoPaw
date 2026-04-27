@@ -104,6 +104,24 @@ def get_current_source_id() -> str | None:
     return current_source_id.get()
 
 
+def resolve_runtime_tenant_id(
+    tenant_id: str | None,
+    source_id: str | None,
+) -> str | None:
+    """Resolve the tenant ID used by runtime-scoped storage and workspaces.
+
+    Unlike :func:`resolve_effective_tenant_id`, this helper is tolerant of
+    missing ``source_id`` and simply returns the original ``tenant_id`` in that
+    case. This makes it safe for generic runtime code paths that may run in
+    both source-scoped and non-source-scoped contexts.
+    """
+    if tenant_id is None:
+        return None
+    if tenant_id != "default" or not source_id:
+        return tenant_id
+    return resolve_effective_tenant_id(tenant_id, source_id)
+
+
 def set_current_source_id(source_id: str | None) -> Token:
     """Set the current source ID in context.
 
@@ -132,6 +150,14 @@ def get_current_workspace_dir() -> Path | None:
         Path to the current agent's workspace directory, or None if not set.
     """
     return current_workspace_dir.get()
+
+
+def get_current_effective_tenant_id() -> str | None:
+    """Get the current runtime tenant ID with default+source isolation."""
+    return resolve_runtime_tenant_id(
+        get_current_tenant_id(),
+        get_current_source_id(),
+    )
 
 
 def set_current_workspace_dir(workspace_dir: Path | None) -> Token:
@@ -328,3 +354,27 @@ def reset_current_passthrough_headers(token: Token) -> None:
         token: The token returned by set_current_passthrough_headers.
     """
     current_passthrough_headers.reset(token)
+
+
+def resolve_effective_tenant_id(
+    tenant_id: str,
+    source_id: str | None,
+) -> str:
+    """Resolve the effective tenant ID considering source isolation.
+
+    - Default tenant with source_id: effective = ``default_{source_id}``
+    - Default tenant without source_id: effective = ``default``
+    - Non-default tenant: effective = tenant_id (unchanged)
+
+    Args:
+        tenant_id: The original tenant ID from X-Tenant-Id header.
+        source_id: The source ID from X-Source-Id header.
+
+    Returns:
+        The effective tenant ID to use for directory resolution.
+    """
+    if tenant_id == "default":
+        if source_id:
+            return f"default_{source_id}"
+        return "default"
+    return tenant_id
