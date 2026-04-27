@@ -66,17 +66,6 @@ export function CaseDrawer({
         </Form.Item>
 
         <Form.Item
-          name="case_id"
-          label="案例 ID"
-          rules={[{ required: true, message: "请输入案例 ID" }]}
-        >
-          <Input
-            placeholder="如 case-deposit-maturity"
-            disabled={!!editingCase}
-          />
-        </Form.Item>
-
-        <Form.Item
           name="label"
           label="标题"
           rules={[{ required: true, message: "请输入标题" }]}
