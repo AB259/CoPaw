@@ -899,68 +899,79 @@ class ProviderManager:
     def _migrate_legacy_providers(self):
         """Migrate from legacy providers.json format to the new structure."""
         legacy_path = SECRET_DIR / "providers.json"
-        if legacy_path.exists() and legacy_path.is_file():
-            with open(legacy_path, "r", encoding="utf-8") as f:
-                legacy_data = json.load(f)
-            builtin_providers = legacy_data.get("providers", {})
-            custom_providers = legacy_data.get("custom_providers", {})
-            active_model = legacy_data.get("active_llm", {})
-            # Migrate built-in providers
-            for provider_id, config in builtin_providers.items():
-                provider = self.get_provider(provider_id)
-                if not provider:
-                    logger.warning(
-                        "Legacy provider '%s' not found in"
-                        " registry, skipping migration for this provider.",
-                        provider_id,
-                    )
-                    continue
-                if "api_key" in config:
-                    provider.api_key = config["api_key"]
-                if "extra_models" in config:
-                    provider.extra_models = [
-                        ModelInfo.model_validate(model)
-                        for model in config["extra_models"]
-                    ]
-                if not provider.freeze_url and "base_url" in config:
-                    provider.base_url = config["base_url"]
-                self._save_provider(provider, is_builtin=True)
-            # Migrate custom providers
-            for provider_id, data in custom_providers.items():
-                custom_provider = OpenAIProvider(
-                    id=provider_id,
-                    name=data.get("name", provider_id),
-                    base_url=data.get("base_url", ""),
-                    api_key=data.get("api_key", ""),
-                    is_custom=True,
-                )
-                if "models" in data:
-                    # migrate models to extra_models field
-                    custom_provider.extra_models = [
-                        ModelInfo.model_validate(model)
-                        for model in data["models"]
-                    ]
-                if "chat_model" in data:
-                    custom_provider.chat_model = data["chat_model"]
-                self._save_provider(custom_provider, is_builtin=False)
-            # Migrate active model
-            if active_model:
-                try:
-                    self.active_model = ModelSlotConfig.model_validate(
-                        active_model,
-                    )
-                    self.save_active_model(self.active_model)
-                except Exception:
-                    logger.warning(
-                        "Failed to migrate active model, using default.",
-                    )
-            # Remove legacy file after migration
-            try:
-                os.remove(legacy_path)
-            except Exception:
+        if not legacy_path.exists() or not legacy_path.is_file():
+            return
+
+        with open(legacy_path, "r", encoding="utf-8") as f:
+            legacy_data = json.load(f)
+
+        self._migrate_builtin_providers(legacy_data.get("providers", {}))
+        self._migrate_custom_providers(legacy_data.get("custom_providers", {}))
+        self._migrate_active_model_config(legacy_data.get("active_llm", {}))
+
+        try:
+            os.remove(legacy_path)
+        except Exception:
+            logger.warning(
+                "Failed to remove legacy providers.json after migration.",
+            )
+
+    def _migrate_builtin_providers(self, builtin_providers: dict) -> None:
+        """Migrate built-in providers from legacy format."""
+        for provider_id, config in builtin_providers.items():
+            provider = self.get_provider(provider_id)
+            if not provider:
                 logger.warning(
-                    "Failed to remove legacy providers.json after migration.",
+                    "Legacy provider '%s' not found in registry, skipping.",
+                    provider_id,
                 )
+                continue
+            self._apply_builtin_provider_config(provider, config)
+            self._save_provider(provider, is_builtin=True)
+
+    def _apply_builtin_provider_config(
+        self,
+        provider: Provider,
+        config: dict,
+    ) -> None:
+        """Apply legacy config to a built-in provider."""
+        if "api_key" in config:
+            provider.api_key = config["api_key"]
+        if "extra_models" in config:
+            provider.extra_models = [
+                ModelInfo.model_validate(model)
+                for model in config["extra_models"]
+            ]
+        if not provider.freeze_url and "base_url" in config:
+            provider.base_url = config["base_url"]
+
+    def _migrate_custom_providers(self, custom_providers: dict) -> None:
+        """Migrate custom providers from legacy format."""
+        for provider_id, data in custom_providers.items():
+            custom_provider = OpenAIProvider(
+                id=provider_id,
+                name=data.get("name", provider_id),
+                base_url=data.get("base_url", ""),
+                api_key=data.get("api_key", ""),
+                is_custom=True,
+            )
+            if "models" in data:
+                custom_provider.extra_models = [
+                    ModelInfo.model_validate(model) for model in data["models"]
+                ]
+            if "chat_model" in data:
+                custom_provider.chat_model = data["chat_model"]
+            self._save_provider(custom_provider, is_builtin=False)
+
+    def _migrate_active_model_config(self, active_model: dict) -> None:
+        """Migrate active model from legacy format."""
+        if not active_model:
+            return
+        try:
+            self.active_model = ModelSlotConfig.model_validate(active_model)
+            self.save_active_model(self.active_model)
+        except Exception:
+            logger.warning("Failed to migrate active model, using default.")
 
     def _init_from_storage(self):
         """Initialize all providers and active model from disk storage."""
