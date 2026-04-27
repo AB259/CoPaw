@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Featured case API router (simplified - merged tables)."""
+"""Featured case API router (simplified - no case_id)."""
 
 import logging
 from typing import Optional
@@ -88,8 +88,8 @@ async def list_cases_for_display(request: Request) -> list[dict]:
     "/{case_id}",
     summary="Get case detail",
 )
-async def get_case_detail(case_id: str) -> dict:
-    """Get case detail by ID."""
+async def get_case_detail(case_id: int) -> dict:
+    """Get case detail by id."""
     service = get_service()
     case = await service.get_case_by_id(case_id)
     if not case:
@@ -150,18 +150,15 @@ async def create_case(request: Request, case: FeaturedCaseCreate) -> dict:
         )
 
     service = get_service()
-    try:
-        created = await service.create_case(source_id, case)
-        return {"success": True, "data": created.model_dump()}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    created = await service.create_case(source_id, case)
+    return {"success": True, "data": created.model_dump()}
 
 
 @router.put(
     "/admin/cases/{case_id}",
     summary="Update case (admin)",
 )
-async def update_case(case_id: str, updates: FeaturedCaseUpdate) -> dict:
+async def update_case(case_id: int, updates: FeaturedCaseUpdate) -> dict:
     """Update case definition."""
     service = get_service()
     try:
@@ -175,7 +172,7 @@ async def update_case(case_id: str, updates: FeaturedCaseUpdate) -> dict:
     "/admin/cases/{case_id}",
     summary="Delete case (admin)",
 )
-async def delete_case(case_id: str) -> dict:
+async def delete_case(case_id: int) -> dict:
     """Delete case definition."""
     service = get_service()
     try:
