@@ -7,6 +7,19 @@ export interface SuggestionsRequest {
   assistantMessage: string;
 }
 
+export interface QAContentRequest {
+  chatId: string;
+  userMessage: string;
+}
+
+export interface QAContentResponse {
+  success: boolean;
+  qa_content?: {
+    user_message: string;
+    assistant_response: string;
+  };
+}
+
 interface SuggestionsResponse {
   returnCode?: string;
   errorMsg?: string;
@@ -94,5 +107,37 @@ export async function fetchSuggestions(
   } catch (error) {
     console.error("[Suggestions] API request error:", error);
     return [];
+  }
+}
+
+/**
+ * 从后端获取提取的 Q&A 内容
+ * 用于生成猜你想问建议
+ */
+export async function fetchQAContent(
+  request: QAContentRequest,
+): Promise<QAContentResponse> {
+  try {
+    const baseUrl = window.__env__.baseUrl || "";
+    const apiUrl = `${baseUrl}/api/console/suggestions/qa-content`;
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(),
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      console.error("[Suggestions] fetchQAContent failed:", response.status);
+      return { success: false };
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("[Suggestions] fetchQAContent error:", error);
+    return { success: false };
   }
 }

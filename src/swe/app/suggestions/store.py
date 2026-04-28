@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 # Per-session suggestion storage: session_id -> list of suggestions
@@ -16,6 +18,21 @@ _session_suggestions: Dict[str, List[Dict[str, Any]]] = {}
 _lock = asyncio.Lock()
 _MAX_AGE_SECONDS = 60  # 建议有效期60秒
 _MAX_SUGGESTIONS_PER_SESSION = 10  # 每个session最多存储的建议数
+
+# Q&A 内容存储：chat_id -> {user_message_hash: QAContentEntry}
+_qa_content_store: Dict[str, Dict[str, Any]] = {}
+_QA_MAX_AGE_SECONDS = 120  # Q&A 内容有效期120秒
+
+
+@dataclass
+class QAContentEntry:
+    """Q&A 内容条目."""
+
+    user_message: str  # 提取后的用户问题
+    user_message_hash: str  # 用户问题的 hash
+    assistant_response: str  # 提取后的助手回答
+    ts: float  # 存储时间戳
+    tenant_id: str  # 租户 ID
 
 
 async def store_suggestions(
@@ -124,4 +141,83 @@ def get_stats() -> Dict[str, Any]:
             session_id: len(suggestions)
             for session_id, suggestions in _session_suggestions.items()
         },
+        "qa_content_count": len(_qa_content_store),
     }
+
+
+def _hash_user_message(user_message: str) -> str:
+    """生成用户问题的唯一 hash."""
+    # 取前200字符避免长问题影响性能，并标准化
+    normalized = user_message.strip().lower()[:200]
+    return hashlib.md5(normalized.encode()).hexdigest()
+
+
+async def store_qa_content(
+    chat_id: str,
+    user_message: str,
+    assistant_response: str,
+    tenant_id: Optional[str] = None,
+    max_age_seconds: int = _QA_MAX_AGE_SECONDS,
+) -> None:
+    """存储 Q&A 内容到 (chat_id, user_message_hash)."""
+    if not chat_id or not user_message or not assistant_response:
+        return
+
+    user_message_hash = _hash_user_message(user_message)
+    entry = {
+        "user_message": user_message,
+        "user_message_hash": user_message_hash,
+        "assistant_response": assistant_response,
+        "ts": time.time(),
+        "tenant_id": tenant_id or "default",
+    }
+
+    async with _lock:
+        if chat_id not in _qa_content_store:
+            _qa_content_store[chat_id] = {}
+        _qa_content_store[chat_id][user_message_hash] = entry
+        # 清理过期数据
+        _prune_qa_content(chat_id, max_age_seconds)
+
+
+async def get_qa_content(
+    chat_id: str,
+    user_message: str,
+    tenant_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """根据用户问题查询 Q&A 内容."""
+    if not chat_id or not user_message:
+        return None
+
+    user_message_hash = _hash_user_message(user_message)
+
+    async with _lock:
+        entries = _qa_content_store.get(chat_id, {})
+        entry = entries.get(user_message_hash)
+        if entry and entry.get("tenant_id") == (tenant_id or "default"):
+            # 检查是否过期
+            if entry.get("ts", 0) >= time.time() - _QA_MAX_AGE_SECONDS:
+                return {
+                    "user_message": entry["user_message"],
+                    "assistant_response": entry["assistant_response"],
+                }
+        return None
+
+
+def _prune_qa_content(
+    chat_id: str,
+    max_age_seconds: int = _QA_MAX_AGE_SECONDS,
+) -> None:
+    """清理过期的 Q&A 内容（就地清理，需在锁内调用）."""
+    if chat_id not in _qa_content_store:
+        return
+    cutoff = time.time() - max_age_seconds
+    entries = _qa_content_store[chat_id]
+    expired_hashes = [
+        h for h, e in entries.items() if e.get("ts", 0) < cutoff
+    ]
+    for h in expired_hashes:
+        del entries[h]
+    # 如果该 chat_id 下无数据，清理整个字典
+    if not entries:
+        del _qa_content_store[chat_id]

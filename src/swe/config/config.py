@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import shortuuid
@@ -358,6 +359,14 @@ class MemorySummaryConfig(BaseModel):
     )
 
 
+class SuggestionMode(str, Enum):
+    """猜你想问生成模式."""
+
+    DISABLED = "disabled"  # 完全禁用
+    BACKEND_GENERATE = "backend_generate"  # 后端生成（原有模式）
+    QA_EXTRACTION_ONLY = "qa_extraction_only"  # 仅提取 Q&A（新模式）
+
+
 class SuggestionConfig(BaseModel):
     """猜你想问功能配置 - 在模型回答后异步生成后续问题建议."""
 
@@ -366,6 +375,10 @@ class SuggestionConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="是否启用猜你想问功能",
+    )
+    mode: SuggestionMode = Field(
+        default=SuggestionMode.QA_EXTRACTION_ONLY,
+        description="猜你想问生成模式",
     )
     max_suggestions: int = Field(
         default=3,
@@ -390,6 +403,18 @@ class SuggestionConfig(BaseModel):
         ge=200,
         le=2000,
         description="助手回答截断长度（字符）",
+    )
+    qa_content_total_max_length: int = Field(
+        default=1500,
+        ge=500,
+        le=3000,
+        description="Q&A 内容总长度上限（字符）",
+    )
+    qa_content_max_age_seconds: int = Field(
+        default=120,
+        ge=30,
+        le=300,
+        description="Q&A 内容存储有效期（秒）",
     )
 
 
