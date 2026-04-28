@@ -109,9 +109,9 @@
 // 第一屏：平台使用情况
 // ============================================================
 .sectionTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1a1a2e;
+  font-size: 14px;
+  font-weight: 500;
+  color: #262626;
   margin: 0 0 16px 0;
   display: flex;
   align-items: center;
@@ -125,22 +125,17 @@
 
 .statCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px 20px;
   min-height: 110px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  transition: box-shadow 0.2s;
-
-  &:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  }
 
   .statLabel {
     font-size: 13px;
-    color: #666;
+    color: #8c8c8c;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -158,14 +153,14 @@
 
   .statValue {
     font-size: 28px;
-    font-weight: 700;
-    color: #1a1a2e;
+    font-weight: 600;
+    color: #262626;
     line-height: 1.2;
 
     .suffix {
       font-size: 14px;
       font-weight: 400;
-      color: #999;
+      color: #8c8c8c;
       margin-left: 4px;
     }
   }
@@ -181,11 +176,11 @@
     }
 
     &.negative {
-      color: #ff4d4f;
+      color: #f5222d;
     }
 
     &.neutral {
-      color: #999;
+      color: #8c8c8c;
     }
   }
 }
@@ -201,17 +196,17 @@
 
 .distributionCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   height: 340px;
   display: flex;
   flex-direction: column;
 
   .cardTitle {
-    font-size: 15px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-size: 14px;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
     flex-shrink: 0;
   }
@@ -225,6 +220,66 @@
   padding: 8px 0;
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+// 饼图悬浮 Tooltip
+.pieChartTooltip {
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+// 饼图SVG样式
+.pieSvg {
+  overflow: visible;
+}
+
+// 饼图扇形组
+.pieSlice {
+  cursor: pointer;
+  transition: filter 0.1s ease;
+
+  &:hover {
+    filter: brightness(1.15) drop-shadow(0 3px 8px rgba(0, 0, 0, 0.25));
+  }
+}
+
+// 饼图扇形路径
+.pieSlicePath {
+  transition: opacity 0.1s ease;
+  stroke: #fff;
+  stroke-width: 2px;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+// 折线图数据点
+.lineChartPoint {
+  cursor: pointer;
+  transition: r 0.2s ease, filter 0.2s ease;
+
+  &:hover {
+    r: 8;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  }
+}
+
+// 通用数据点样式
+.dataPoint {
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+  }
 }
 
 // 饼图图例
@@ -232,20 +287,33 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
-  margin-top: 8px;
+  margin-top: 12px;
   justify-content: center;
 
   .legendItem {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: #666;
+    gap: 6px;
+    font-size: 12px;
+    color: #595959;
+    cursor: pointer;
+
+    &:hover {
+      color: #1890ff;
+    }
+
+    .legendBlock {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
 
     .legendDot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
+      flex-shrink: 0;
     }
   }
 }
@@ -265,22 +333,24 @@
 
 .metricCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e8e8e8;
+  border-left-width: 3px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 
   .metricLabel {
-    font-size: 13px;
-    color: #666;
+    font-size: 12px;
+    color: #8c8c8c;
   }
 
   .metricValue {
-    font-size: 24px;
-    font-weight: 700;
-    color: #1a1a2e;
+    font-size: 28px;
+    font-weight: 600;
+    color: #262626;
+    margin: 8px 0;
 
     .metricUnit {
       font-size: 14px;
@@ -290,14 +360,14 @@
   }
 
   .metricChange {
-    font-size: 11px;
+    font-size: 12px;
 
     &.positive {
       color: #52c41a;
     }
 
     &.negative {
-      color: #ff4d4f;
+      color: #f5222d;
     }
   }
 }
@@ -307,9 +377,9 @@
 // ============================================================
 .trendCard {
   background: #fff;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+  padding: 16px 12px;
   margin-bottom: 24px;
 
   .trendHeader {
@@ -319,9 +389,9 @@
     margin-bottom: 16px;
 
     .trendTitle {
-      font-size: 16px;
-      font-weight: 600;
-      color: #1a1a2e;
+      font-size: 14px;
+      font-weight: 500;
+      color: #262626;
       margin: 0;
     }
 
@@ -334,12 +404,11 @@
         align-items: center;
         gap: 6px;
         font-size: 12px;
-        color: #666;
+        color: #8c8c8c;
 
         .legendLine {
-          width: 12px;
-          height: 3px;
-          border-radius: 2px;
+          width: 20px;
+          height: 2px;
         }
       }
     }
@@ -349,6 +418,44 @@
 .trendChartContainer {
   height: 280px;
   position: relative;
+  cursor: crosshair;
+}
+
+// 折线图悬浮 Tooltip
+.lineChartTooltip {
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  border: 1px solid #e8e8e8;
+  pointer-events: none;
+  z-index: 1000;
+  min-width: 140px;
+
+  .tooltipDate {
+    font-size: 12px;
+    font-weight: 600;
+    color: #262626;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .tooltipRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #595959;
+    margin-top: 4px;
+  }
+
+  .tooltipDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
 }
 
 // 简单的折线图实现
@@ -371,20 +478,106 @@
 
 .skillCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   height: 340px;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 
   .cardTitle {
     font-size: 14px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
     flex-shrink: 0;
   }
+}
+
+// 柱状图容器
+.barChartContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 4px 0;
+  min-height: 0;
+  overflow: visible;
+  position: relative;
+
+  .barItem {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+
+    &:hover {
+      transform: translateX(4px);
+
+      .barTrack .barFill {
+        filter: brightness(1.1);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      }
+
+      .barLabelRow .barLabel {
+        color: #1890ff;
+      }
+    }
+
+    .barLabelRow {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 2px;
+
+      .barLabel {
+        font-size: 12px;
+        color: #595959;
+        transition: color 0.2s ease;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .barLabelValue {
+        font-size: 12px;
+        font-weight: 600;
+        color: #333;
+        margin-left: 12px;
+        flex-shrink: 0;
+      }
+    }
+
+    .barTrack {
+      height: 16px;
+      background: #f0f0f0;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+
+      .barFill {
+        height: 100%;
+        border-radius: 4px;
+        transition: all 0.3s ease;
+      }
+    }
+  }
+}
+
+// 柱状图悬浮 Tooltip
+.barChartTooltip {
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 1000;
+  white-space: nowrap;
 }
 
 .skillList {
@@ -454,14 +647,14 @@
 
 .userCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 
   .cardTitle {
     font-size: 14px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
   }
 }
@@ -562,73 +755,6 @@
       text-align: left;
       min-width: 130px;
       font-variant-numeric: tabular-nums;
-    }
-  }
-}
-
-// ============================================================
-// 第六屏：能力表现
-// ============================================================
-.skillCard {
-  background: #fff;
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-
-  .cardTitle {
-    font-size: 14px;
-    font-weight: 600;
-    color: #1a1a2e;
-    margin-bottom: 12px;
-  }
-}
-
-.barChartContainer {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 12px;
-  padding: 8px 0;
-  min-height: 0;
-
-  .barItem {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-
-    .barLabel {
-      width: 80px;
-      font-size: 12px;
-      color: #666;
-      text-align: left;
-      flex-shrink: 0;
-      padding-left: 4px;
-    }
-
-    .barTrack {
-      flex: 1;
-      height: 28px;
-      background: #f0f0f0;
-      border-radius: 4px;
-      overflow: hidden;
-      position: relative;
-
-      .barFill {
-        height: 100%;
-        border-radius: 4px;
-        transition: width 0.3s ease;
-      }
-
-      .barValue {
-        position: absolute;
-        right: 8px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 12px;
-        font-weight: 500;
-        color: #666;
-      }
     }
   }
 }
