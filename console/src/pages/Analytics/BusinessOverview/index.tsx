@@ -136,7 +136,7 @@ export default function BusinessOverviewPage() {
       const [overviewRes, growthRes, channelRes, trendRes, usersRes] = await Promise.allSettled([
         tracingApi.getOverview(startStr, endStr, filterSourceId),
         tracingApi.getGrowthStats(startStr, endStr, timeRange, filterSourceId),
-        tracingApi.getChannelDistribution(platform, startStr, endStr), // 受平台筛选影响
+        tracingApi.getChannelDistribution(filterSourceId, startStr, endStr), // 受平台筛选影响
         tracingApi.getDailyTrend(trendStartStr, trendEndStr, filterSourceId), // 始终近30天
         tracingApi.getUsers(1, 5, { start_date: startStr, end_date: endStr, source_id: filterSourceId }),
       ]);
