@@ -53,17 +53,45 @@
 - 便于复杂查询（聚合、关联）
 - 支持事务保证数据一致性
 
+## 技能菜单与技能池菜单
+
+系统中存在两个技能管理入口，作用于不同层级：
+
+| 维度 | 技能菜单 (Workspace Skills) | 技能池菜单 (Skill Pool) |
+|------|---------------------------|------------------------|
+| **作用域** | Agent/Workspace 级别 | Tenant 租户级别 |
+| **存储位置** | `~/.swe/{tenant}/agents/{agent_id}/skills/` | `~/.swe/{tenant}/skill_pool/` |
+| **使用范围** | 仅该 Agent 使用 | 可分发到多个 Agent/Workspace |
+| **核心功能** | 创建、编辑、删除、启用/禁用 | 创建、编辑、广播、下载到 Workspace |
+| **特色功能** | 上传到技能池、从 Hub 导入 | 广播到其他租户、下载到多个 Workspace |
+
+**广播接收逻辑**：接收方收到广播时，技能会**同时写入技能池和默认 Agent 的 Workspace**。
+
+因此统计时需要区分 Pool 和 Workspace 的操作，但 `skill_receive` 只记一条，用 `extra` 字段记录影响范围。
+
 ## 操作类型定义
 
-### 技能相关
+### Workspace 技能相关
 
 | 操作类型 | 说明 | 触发时机 |
 |---------|------|---------|
-| `skill_create` | 创建技能 | 用户主动创建技能成功 |
-| `skill_receive` | 接收广播技能 | 用户接收他人广播的技能 |
-| `skill_edit` | 编辑技能 | 用户编辑技能成功（不区分来源） |
-| `skill_delete` | 删除技能 | 用户删除技能成功 |
-| `skill_import` | 导入技能 | 用户从技能库导入技能成功 |
+| `skill_create` | Workspace 创建技能 | 用户在技能菜单手动创建 |
+| `skill_edit` | Workspace 编辑技能 | 用户在技能菜单编辑 |
+| `skill_delete` | Workspace 删除技能 | 用户在技能菜单删除 |
+| `skill_import` | 从 Hub 导入到 Workspace | 用户从技能库导入到 Workspace |
+| `skill_download_from_pool` | 从 Pool 下载 | 从技能池下载到 Workspace |
+| `skill_upload_to_pool` | 上传到 Pool | 从 Workspace 上传到技能池 |
+
+### Pool 技能相关
+
+| 操作类型 | 说明 | 触发时机 |
+|---------|------|---------|
+| `pool_skill_create` | Pool 创建技能 | 用户在技能池菜单创建 |
+| `pool_skill_edit` | Pool 编辑技能 | 用户在技能池菜单编辑 |
+| `pool_skill_delete` | Pool 删除技能 | 用户在技能池菜单删除 |
+| `pool_skill_broadcast` | 广播技能 | 发送方广播技能到其他租户 |
+| `pool_skill_import` | 从 Hub 导入到 Pool | 用户从技能库导入到 Pool |
+| `skill_receive` | 接收广播技能 | 接收方收到广播（同时写入 Pool + Workspace） |
 
 ### 定时任务相关
 
@@ -74,6 +102,14 @@
 | `cron_delete` | 删除定时任务 | 用户删除定时任务成功 |
 | `cron_enable` | 启用定时任务 | 用户启用定时任务 |
 | `cron_disable` | 禁用定时任务 | 用户禁用定时任务 |
+
+### 统计聚合示例
+
+| 指标 | 聚合公式 |
+|------|---------|
+| 接收广播技能数 | `COUNT(skill_receive)` |
+| Pool 技能增量 | `pool_skill_create + pool_skill_import + skill_receive + skill_upload_to_pool - pool_skill_delete` |
+| Workspace 技能增量 | `skill_create + skill_import + skill_receive + skill_download_from_pool - skill_delete` |
 
 ## 数据模型
 
@@ -134,12 +170,20 @@ from datetime import datetime
 from typing import Optional, Any
 
 class OperationType(str, Enum):
-    # 技能相关
+    # Workspace 技能相关
     SKILL_CREATE = "skill_create"
-    SKILL_RECEIVE = "skill_receive"
     SKILL_EDIT = "skill_edit"
     SKILL_DELETE = "skill_delete"
     SKILL_IMPORT = "skill_import"
+    SKILL_DOWNLOAD_FROM_POOL = "skill_download_from_pool"
+    SKILL_UPLOAD_TO_POOL = "skill_upload_to_pool"
+    # Pool 技能相关
+    POOL_SKILL_CREATE = "pool_skill_create"
+    POOL_SKILL_EDIT = "pool_skill_edit"
+    POOL_SKILL_DELETE = "pool_skill_delete"
+    POOL_SKILL_BROADCAST = "pool_skill_broadcast"
+    POOL_SKILL_IMPORT = "pool_skill_import"
+    SKILL_RECEIVE = "skill_receive"
     # 定时任务相关
     CRON_CREATE = "cron_create"
     CRON_EDIT = "cron_edit"
@@ -233,13 +277,32 @@ class UserOperationManager:
 
 在以下后端 API 中调用 `UserOperationManager.record()`：
 
+#### Workspace 技能操作
+
 | API | 记录操作 |
 |-----|---------|
 | `POST /skills/workspace/{agent_id}` | `skill_create` |
 | `PUT /skills/workspace/{agent_id}/{skill_name}` | `skill_edit` |
 | `DELETE /skills/workspace/{agent_id}/{skill_name}` | `skill_delete` |
-| `POST /skills/pool/import` | `skill_import` |
-| 技能广播接收逻辑 | `skill_receive` |
+| `POST /skills/workspace/{agent_id}/import` | `skill_import` |
+| `POST /skills/pool/download` | `skill_download_from_pool` |
+| `POST /skills/pool/upload` | `skill_upload_to_pool` |
+
+#### Pool 技能操作
+
+| API | 记录操作 |
+|-----|---------|
+| `POST /skills/pool` | `pool_skill_create` |
+| `PUT /skills/pool/{skill_name}` | `pool_skill_edit` |
+| `DELETE /skills/pool/{skill_name}` | `pool_skill_delete` |
+| `POST /skills/pool/import` | `pool_skill_import` |
+| `POST /skills/pool/broadcast/default-agents` | `pool_skill_broadcast`（发送方） |
+| 广播接收逻辑 `_broadcast_default_agents` | `skill_receive`（接收方，extra 记录 target_pool/target_workspace） |
+
+#### 定时任务操作
+
+| API | 记录操作 |
+|-----|---------|
 | `POST /crons` | `cron_create` |
 | `PUT /crons/{job_id}` | `cron_edit` |
 | `DELETE /crons/{job_id}` | `cron_delete` |
