@@ -14,7 +14,7 @@ export interface QuestionInfo {
  * ConversationQuickNav 组件 Props
  */
 export interface ConversationQuickNavProps {
-  /** 最小问题数量才显示（默认 2） */
+  /** 最小问题数量才显示（默认 1） */
   minQuestions?: number;
 }
 

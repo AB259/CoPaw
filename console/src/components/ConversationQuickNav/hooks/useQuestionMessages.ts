@@ -14,10 +14,10 @@ interface QuestionInfo {
 /**
  * 获取用户问题消息列表（只包含已加载到DOM的消息）
  *
- * @param minQuestions 最小问题数量才显示（默认 2）
+ * @param minQuestions 最小问题数量才显示（默认 1）
  * @returns QuestionInfo 数组和显示状态
  */
-export function useQuestionMessages(minQuestions = 2) {
+export function useQuestionMessages(minQuestions = 1) {
   const messages = useContextSelector(
     ChatAnywhereMessagesContext,
     (v) => v.messages,

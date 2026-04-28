@@ -7,7 +7,7 @@ import { ConversationQuickNavProps } from "./types";
 import Style from "./style";
 
 export default function ConversationQuickNav({
-  minQuestions = 2,
+  minQuestions = 1,
 }: ConversationQuickNavProps) {
   const { questions, shouldShow } = useQuestionMessages(minQuestions);
   const { scrollToMessage } = useScrollToMessage();
