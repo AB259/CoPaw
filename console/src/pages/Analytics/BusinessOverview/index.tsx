@@ -4,13 +4,9 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { useTranslation } from "react-i18next";
 import { Row, Col, Tooltip, Select, DatePicker, message } from "antd";
 import {
   Users,
-  Building2,
-  Puzzle,
-  Zap,
   Clock,
   TrendingUp,
   TrendingDown,
@@ -22,12 +18,9 @@ import {
   formatNumber,
   formatTokens,
   formatChange,
-  formatDuration,
   truncateName,
   type UserRow,
-  type SkillRow,
   type TimeRange,
-  type PlatformType,
 } from "./types";
 
 const { Option } = Select;
@@ -49,12 +42,11 @@ const BAR_COLORS = [
   "linear-gradient(90deg, #1890ff 0%, #69c0ff 100%)",
   "linear-gradient(90deg, #52c41a 0%, #95de64 100%)",
   "linear-gradient(90deg, #faad14 0%, #ffe58f 100%)",
-  "linear-gradient(90deg, #f5222d 0%, #ff7875 100%)",
   "linear-gradient(90deg, #722ed1 0%, #b37feb 100%)",
+  "linear-gradient(90deg, #e866a8 0%, #f0a0c0 100%)",
 ];
 
 export default function BusinessOverviewPage() {
-  const { t } = useTranslation();
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
   const [startDate, setStartDate] = useState<dayjs.Dayjs>(dayjs());
   const [endDate, setEndDate] = useState<dayjs.Dayjs>(dayjs());
@@ -64,7 +56,6 @@ export default function BusinessOverviewPage() {
   const [sources, setSources] = useState<string[]>([]);
 
   // 数据状态
-  const [loading, setLoading] = useState(false);
   const [overviewStats, setOverviewStats] = useState<any>(null);
   const [growthStats, setGrowthStats] = useState({
     callsGrowth: 0,
@@ -123,7 +114,6 @@ export default function BusinessOverviewPage() {
 
   // 获取数据
   const fetchData = useCallback(async () => {
-    setLoading(true);
     const startStr = startDate.format("YYYY-MM-DD");
     const endStr = endDate.format("YYYY-MM-DD");
     // 用于筛选的 source_id（"all" 表示不筛选，其他值表示筛选特定平台）
@@ -138,12 +128,12 @@ export default function BusinessOverviewPage() {
     try {
       // 并行请求所有数据
       // 核心运营指标、趋势、模型分布、用户分析等需要根据平台筛选
-      // 平台用户分布和平台调用次数分布不筛选（显示所有平台）
+      // 平台用户分布和平台调用次数分布也受平台筛选影响
       // 趋势图始终使用近30天数据
       const [overviewRes, growthRes, channelRes, trendRes, usersRes] = await Promise.allSettled([
         tracingApi.getOverview(startStr, endStr, filterSourceId),
         tracingApi.getGrowthStats(startStr, endStr, timeRange, filterSourceId),
-        tracingApi.getChannelDistribution("all", startStr, endStr), // 始终显示所有平台的分布
+        tracingApi.getChannelDistribution(platform, startStr, endStr), // 受平台筛选影响
         tracingApi.getDailyTrend(trendStartStr, trendEndStr, filterSourceId), // 始终近30天
         tracingApi.getUsers(1, 5, { start_date: startStr, end_date: endStr, source_id: filterSourceId }),
       ]);
@@ -184,8 +174,6 @@ export default function BusinessOverviewPage() {
     } catch (error) {
       console.error("Failed to fetch data:", error);
       message.error("获取数据失败");
-    } finally {
-      setLoading(false);
     }
   }, [startDate, endDate, timeRange, platform]);
 
@@ -289,47 +277,6 @@ export default function BusinessOverviewPage() {
     platformUserDistribution: channelDistribution.platformUserDistribution,
     platformCallDistribution: channelDistribution.platformCallDistribution,
   };
-
-  // ============================================================
-  // 渲染：统计卡片
-  // ============================================================
-  const renderStatCard = (
-    label: string,
-    value: number,
-    change: number,
-    icon: React.ReactNode,
-    color: string,
-  ) => (
-    <Col xs={24} sm={12} lg={6}>
-      <div className={styles.statCard}>
-        <div className={styles.statLabel}>
-          <span
-            className={styles.icon}
-            style={{ background: `${color}15`, color }}
-          >
-            {icon}
-          </span>
-          <span>{label}</span>
-        </div>
-        <div className={styles.statValue}>{formatNumber(value)}</div>
-        <div
-          className={`${styles.statChange} ${
-            change > 0
-              ? styles.positive
-              : change < 0
-              ? styles.negative
-              : styles.neutral
-          }`}
-        >
-          {change > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-          <span>{formatChange(change)}</span>
-          <span style={{ marginLeft: 4, color: "#999", fontWeight: 400 }}>
-            环比
-          </span>
-        </div>
-      </div>
-    </Col>
-  );
 
   // ============================================================
   // 渲染：饼图（使用 SVG 实现简单饼图）
@@ -621,37 +568,6 @@ export default function BusinessOverviewPage() {
   };
 
   // ============================================================
-  // 渲染：技能列表
-  // ============================================================
-  const renderSkillList = (skills: SkillRow[], metric: "calls" | "tokens") => (
-    <div className={styles.skillList}>
-      {skills.map((skill, index) => (
-        <div key={skill.name} className={styles.skillItem}>
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
-          >
-            {index + 1}
-          </span>
-          <span className={styles.skillName}>{skill.name}</span>
-          <span className={styles.skillValue}>
-            {metric === "calls"
-              ? formatNumber(skill.calls)
-              : formatTokens(skill.tokens)}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-
-  // ============================================================
   // 渲染：用户列表
   // ============================================================
   const renderUserList = (users: UserRow[], metric: "calls" | "lastActive") => (
@@ -861,9 +777,9 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>🛠️ 热门工具 Top5</div>
+            <div className={styles.cardTitle}>🛠️ 热门MCP服务 Top5</div>
             {renderBarChart(
-              (overviewStats?.top_mcp_tools || []).slice(0, 5).map((t: any) => ({ name: truncateName(t.tool_name, 18), value: t.count })),
+              (overviewStats?.mcp_servers || []).slice(0, 5).map((s: any) => ({ name: truncateName(s.server_name, 18), value: s.total_calls })),
             )}
           </div>
         </Col>
@@ -943,14 +859,14 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.distributionRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📱 平台用户分布</div>
+            <div className={styles.cardTitle}>📱 平台用户分布{platform !== "all" ? ` · ${platform}` : ""}</div>
             {renderPieChart(platformData.platformUserDistribution)}
             {renderLegend(platformData.platformUserDistribution)}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📞 平台调用次数分布</div>
+            <div className={styles.cardTitle}>📞 平台调用次数分布{platform !== "all" ? ` · ${platform}` : ""}</div>
             {renderPieChart(platformData.platformCallDistribution)}
             {renderLegend(platformData.platformCallDistribution)}
           </div>
