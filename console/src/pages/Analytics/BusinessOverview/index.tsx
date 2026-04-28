@@ -220,21 +220,8 @@ export default function BusinessOverviewPage() {
   const disabledStartDate = (current: dayjs.Dayjs | null): boolean => {
     if (!current) return false;
     const today = dayjs().startOf("day");
-    // 禁用未来日期
-    if (current.isAfter(today, "day")) {
-      return true;
-    }
-    // 周模式：起始日期不能太早（确保有完整的7天范围在今天之前）
-    if (timeRange === "week") {
-      const minStart = today.subtract(6, "day");
-      return current.isBefore(minStart, "day");
-    }
-    // 月模式：起始日期不能太早（确保有完整的30天范围在今天之前）
-    if (timeRange === "month") {
-      const minStart = today.subtract(29, "day");
-      return current.isBefore(minStart, "day");
-    }
-    return false;
+    // 只禁用未来日期，允许选择任意历史日期
+    return current.isAfter(today, "day");
   };
 
   // 禁用不符合时间范围要求的日期（结束日期）
