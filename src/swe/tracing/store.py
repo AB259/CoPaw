@@ -36,6 +36,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# 需要从统计中排除的 source_id（测试平台等）
+EXCLUDED_SOURCE_IDS = ["default"]
+
 
 def _matches_trace_filters(
     trace: Trace,
@@ -517,7 +520,9 @@ class TraceStore:
 
         # If source_id is "all", get distribution across all sources
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT
                     source_id,
                     COUNT(DISTINCT user_id) as user_count,
@@ -526,10 +531,13 @@ class TraceStore:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id IS NOT NULL AND source_id != ''
+                  AND source_id NOT IN ({exclude_placeholders})
                 GROUP BY source_id
                 ORDER BY call_count DESC
             """
-            rows = await self.db.fetch_all(query, (start_date, end_date))
+            rows = await self.db.fetch_all(
+                query, (start_date, end_date, *EXCLUDED_SOURCE_IDS)
+            )
         else:
             query = """
                 SELECT
@@ -578,7 +586,7 @@ class TraceStore:
             end_date: Optional end date filter
 
         Returns:
-            List of source_id strings
+            List of source_id strings (excluding test platforms)
         """
         if self.db is None or not self.db.is_connected:
             logger.error("Database not connected in get_sources")
@@ -589,14 +597,19 @@ class TraceStore:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        query = """
+        # 构建排除测试平台的条件
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        query = f"""
             SELECT DISTINCT source_id
             FROM swe_tracing_traces
             WHERE start_time >= %s AND start_time <= %s
               AND source_id IS NOT NULL AND source_id != ''
+              AND source_id NOT IN ({exclude_placeholders})
             ORDER BY source_id
         """
-        rows = await self.db.fetch_all(query, (start_date, end_date))
+        rows = await self.db.fetch_all(query, (start_date, end_date, *EXCLUDED_SOURCE_IDS))
+        return [row["source_id"] for row in rows]
         return [row["source_id"] for row in rows]
 
     async def get_growth_stats(
@@ -775,11 +788,16 @@ class TraceStore:
         """
         # Build where clauses based on source_id
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            where_clauses: list[str] = [f"source_id NOT IN ({exclude_placeholders})"]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
+
+        # 排除测试用户
+        where_clauses.append("user_id != 'default'")
 
         if user_id:
             where_clauses.append("user_id LIKE %s")
@@ -1728,19 +1746,26 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> int:
-        """Get total users count."""
+        """Get total users count (excluding test users)."""
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT COUNT(DISTINCT user_id) as total_users
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
             """
-            row = await self.db.fetch_one(query, (start_date, end_date))
+            row = await self.db.fetch_one(
+                query, (start_date, end_date, *EXCLUDED_SOURCE_IDS)
+            )
         else:
             query = """
                 SELECT COUNT(DISTINCT user_id) as total_users
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
             """
             row = await self.db.fetch_one(query, (source_id, start_date, end_date))
         result = row["total_users"] if row else 0
@@ -1779,9 +1804,11 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> Optional[dict]:
-        """Get token statistics."""
+        """Get token statistics (excluding test platforms)."""
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT
                     SUM(total_input_tokens) as input_tokens,
                     SUM(total_output_tokens) as output_tokens,
@@ -1791,8 +1818,11 @@ class TraceStore:
                     AVG(duration_ms) as avg_duration
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
             """
-            return await self.db.fetch_one(query, (start_date, end_date))
+            return await self.db.fetch_one(
+                query, (start_date, end_date, *EXCLUDED_SOURCE_IDS)
+            )
         else:
             query = """
                 SELECT

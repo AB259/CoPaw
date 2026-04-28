@@ -27,10 +27,26 @@ import {
   type UserRow,
   type SkillRow,
   type TimeRange,
-  type PlatformType,
 } from "./types";
 
 const { Option } = Select;
+
+// 平台名称映射（source_id -> 中文名称）
+const PLATFORM_NAME_MAP: Record<string, string> = {
+  CMSJY: "远程RM小助Claw版",
+  UPPCLAW: "智像小助CLAW",
+  copilotClaw: "数据赋能小助CLAW",
+  ruice: "睿策小助Claw版",
+  privatebanking: "私行小助claw",
+  SZLS: "数智零售claw",
+  rtauto: "实时数据CLAW",
+  RMASSIST: "RM小助",
+};
+
+// 获取平台显示名称
+const getPlatformDisplayName = (sourceId: string): string => {
+  return PLATFORM_NAME_MAP[sourceId] || sourceId;
+};
 
 // 颜色配置
 const CHART_COLORS = [
@@ -208,8 +224,8 @@ export default function BusinessOverviewPage() {
     }
   };
 
-  // 禁用不符合时间范围要求的日期
-  const disabledDate = (current: dayjs.Dayjs | null): boolean => {
+  // 禁用不符合时间范围要求的日期（开始日期）
+  const disabledStartDate = (current: dayjs.Dayjs | null): boolean => {
     if (!current) return false;
     const today = dayjs().startOf("day");
     // 禁用未来日期
@@ -225,6 +241,21 @@ export default function BusinessOverviewPage() {
     if (timeRange === "month") {
       const minStart = today.subtract(29, "day");
       return current.isBefore(minStart, "day");
+    }
+    return false;
+  };
+
+  // 禁用不符合时间范围要求的日期（结束日期）
+  const disabledEndDate = (current: dayjs.Dayjs | null): boolean => {
+    if (!current) return false;
+    const today = dayjs().startOf("day");
+    // 禁用未来日期
+    if (current.isAfter(today, "day")) {
+      return true;
+    }
+    // 自定义模式：结束日期不能早于开始日期
+    if (timeRange === "custom" && current.isBefore(startDate, "day")) {
+      return true;
     }
     return false;
   };
@@ -247,13 +278,22 @@ export default function BusinessOverviewPage() {
       const monthStart = today.subtract(29, "day");
       setStartDate(monthStart);
       setEndDate(today);
+    } else if (mode === "custom") {
+      // 自定义模式：默认显示最近7天，用户可以手动调整
+      const customStart = today.subtract(6, "day");
+      setStartDate(customStart);
+      setEndDate(today);
     }
-    // custom 模式不自动调整日期，用户手动选择
   };
 
   // 处理结束日期变化
   const handleEndDateChange = (date: dayjs.Dayjs | null) => {
     if (date) {
+      // 确保结束日期不早于开始日期
+      if (date.isBefore(startDate, "day")) {
+        message.warning("结束日期不能早于开始日期");
+        return;
+      }
       setEndDate(date);
     }
   };
@@ -335,7 +375,7 @@ export default function BusinessOverviewPage() {
   // 渲染：饼图（使用 SVG 实现简单饼图）
   // ============================================================
   const renderPieChart = (
-    chartData: { name: string; value: number }[],
+    chartData: { name: string; fullName?: string; value: number }[],
   ) => {
     const total = chartData.reduce((sum, item) => sum + item.value, 0);
     const radius = 70;
@@ -362,6 +402,8 @@ export default function BusinessOverviewPage() {
 
       const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
 
+      const fullName = item.fullName || item.name;
+
       return (
         <path
           key={index}
@@ -371,7 +413,7 @@ export default function BusinessOverviewPage() {
           strokeWidth="2"
         >
           <title>
-            {item.name}: {item.value} ({(percentage * 100).toFixed(1)}%)
+            {fullName}: {item.value} ({(percentage * 100).toFixed(1)}%)
           </title>
         </path>
       );
@@ -389,28 +431,33 @@ export default function BusinessOverviewPage() {
   // ============================================================
   // 渲染：图例
   // ============================================================
-  const renderLegend = (chartData: { name: string; value: number }[]) => {
+  const renderLegend = (chartData: { name: string; fullName?: string; value: number }[]) => {
     const total = chartData.reduce((sum, item) => sum + item.value, 0);
     return (
       <div className={styles.pieLegend}>
-        {chartData.map((item, index) => (
-          <Tooltip
-            key={index}
-            title={`${item.value} (${((item.value / total) * 100).toFixed(
-              1,
-            )}%)`}
-          >
-            <span className={styles.legendItem}>
-              <span
-                className={styles.legendDot}
-                style={{
-                  background: CHART_COLORS[index % CHART_COLORS.length],
-                }}
-              />
-              <span>{item.name}</span>
-            </span>
-          </Tooltip>
-        ))}
+        {chartData.map((item, index) => {
+          const displayName = item.name;
+          const fullName = item.fullName || item.name;
+          const isTruncated = fullName !== displayName;
+          const statsInfo = `${item.value} (${((item.value / total) * 100).toFixed(1)}%)`;
+          const tooltipTitle = isTruncated ? `${fullName}\n${statsInfo}` : statsInfo;
+          return (
+            <Tooltip
+              key={index}
+              title={tooltipTitle}
+            >
+              <span className={styles.legendItem}>
+                <span
+                  className={styles.legendDot}
+                  style={{
+                    background: CHART_COLORS[index % CHART_COLORS.length],
+                  }}
+                />
+                <span>{displayName}</span>
+              </span>
+            </Tooltip>
+          );
+        })}
       </div>
     );
   };
@@ -589,7 +636,7 @@ export default function BusinessOverviewPage() {
   // 渲染：柱状图
   // ============================================================
   const renderBarChart = (
-    chartData: { name: string; value: number }[],
+    chartData: { name: string; fullName?: string; value: number }[],
     height: number = 220,
   ) => {
     const maxValue = Math.max(...chartData.map((d) => d.value));
@@ -598,9 +645,14 @@ export default function BusinessOverviewPage() {
       <div className={styles.barChartContainer} style={{ height }}>
         {chartData.map((item, index) => {
           const percentage = (item.value / maxValue) * 100;
+          const displayName = item.name;
+          const fullName = item.fullName || item.name;
+          const isTruncated = fullName !== displayName;
           return (
             <div key={index} className={styles.barItem}>
-              <span className={styles.barLabel}>{item.name}</span>
+              <Tooltip title={isTruncated ? fullName : undefined}>
+                <span className={styles.barLabel}>{displayName}</span>
+              </Tooltip>
               <div className={styles.barTrack}>
                 <div
                   className={styles.barFill}
@@ -732,7 +784,7 @@ export default function BusinessOverviewPage() {
               value={startDate}
               onChange={handleStartDateChange}
               format="YYYY-MM-DD"
-              disabledDate={disabledDate}
+              disabledDate={disabledStartDate}
             />
             <span className={styles.dateRangeArrow}>→</span>
             <DatePicker
@@ -741,6 +793,7 @@ export default function BusinessOverviewPage() {
               onChange={handleEndDateChange}
               disabled={timeRange !== "custom"}
               format="YYYY-MM-DD"
+              disabledDate={disabledEndDate}
             />
           </div>
         </div>
@@ -754,7 +807,7 @@ export default function BusinessOverviewPage() {
           <Option value="all">全部平台</Option>
           {sources.map((source) => (
             <Option key={source} value={source}>
-              {source}
+              {getPlatformDisplayName(source)}
             </Option>
           ))}
         </Select>
@@ -855,7 +908,11 @@ export default function BusinessOverviewPage() {
           <div className={styles.skillCard}>
             <div className={styles.cardTitle}>🔥 热门技能 Top5</div>
             {renderBarChart(
-              (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({ name: truncateName(s.skill_name, 18), value: s.count })),
+              (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({
+                name: truncateName(s.skill_name, 18),
+                fullName: s.skill_name,
+                value: s.count
+              })),
             )}
           </div>
         </Col>
@@ -863,7 +920,11 @@ export default function BusinessOverviewPage() {
           <div className={styles.skillCard}>
             <div className={styles.cardTitle}>🛠️ 热门工具 Top5</div>
             {renderBarChart(
-              (overviewStats?.top_mcp_tools || []).slice(0, 5).map((t: any) => ({ name: truncateName(t.tool_name, 18), value: t.count })),
+              (overviewStats?.top_mcp_tools || []).slice(0, 5).map((t: any) => ({
+                name: truncateName(t.tool_name, 11),
+                fullName: t.tool_name,
+                value: t.count
+              })),
             )}
           </div>
         </Col>
@@ -875,10 +936,18 @@ export default function BusinessOverviewPage() {
           <div className={styles.distributionCard}>
             <div className={styles.cardTitle}>🤖 模型使用分布</div>
             {renderPieChart(
-              (overviewStats?.model_distribution || []).map((m: any) => ({ name: truncateName(m.model_name, 18), value: m.count })),
+              (overviewStats?.model_distribution || []).map((m: any) => ({
+                name: truncateName(m.model_name, 11),
+                fullName: m.model_name,
+                value: m.count
+              })),
             )}
             {renderLegend(
-              (overviewStats?.model_distribution || []).map((m: any) => ({ name: truncateName(m.model_name, 15), value: m.count })),
+              (overviewStats?.model_distribution || []).map((m: any) => ({
+                name: truncateName(m.model_name, 15),
+                fullName: m.model_name,
+                value: m.count
+              })),
             )}
           </div>
         </Col>
@@ -889,7 +958,11 @@ export default function BusinessOverviewPage() {
               (overviewStats?.model_distribution || [])
                 .sort((a: any, b: any) => b.total_tokens - a.total_tokens)
                 .slice(0, 5)
-                .map((m: any) => ({ name: truncateName(m.model_name, 18), value: m.total_tokens })),
+                .map((m: any) => ({
+                  name: truncateName(m.model_name, 18),
+                  fullName: m.model_name,
+                  value: m.total_tokens
+                })),
               260,
             )}
           </div>
@@ -944,15 +1017,31 @@ export default function BusinessOverviewPage() {
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
             <div className={styles.cardTitle}>📱 平台用户分布</div>
-            {renderPieChart(platformData.platformUserDistribution)}
-            {renderLegend(platformData.platformUserDistribution)}
+            {renderPieChart(platformData.platformUserDistribution.map(item => ({
+              ...item,
+              name: getPlatformDisplayName(item.name),
+              fullName: item.name,
+            })))}
+            {renderLegend(platformData.platformUserDistribution.map(item => ({
+              ...item,
+              name: getPlatformDisplayName(item.name),
+              fullName: item.name,
+            })))}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
             <div className={styles.cardTitle}>📞 平台调用次数分布</div>
-            {renderPieChart(platformData.platformCallDistribution)}
-            {renderLegend(platformData.platformCallDistribution)}
+            {renderPieChart(platformData.platformCallDistribution.map(item => ({
+              ...item,
+              name: getPlatformDisplayName(item.name),
+              fullName: item.name,
+            })))}
+            {renderLegend(platformData.platformCallDistribution.map(item => ({
+              ...item,
+              name: getPlatformDisplayName(item.name),
+              fullName: item.name,
+            })))}
           </div>
         </Col>
       </Row>
