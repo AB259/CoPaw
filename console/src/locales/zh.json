@@ -701,6 +701,8 @@
     "distributeSuccessList": "已更新的租户：",
     "distributeFailureInlineHint": "部分租户失败，请查看失败详情对话框。",
     "distributePartialFailureTitle": "部分租户分发失败",
+    "distributeDirtyTitle": "存在未保存的修改",
+    "distributeDirtyHint": "当前有未保存的供应商配置或活动模型修改，请先保存后再进行分发。",
     "configureProvider": "配置 {{name}}",
     "baseURL": "基础 URL",
     "apiKey": "API 密钥",

@@ -729,6 +729,8 @@
     "distributeSuccessList": "Updated tenants:",
     "distributeFailureInlineHint": "Some tenants failed. Review the failure dialog for details.",
     "distributePartialFailureTitle": "Some tenants failed",
+    "distributeDirtyTitle": "Unsaved changes",
+    "distributeDirtyHint": "You have unsaved provider configuration or active model changes. Please save before distributing.",
     "configureProvider": "Configure {{name}}",
     "baseURL": "Base URL",
     "apiKey": "API Key",

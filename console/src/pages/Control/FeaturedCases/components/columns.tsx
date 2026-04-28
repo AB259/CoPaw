@@ -1,5 +1,6 @@
 import type { ColumnType } from "antd/es/table";
 import type { FeaturedCase } from "@/api/types/featuredCases";
+import { BBK_ID_MAP } from "@/constants/bbk";
 
 interface CreateCaseColumnsOptions {
   onEdit: (caseItem: FeaturedCase) => void;
@@ -11,19 +12,21 @@ export function createCaseColumns({
   onDelete,
 }: CreateCaseColumnsOptions): ColumnType<FeaturedCase>[] {
   return [
+    // {
+    //   title: "ID",
+    //   dataIndex: "id",
+    //   key: "id",
+    //   width: 80,
+    // },
     {
-      title: "ID",
-      dataIndex: "id",
-      key: "id",
-      width: 80,
-    },
-    {
-      title: "BBK ID",
+      title: "机构",
       dataIndex: "bbk_id",
       key: "bbk_id",
       width: 120,
-      render: (bbkId: string | null) =>
-        bbkId || <span style={{ color: "#999" }}>-</span>,
+      render: (bbkId: string | null) => {
+        const org = BBK_ID_MAP.find((item) => item.value === bbkId);
+        return org ? org.label : bbkId || <span style={{ color: "#999"}}>-</span>;
+      },
     },
     {
       title: "标题",

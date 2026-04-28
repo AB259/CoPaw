@@ -115,6 +115,7 @@ async def list_all_cases(
 
     Headers:
         X-Source-Id: Source ID (required, used as filter)
+        X-Bbk-Id: BBK ID (optional, used when query param not provided)
     """
     source_id = request.headers.get("X-Source-Id")
     if not source_id:
@@ -123,10 +124,13 @@ async def list_all_cases(
             detail="X-Source-Id header required",
         )
 
+    # Use query param if provided, otherwise fall back to header
+    effective_bbk_id = bbk_id or request.headers.get("X-Bbk-Id")
+
     service = get_service()
     cases, total = await service.list_cases(
         source_id=source_id,
-        bbk_id=bbk_id,
+        bbk_id=effective_bbk_id,
         page=page,
         page_size=page_size,
     )
