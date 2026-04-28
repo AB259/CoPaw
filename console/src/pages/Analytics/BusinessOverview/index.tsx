@@ -25,26 +25,29 @@ import {
 
 const { Option } = Select;
 
-// 颜色配置
+// 颜色配置（蓝白简洁系）
 const CHART_COLORS = [
   "#1890ff",
   "#52c41a",
   "#faad14",
-  "#f5222d",
   "#722ed1",
+  "#e866a8",
   "#13c2c2",
-  "#eb2f96",
+  "#fa8c16",
   "#a0d911",
 ];
 
-// 柱状图颜色
+// 柱状图颜色（纯色填充）
 const BAR_COLORS = [
-  "linear-gradient(90deg, #1890ff 0%, #69c0ff 100%)",
-  "linear-gradient(90deg, #52c41a 0%, #95de64 100%)",
-  "linear-gradient(90deg, #faad14 0%, #ffe58f 100%)",
-  "linear-gradient(90deg, #722ed1 0%, #b37feb 100%)",
-  "linear-gradient(90deg, #e866a8 0%, #f0a0c0 100%)",
+  "#1890ff",
+  "#52c41a",
+  "#faad14",
+  "#722ed1",
+  "#e866a8",
 ];
+
+// 指标卡片左边框颜色
+const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14"];
 
 export default function BusinessOverviewPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
@@ -279,18 +282,19 @@ export default function BusinessOverviewPage() {
   };
 
   // ============================================================
-  // 渲染：饼图（使用 SVG 实现简单饼图）
+  // 渲染：饼图（使用 SVG 实现环形图）
   // ============================================================
   const renderPieChart = (
     chartData: { name: string; value: number }[],
   ) => {
     const total = chartData.reduce((sum, item) => sum + item.value, 0);
-    const radius = 70;
     const cx = 100;
     const cy = 100;
+    const radius = 50; // 环形半径
+    const strokeWidth = 16; // 环形宽度
 
     let currentAngle = -90;
-    const paths = chartData.map((item, index) => {
+    const arcs = chartData.map((item, index) => {
       const percentage = item.value / total;
       const angle = percentage * 360;
       const startAngle = currentAngle;
@@ -307,15 +311,15 @@ export default function BusinessOverviewPage() {
 
       const largeArc = angle > 180 ? 1 : 0;
 
-      const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      const d = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
 
       return (
         <path
           key={index}
           d={d}
-          fill={CHART_COLORS[index % CHART_COLORS.length]}
-          stroke="#fff"
-          strokeWidth="2"
+          fill="none"
+          stroke={CHART_COLORS[index % CHART_COLORS.length]}
+          strokeWidth={strokeWidth}
         >
           <title>
             {item.name}: {item.value} ({(percentage * 100).toFixed(1)}%)
@@ -327,7 +331,17 @@ export default function BusinessOverviewPage() {
     return (
       <div className={styles.pieChartContainer}>
         <svg width="200" height="200" viewBox="0 0 200 200">
-          {paths}
+          {/* 背景环 */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            fill="none"
+            stroke="#e8e8e8"
+            strokeWidth={strokeWidth}
+          />
+          {/* 数据环 */}
+          {arcs}
         </svg>
       </div>
     );
@@ -349,7 +363,7 @@ export default function BusinessOverviewPage() {
           >
             <span className={styles.legendItem}>
               <span
-                className={styles.legendDot}
+                className={styles.legendBlock}
                 style={{
                   background: CHART_COLORS[index % CHART_COLORS.length],
                 }}
@@ -678,10 +692,10 @@ export default function BusinessOverviewPage() {
 
       {/* ==================== 第一屏：核心运营指标 + 趋势分析 ==================== */}
       <div className={styles.sectionTitle}>
-        <span>📈 核心运营指标</span>
+        <span>核心运营指标</span>
       </div>
       <div className={styles.metricsRow}>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[0] }}>
           <div className={styles.metricLabel}>总调用次数</div>
           <div className={styles.metricValue}>
             {formatNumber(metricData.totalCalls)}
@@ -694,7 +708,7 @@ export default function BusinessOverviewPage() {
             {formatChange(metricData.callsGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[1] }}>
           <div className={styles.metricLabel}>总Token消耗</div>
           <div className={styles.metricValue}>
             {formatTokens(metricData.totalTokens)}
@@ -707,7 +721,7 @@ export default function BusinessOverviewPage() {
             {formatChange(metricData.tokensGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[2] }}>
           <div className={styles.metricLabel}>总使用用户</div>
           <div className={styles.metricValue}>
             {formatNumber(platformData.totalUsers)}
@@ -720,7 +734,7 @@ export default function BusinessOverviewPage() {
             {formatChange(platformData.userGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[3] }}>
           <div className={styles.metricLabel}>接入平台数</div>
           <div className={styles.metricValue}>
             {formatNumber(platformData.totalPlatforms)}
@@ -769,7 +783,7 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.skillRow}>
         <Col xs={24} lg={12}>
           <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>🔥 热门技能 Top5</div>
+            <div className={styles.cardTitle}>热门技能 Top5</div>
             {renderBarChart(
               (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({ name: truncateName(s.skill_name, 18), value: s.count })),
             )}
@@ -777,7 +791,7 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>🛠️ 热门MCP服务 Top5</div>
+            <div className={styles.cardTitle}>热门MCP服务 Top5</div>
             {renderBarChart(
               (overviewStats?.mcp_servers || []).slice(0, 5).map((s: any) => ({ name: truncateName(s.server_name, 18), value: s.total_calls })),
             )}
@@ -789,7 +803,7 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.modelRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>🤖 模型使用分布</div>
+            <div className={styles.cardTitle}>模型使用分布</div>
             {renderPieChart(
               (overviewStats?.model_distribution || []).map((m: any) => ({ name: truncateName(m.model_name, 18), value: m.count })),
             )}
@@ -800,7 +814,7 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📊 各模型Token消耗</div>
+            <div className={styles.cardTitle}>各模型Token消耗</div>
             {renderBarChart(
               (overviewStats?.model_distribution || [])
                 .sort((a: any, b: any) => b.total_tokens - a.total_tokens)
@@ -814,7 +828,7 @@ export default function BusinessOverviewPage() {
 
       {/* ==================== 第二屏：用户分析 ==================== */}
       <div className={styles.sectionTitle}>
-        <span>👥 用户分析</span>
+        <span>用户分析</span>
       </div>
 
       {/* 核心指标卡片 */}
@@ -859,14 +873,14 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.distributionRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📱 平台用户分布{platform !== "all" ? ` · ${platform}` : ""}</div>
+            <div className={styles.cardTitle}>平台用户分布{platform !== "all" ? ` · ${platform}` : ""}</div>
             {renderPieChart(platformData.platformUserDistribution)}
             {renderLegend(platformData.platformUserDistribution)}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📞 平台调用次数分布{platform !== "all" ? ` · ${platform}` : ""}</div>
+            <div className={styles.cardTitle}>平台调用次数分布{platform !== "all" ? ` · ${platform}` : ""}</div>
             {renderPieChart(platformData.platformCallDistribution)}
             {renderLegend(platformData.platformCallDistribution)}
           </div>
@@ -877,7 +891,7 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.userRow}>
         <Col xs={24} lg={12}>
           <div className={styles.userCard}>
-            <div className={styles.cardTitle}>🏆 调用数 Top5</div>
+            <div className={styles.cardTitle}>调用数 Top5</div>
             {renderUserList(
               [...topUsers].sort((a, b) => b.calls - a.calls).slice(0, 5),
               "calls",
@@ -886,7 +900,7 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.userCard}>
-            <div className={styles.cardTitle}>🕐 最近活跃 Top5</div>
+            <div className={styles.cardTitle}>最近活跃 Top5</div>
             {renderUserList(
               [...topUsers]
                 .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())

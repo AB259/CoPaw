@@ -109,9 +109,9 @@
 // 第一屏：平台使用情况
 // ============================================================
 .sectionTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1a1a2e;
+  font-size: 14px;
+  font-weight: 500;
+  color: #262626;
   margin: 0 0 16px 0;
   display: flex;
   align-items: center;
@@ -125,22 +125,17 @@
 
 .statCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px 20px;
   min-height: 110px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  transition: box-shadow 0.2s;
-
-  &:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  }
 
   .statLabel {
     font-size: 13px;
-    color: #666;
+    color: #8c8c8c;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -158,14 +153,14 @@
 
   .statValue {
     font-size: 28px;
-    font-weight: 700;
-    color: #1a1a2e;
+    font-weight: 600;
+    color: #262626;
     line-height: 1.2;
 
     .suffix {
       font-size: 14px;
       font-weight: 400;
-      color: #999;
+      color: #8c8c8c;
       margin-left: 4px;
     }
   }
@@ -181,11 +176,11 @@
     }
 
     &.negative {
-      color: #ff4d4f;
+      color: #f5222d;
     }
 
     &.neutral {
-      color: #999;
+      color: #8c8c8c;
     }
   }
 }
@@ -201,17 +196,17 @@
 
 .distributionCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   height: 340px;
   display: flex;
   flex-direction: column;
 
   .cardTitle {
-    font-size: 15px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-size: 14px;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
     flex-shrink: 0;
   }
@@ -239,13 +234,14 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
-    color: #666;
+    font-size: 12px;
+    color: #595959;
 
-    .legendDot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
+    .legendBlock {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
     }
   }
 }
@@ -265,22 +261,24 @@
 
 .metricCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e8e8e8;
+  border-left-width: 3px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 
   .metricLabel {
-    font-size: 13px;
-    color: #666;
+    font-size: 12px;
+    color: #8c8c8c;
   }
 
   .metricValue {
-    font-size: 24px;
-    font-weight: 700;
-    color: #1a1a2e;
+    font-size: 28px;
+    font-weight: 600;
+    color: #262626;
+    margin: 8px 0;
 
     .metricUnit {
       font-size: 14px;
@@ -290,14 +288,14 @@
   }
 
   .metricChange {
-    font-size: 11px;
+    font-size: 12px;
 
     &.positive {
       color: #52c41a;
     }
 
     &.negative {
-      color: #ff4d4f;
+      color: #f5222d;
     }
   }
 }
@@ -307,9 +305,9 @@
 // ============================================================
 .trendCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   margin-bottom: 24px;
 
   .trendHeader {
@@ -319,9 +317,9 @@
     margin-bottom: 16px;
 
     .trendTitle {
-      font-size: 16px;
-      font-weight: 600;
-      color: #1a1a2e;
+      font-size: 14px;
+      font-weight: 500;
+      color: #262626;
       margin: 0;
     }
 
@@ -334,12 +332,11 @@
         align-items: center;
         gap: 6px;
         font-size: 12px;
-        color: #666;
+        color: #8c8c8c;
 
         .legendLine {
-          width: 12px;
-          height: 3px;
-          border-radius: 2px;
+          width: 20px;
+          height: 2px;
         }
       }
     }
@@ -371,17 +368,17 @@
 
 .skillCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   height: 340px;
   display: flex;
   flex-direction: column;
 
   .cardTitle {
     font-size: 14px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
     flex-shrink: 0;
   }
@@ -454,14 +451,14 @@
 
 .userCard {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 
   .cardTitle {
     font-size: 14px;
-    font-weight: 600;
-    color: #1a1a2e;
+    font-weight: 500;
+    color: #262626;
     margin-bottom: 12px;
   }
 }
@@ -600,7 +597,7 @@
     .barLabel {
       width: 80px;
       font-size: 12px;
-      color: #666;
+      color: #595959;
       text-align: left;
       flex-shrink: 0;
       padding-left: 4px;
@@ -608,7 +605,7 @@
 
     .barTrack {
       flex: 1;
-      height: 28px;
+      height: 22px;
       background: #f0f0f0;
       border-radius: 4px;
       overflow: hidden;
@@ -627,7 +624,7 @@
         transform: translateY(-50%);
         font-size: 12px;
         font-weight: 500;
-        color: #666;
+        color: #8c8c8c;
       }
     }
   }
