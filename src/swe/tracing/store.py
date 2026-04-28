@@ -233,17 +233,16 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
             span.trace_id,
             span.source_id,
-            span.parent_span_id,
             span.name,
             span.event_type.value
             if isinstance(span.event_type, EventType)
@@ -263,7 +262,6 @@ class TraceStore:
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
         )
         await self.db.execute(query, params)
 
@@ -284,7 +282,6 @@ class TraceStore:
                 output_tokens = %s,
                 tool_output = %s,
                 error = %s,
-                metadata = %s,
                 event_type = %s
             WHERE span_id = %s
         """
@@ -295,7 +292,6 @@ class TraceStore:
             span.output_tokens,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
             span.event_type.value
             if hasattr(span.event_type, "value")
             else span.event_type,
@@ -335,11 +331,11 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
         for span in spans:
@@ -348,7 +344,6 @@ class TraceStore:
                     span.span_id,
                     span.trace_id,
                     span.source_id,
-                    span.parent_span_id,
                     span.name,
                     span.event_type.value
                     if isinstance(span.event_type, EventType)
@@ -368,7 +363,6 @@ class TraceStore:
                     json.dumps(span.tool_input) if span.tool_input else None,
                     span.tool_output,
                     span.error,
-                    json.dumps(span.metadata) if span.metadata else None,
                 ),
             )
         await self.db.execute_many(query, params_list)
@@ -1321,16 +1315,8 @@ class TraceStore:
                     end_time=span.end_time,
                     duration_ms=span.duration_ms or 0,
                     skill_name=span.skill_name,
-                    confidence=(
-                        span.metadata.get("confidence", 1.0)
-                        if span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        span.metadata.get("trigger_reason", "declared")
-                        if span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     children=[],
                 )
 
@@ -1440,16 +1426,8 @@ class TraceStore:
                     start_time=skill_span.start_time,
                     end_time=skill_span.end_time,
                     duration_ms=skill_span.duration_ms or 0,
-                    confidence=(
-                        skill_span.metadata.get("confidence", 1.0)
-                        if skill_span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        skill_span.metadata.get("trigger_reason", "declared")
-                        if skill_span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     tools=tools,
                     total_tool_calls=len(tools),
                     tool_duration_ms=sum(t.duration_ms for t in tools),
@@ -2461,7 +2439,6 @@ class TraceStore:
             span_id=row["span_id"],
             trace_id=row["trace_id"],
             source_id=row["source_id"],
-            parent_span_id=row["parent_span_id"],
             name=row["name"],
             event_type=EventType(row["event_type"]),
             start_time=row["start_time"],
@@ -2481,5 +2458,4 @@ class TraceStore:
             else None,
             tool_output=row["tool_output"],
             error=row["error"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )
