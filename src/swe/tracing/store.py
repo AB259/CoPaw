@@ -542,7 +542,10 @@ class TraceStore:
                 GROUP BY source_id
                 ORDER BY call_count DESC
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
 
         platform_user_dist = []
         platform_call_dist = []
@@ -551,14 +554,18 @@ class TraceStore:
         for row in rows:
             src_id = row["source_id"]
             sources.append(src_id)
-            platform_user_dist.append({
-                "name": src_id,
-                "value": row["user_count"] or 0,
-            })
-            platform_call_dist.append({
-                "name": src_id,
-                "value": row["call_count"] or 0,
-            })
+            platform_user_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["user_count"] or 0,
+                },
+            )
+            platform_call_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["call_count"] or 0,
+                },
+            )
 
         return {
             "platformUserDistribution": platform_user_dist,
@@ -685,7 +692,10 @@ class TraceStore:
             "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),
             "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),
             "userGrowth": calc_growth(curr["users"], prev["users"]),
-            "platformGrowth": calc_growth(curr["platforms"], prev["platforms"]),
+            "platformGrowth": calc_growth(
+                curr["platforms"],
+                prev["platforms"],
+            ),
         }
 
     async def get_daily_trend(
@@ -739,11 +749,16 @@ class TraceStore:
                 GROUP BY DATE(start_time)
                 ORDER BY date
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
 
         return [
             {
-                "date": row["date"].strftime("%Y-%m-%d") if row["date"] else "",
+                "date": row["date"].strftime("%Y-%m-%d")
+                if row["date"]
+                else "",
                 "calls": row["calls"] or 0,
                 "tokens": row["tokens"] or 0,
                 "users": row["users"] or 0,
@@ -842,7 +857,8 @@ class TraceStore:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend([source_id, source_id, page_size, offset])
+            # 子查询参数在前，然后是 WHERE 子句参数，最后是 LIMIT/OFFSET
+            params = [source_id, source_id] + params + [page_size, offset]
         rows = await self.db.fetch_all(query, tuple(params))
         users = [
             UserListItem(
@@ -1742,7 +1758,10 @@ class TraceStore:
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
             """
-            row = await self.db.fetch_one(query, (source_id, start_date, end_date))
+            row = await self.db.fetch_one(
+                query,
+                (source_id, start_date, end_date),
+            )
         result = row["total_users"] if row else 0
         return result
 
@@ -1769,7 +1788,10 @@ class TraceStore:
                 FROM swe_tracing_spans
                 WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''
             """
-            rows = await self.db.fetch_all(query, (source_id, online_threshold))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, online_threshold),
+            )
         user_ids = [row["user_id"] for row in rows if row["user_id"]]
         return len(user_ids), user_ids
 
@@ -1842,7 +1864,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ModelUsage(
                 model_name=row["model_name"],
@@ -1890,7 +1915,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ToolUsage(
                 tool_name=row["tool_name"],
@@ -1933,7 +1961,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             SkillUsage(
                 skill_name=row["skill_name"],
@@ -2039,7 +2070,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            mcp_tool_rows = await self.db.fetch_all(mcp_tool_query, (start_date, end_date))
+            mcp_tool_rows = await self.db.fetch_all(
+                mcp_tool_query,
+                (start_date, end_date),
+            )
         else:
             mcp_tool_query = """
                 SELECT tool_name, mcp_server, COUNT(*) as count,
@@ -2098,7 +2132,10 @@ class TraceStore:
                 GROUP BY mcp_server
                 ORDER BY total_calls DESC
             """
-            server_rows = await self.db.fetch_all(query, (start_date, end_date))
+            server_rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date),
+            )
         else:
             query = """
                 SELECT mcp_server,
@@ -2160,7 +2197,10 @@ class TraceStore:
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
-            rows = await self.db.fetch_all(query, (start_date, end_date, server_name))
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, server_name),
+            )
         else:
             query = """
                 SELECT tool_name, mcp_server, COUNT(*) as count,
