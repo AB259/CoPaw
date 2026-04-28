@@ -4,13 +4,9 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { useTranslation } from "react-i18next";
 import { Row, Col, Tooltip, Select, DatePicker, message } from "antd";
 import {
   Users,
-  Building2,
-  Puzzle,
-  Zap,
   Clock,
   TrendingUp,
   TrendingDown,
@@ -22,39 +18,55 @@ import {
   formatNumber,
   formatTokens,
   formatChange,
-  formatDuration,
   truncateName,
   type UserRow,
-  type SkillRow,
   type TimeRange,
-  type PlatformType,
 } from "./types";
 
 const { Option } = Select;
+
+// 平台名称映射（source_id -> 中文名称）
+const PLATFORM_NAME_MAP: Record<string, string> = {
+  CMSJY: "远程RM小助Claw版",
+  UPPCLAW: "智像小助CLAW",
+  copilotClaw: "数据赋能小助CLAW",
+  ruice: "睿策小助Claw版",
+  privatebanking: "私行小助claw",
+  SZLS: "数智零售claw",
+  rtauto: "实时数据CLAW",
+  RMASSIST: "RM小助",
+};
+
+// 获取平台显示名称
+const getPlatformDisplayName = (sourceId: string): string => {
+  return PLATFORM_NAME_MAP[sourceId] || sourceId;
+};
 
 // 颜色配置
 const CHART_COLORS = [
   "#1890ff",
   "#52c41a",
   "#faad14",
-  "#f5222d",
   "#722ed1",
+  "#e866a8",
   "#13c2c2",
-  "#eb2f96",
+  "#fa8c16",
   "#a0d911",
 ];
 
-// 柱状图颜色
+// 柱状图颜色（纯色填充）
 const BAR_COLORS = [
-  "linear-gradient(90deg, #1890ff 0%, #69c0ff 100%)",
-  "linear-gradient(90deg, #52c41a 0%, #95de64 100%)",
-  "linear-gradient(90deg, #faad14 0%, #ffe58f 100%)",
-  "linear-gradient(90deg, #f5222d 0%, #ff7875 100%)",
-  "linear-gradient(90deg, #722ed1 0%, #b37feb 100%)",
+  "#1890ff",
+  "#52c41a",
+  "#faad14",
+  "#722ed1",
+  "#e866a8",
 ];
 
+// 指标卡片左边框颜色
+const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14"];
+
 export default function BusinessOverviewPage() {
-  const { t } = useTranslation();
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
   const [startDate, setStartDate] = useState<dayjs.Dayjs>(dayjs());
   const [endDate, setEndDate] = useState<dayjs.Dayjs>(dayjs());
@@ -64,7 +76,6 @@ export default function BusinessOverviewPage() {
   const [sources, setSources] = useState<string[]>([]);
 
   // 数据状态
-  const [loading, setLoading] = useState(false);
   const [overviewStats, setOverviewStats] = useState<any>(null);
   const [growthStats, setGrowthStats] = useState({
     callsGrowth: 0,
@@ -89,6 +100,25 @@ export default function BusinessOverviewPage() {
     users: number;
   }[]>([]);
   const [topUsers, setTopUsers] = useState<UserRow[]>([]);
+
+  // 折线图悬浮 tooltip 状态
+  const [lineChartTooltip, setLineChartTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    date: string;
+    calls: number;
+    tokens: number;
+    users: number;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    date: "",
+    calls: 0,
+    tokens: 0,
+    users: 0,
+  });
 
   // 计算结束日期
   const calculateEndDate = (start: dayjs.Dayjs, mode: TimeRange): dayjs.Dayjs => {
@@ -123,7 +153,6 @@ export default function BusinessOverviewPage() {
 
   // 获取数据
   const fetchData = useCallback(async () => {
-    setLoading(true);
     const startStr = startDate.format("YYYY-MM-DD");
     const endStr = endDate.format("YYYY-MM-DD");
     // 用于筛选的 source_id（"all" 表示不筛选，其他值表示筛选特定平台）
@@ -138,12 +167,12 @@ export default function BusinessOverviewPage() {
     try {
       // 并行请求所有数据
       // 核心运营指标、趋势、模型分布、用户分析等需要根据平台筛选
-      // 平台用户分布和平台调用次数分布不筛选（显示所有平台）
+      // 平台用户分布和平台调用次数分布也受平台筛选影响
       // 趋势图始终使用近30天数据
       const [overviewRes, growthRes, channelRes, trendRes, usersRes] = await Promise.allSettled([
         tracingApi.getOverview(startStr, endStr, filterSourceId),
         tracingApi.getGrowthStats(startStr, endStr, timeRange, filterSourceId),
-        tracingApi.getChannelDistribution("all", startStr, endStr), // 始终显示所有平台的分布
+        tracingApi.getChannelDistribution(filterSourceId, startStr, endStr), // 受平台筛选影响
         tracingApi.getDailyTrend(trendStartStr, trendEndStr, filterSourceId), // 始终近30天
         tracingApi.getUsers(1, 5, { start_date: startStr, end_date: endStr, source_id: filterSourceId }),
       ]);
@@ -184,8 +213,6 @@ export default function BusinessOverviewPage() {
     } catch (error) {
       console.error("Failed to fetch data:", error);
       message.error("获取数据失败");
-    } finally {
-      setLoading(false);
     }
   }, [startDate, endDate, timeRange, platform]);
 
@@ -208,23 +235,25 @@ export default function BusinessOverviewPage() {
     }
   };
 
-  // 禁用不符合时间范围要求的日期
-  const disabledDate = (current: dayjs.Dayjs | null): boolean => {
+  // 禁用不符合时间范围要求的日期（开始日期）
+  const disabledStartDate = (current: dayjs.Dayjs | null): boolean => {
+    if (!current) return false;
+    const today = dayjs().startOf("day");
+    // 只禁用未来日期，允许选择任意历史日期
+    return current.isAfter(today, "day");
+  };
+
+  // 禁用不符合时间范围要求的日期（结束日期）
+  const disabledEndDate = (current: dayjs.Dayjs | null): boolean => {
     if (!current) return false;
     const today = dayjs().startOf("day");
     // 禁用未来日期
     if (current.isAfter(today, "day")) {
       return true;
     }
-    // 周模式：起始日期不能太早（确保有完整的7天范围在今天之前）
-    if (timeRange === "week") {
-      const minStart = today.subtract(6, "day");
-      return current.isBefore(minStart, "day");
-    }
-    // 月模式：起始日期不能太早（确保有完整的30天范围在今天之前）
-    if (timeRange === "month") {
-      const minStart = today.subtract(29, "day");
-      return current.isBefore(minStart, "day");
+    // 自定义模式：结束日期不能早于开始日期
+    if (timeRange === "custom" && current.isBefore(startDate, "day")) {
+      return true;
     }
     return false;
   };
@@ -247,13 +276,22 @@ export default function BusinessOverviewPage() {
       const monthStart = today.subtract(29, "day");
       setStartDate(monthStart);
       setEndDate(today);
+    } else if (mode === "custom") {
+      // 自定义模式：默认显示最近7天，用户可以手动调整
+      const customStart = today.subtract(6, "day");
+      setStartDate(customStart);
+      setEndDate(today);
     }
-    // custom 模式不自动调整日期，用户手动选择
   };
 
   // 处理结束日期变化
   const handleEndDateChange = (date: dayjs.Dayjs | null) => {
     if (date) {
+      // 确保结束日期不早于开始日期
+      if (date.isBefore(startDate, "day")) {
+        message.warning("结束日期不能早于开始日期");
+        return;
+      }
       setEndDate(date);
     }
   };
@@ -291,59 +329,45 @@ export default function BusinessOverviewPage() {
   };
 
   // ============================================================
-  // 渲染：统计卡片
-  // ============================================================
-  const renderStatCard = (
-    label: string,
-    value: number,
-    change: number,
-    icon: React.ReactNode,
-    color: string,
-  ) => (
-    <Col xs={24} sm={12} lg={6}>
-      <div className={styles.statCard}>
-        <div className={styles.statLabel}>
-          <span
-            className={styles.icon}
-            style={{ background: `${color}15`, color }}
-          >
-            {icon}
-          </span>
-          <span>{label}</span>
-        </div>
-        <div className={styles.statValue}>{formatNumber(value)}</div>
-        <div
-          className={`${styles.statChange} ${
-            change > 0
-              ? styles.positive
-              : change < 0
-              ? styles.negative
-              : styles.neutral
-          }`}
-        >
-          {change > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-          <span>{formatChange(change)}</span>
-          <span style={{ marginLeft: 4, color: "#999", fontWeight: 400 }}>
-            环比
-          </span>
-        </div>
-      </div>
-    </Col>
-  );
-
-  // ============================================================
-  // 渲染：饼图（使用 SVG 实现简单饼图）
+  // 渲染：饼图（使用 SVG 实现实心饼图，带悬浮效果）
   // ============================================================
   const renderPieChart = (
-    chartData: { name: string; value: number }[],
+    chartData: { name: string; fullName?: string; value: number }[],
   ) => {
     const total = chartData.reduce((sum, item) => sum + item.value, 0);
-    const radius = 70;
+    if (total === 0) {
+      return (
+        <div className={styles.pieChartContainer}>
+          <svg width="200" height="200" viewBox="0 0 200 200">
+            <circle cx="100" cy="100" r="80" fill="#f0f0f0" />
+            <text x="100" y="105" textAnchor="middle" fontSize="12" fill="#999">
+              暂无数据
+            </text>
+          </svg>
+        </div>
+      );
+    }
+
     const cx = 100;
     const cy = 100;
+    const radius = 80;
+    const hoverRadius = 85; // 悬浮时放大的半径
+
+    // 计算每个扇形的角度和路径
+    const slices: Array<{
+      path: string;
+      hoverPath: string;
+      percentage: number;
+      name: string;
+      fullName: string;
+      value: number;
+      color: string;
+      index: number;
+    }> = [];
 
     let currentAngle = -90;
-    const paths = chartData.map((item, index) => {
+
+    chartData.forEach((item, index) => {
       const percentage = item.value / total;
       const angle = percentage * 360;
       const startAngle = currentAngle;
@@ -353,34 +377,56 @@ export default function BusinessOverviewPage() {
       const startRad = (startAngle * Math.PI) / 180;
       const endRad = (endAngle * Math.PI) / 180;
 
+      // 正常路径
       const x1 = cx + radius * Math.cos(startRad);
       const y1 = cy + radius * Math.sin(startRad);
       const x2 = cx + radius * Math.cos(endRad);
       const y2 = cy + radius * Math.sin(endRad);
 
+      // 悬浮时放大的路径
+      const hx1 = cx + hoverRadius * Math.cos(startRad);
+      const hy1 = cy + hoverRadius * Math.sin(startRad);
+      const hx2 = cx + hoverRadius * Math.cos(endRad);
+      const hy2 = cy + hoverRadius * Math.sin(endRad);
+
       const largeArc = angle > 180 ? 1 : 0;
 
-      const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      const pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      const hoverPathD = `M ${cx} ${cy} L ${hx1} ${hy1} A ${hoverRadius} ${hoverRadius} 0 ${largeArc} 1 ${hx2} ${hy2} Z`;
 
-      return (
-        <path
-          key={index}
-          d={d}
-          fill={CHART_COLORS[index % CHART_COLORS.length]}
-          stroke="#fff"
-          strokeWidth="2"
-        >
-          <title>
-            {item.name}: {item.value} ({(percentage * 100).toFixed(1)}%)
-          </title>
-        </path>
-      );
+      slices.push({
+        path: pathD,
+        hoverPath: hoverPathD,
+        percentage,
+        name: item.name,
+        fullName: item.fullName || item.name,
+        value: item.value,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+        index,
+      });
     });
 
     return (
       <div className={styles.pieChartContainer}>
-        <svg width="200" height="200" viewBox="0 0 200 200">
-          {paths}
+        <svg width="200" height="200" viewBox="0 0 200 200" className={styles.pieSvg}>
+          {slices.map((slice) => (
+            <Tooltip
+              key={slice.index}
+              title={`${slice.fullName}: ${slice.value} (${(slice.percentage * 100).toFixed(1)}%)`}
+              mouseLeaveDelay={0}
+              mouseEnterDelay={0}
+            >
+              <g className={styles.pieSlice}>
+                <path
+                  d={slice.path}
+                  fill={slice.color}
+                  stroke="#fff"
+                  strokeWidth="2"
+                  className={styles.pieSlicePath}
+                />
+              </g>
+            </Tooltip>
+          ))}
         </svg>
       </div>
     );
@@ -389,45 +435,49 @@ export default function BusinessOverviewPage() {
   // ============================================================
   // 渲染：图例
   // ============================================================
-  const renderLegend = (chartData: { name: string; value: number }[]) => {
+  const renderLegend = (chartData: { name: string; fullName?: string; value: number }[]) => {
     const total = chartData.reduce((sum, item) => sum + item.value, 0);
     return (
       <div className={styles.pieLegend}>
-        {chartData.map((item, index) => (
-          <Tooltip
-            key={index}
-            title={`${item.value} (${((item.value / total) * 100).toFixed(
-              1,
-            )}%)`}
-          >
-            <span className={styles.legendItem}>
-              <span
-                className={styles.legendDot}
-                style={{
-                  background: CHART_COLORS[index % CHART_COLORS.length],
-                }}
-              />
-              <span>{item.name}</span>
-            </span>
-          </Tooltip>
-        ))}
+        {chartData.map((item, index) => {
+          const displayName = item.name;
+          const fullName = item.fullName || item.name;
+          const isTruncated = fullName !== displayName;
+          const statsInfo = `${item.value} (${((item.value / total) * 100).toFixed(1)}%)`;
+          const tooltipTitle = isTruncated ? `${fullName}\n${statsInfo}` : statsInfo;
+          return (
+            <Tooltip
+              key={index}
+              title={tooltipTitle}
+            >
+              <span className={styles.legendItem}>
+                <span
+                  className={styles.legendDot}
+                  style={{
+                    background: CHART_COLORS[index % CHART_COLORS.length],
+                  }}
+                />
+                <span>{displayName}</span>
+              </span>
+            </Tooltip>
+          );
+        })}
       </div>
     );
   };
 
   // ============================================================
-  // 渲染：折线图（使用 SVG 实现简单折线图）
+  // 渲染：折线图（带悬浮效果）
   // ============================================================
   const renderLineChart = (
     chartData: { date: string; calls: number; tokens: number; users: number }[],
-    height: number = 280,
+    height: number = 320,
   ) => {
     if (!chartData || chartData.length === 0) return null;
     if (chartData.length === 1) {
-      // 单条数据时显示简单提示
       const d = chartData[0];
       return (
-        <div className={styles.trendChartContainer}>
+        <div className={styles.trendChartContainer} style={{ height }}>
           <div style={{ textAlign: "center", padding: "100px 0", color: "#999" }}>
             <div>日期: {d.date}</div>
             <div>调用次数: {formatNumber(d.calls)}</div>
@@ -438,8 +488,8 @@ export default function BusinessOverviewPage() {
       );
     }
 
-    const padding = { top: 20, right: 20, bottom: 40, left: 60 };
-    const width = 800;
+    const padding = { top: 20, right: 30, bottom: 60, left: 50 };
+    const width = 1000;
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
 
@@ -449,30 +499,6 @@ export default function BusinessOverviewPage() {
 
     const xScale = (index: number) =>
       (index / (chartData.length - 1)) * chartWidth + padding.left;
-    const yCallsScale = (value: number) =>
-      chartHeight - (value / maxCalls) * chartHeight + padding.top;
-    const yTokensScale = (value: number) =>
-      chartHeight - (value / maxTokens) * chartHeight + padding.top;
-    const yUsersScale = (value: number) =>
-      chartHeight - (value / maxUsers) * chartHeight + padding.top;
-
-    // 生成折线路径
-    const callsPath = chartData
-      .map(
-        (d, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yCallsScale(d.calls)}`,
-      )
-      .join(" ");
-    const tokensPath = chartData
-      .map(
-        (d, i) =>
-          `${i === 0 ? "M" : "L"} ${xScale(i)} ${yTokensScale(d.tokens)}`,
-      )
-      .join(" ");
-    const usersPath = chartData
-      .map(
-        (d, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yUsersScale(d.users)}`,
-      )
-      .join(" ");
 
     // Y轴刻度
     const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
@@ -480,18 +506,93 @@ export default function BusinessOverviewPage() {
       label: formatNumber(maxCalls * (1 - ratio)),
     }));
 
-    // X轴刻度（显示部分日期）
-    const xTicks = [
-      0,
-      Math.floor(chartData.length / 2),
-      chartData.length - 1,
-    ].map((i) => ({
-      x: xScale(i),
-      label: chartData[i].date.slice(5),
-    }));
+    // X轴刻度 - 显示所有日期，每隔一定间隔显示标签
+    const dateInterval = chartData.length <= 15 ? 1 : chartData.length <= 30 ? 2 : 3;
+
+    // 生成折线路径
+    const callsPath = chartData
+      .map((d, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${chartHeight - (d.calls / maxCalls) * chartHeight + padding.top}`)
+      .join(" ");
+    const tokensPath = chartData
+      .map((d, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${chartHeight - (d.tokens / maxTokens) * chartHeight + padding.top}`)
+      .join(" ");
+    const usersPath = chartData
+      .map((d, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${chartHeight - (d.users / maxUsers) * chartHeight + padding.top}`)
+      .join(" ");
+
+    // 鼠标移动处理 - 基于最近的数据点
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // SVG 使用 preserveAspectRatio="xMidYMid meet" 会居中显示
+      // 需要计算实际的缩放比例和偏移量
+      const viewBoxAspect = width / height;
+      const containerAspect = rect.width / rect.height;
+
+      let actualScaleX: number;
+      let offsetX: number;
+
+      if (containerAspect > viewBoxAspect) {
+        // 容器更宽，SVG 按高度缩放，左右留白
+        actualScaleX = rect.height / height;
+        offsetX = (rect.width - width * actualScaleX) / 2;
+      } else {
+        // 容器更高，SVG 按宽度缩放，上下留白
+        actualScaleX = rect.width / width;
+        offsetX = 0;
+      }
+
+      // 计算每个数据点在 DOM 中的实际 X 位置（考虑居中偏移）
+      const dataPoints = chartData.map((d, i) => ({
+        index: i,
+        x: xScale(i) * actualScaleX + offsetX,
+        data: d,
+      }));
+
+      // 找到离鼠标最近的数据点
+      let nearestPoint = dataPoints[0];
+      let minDistance = Math.abs(mouseX - nearestPoint.x);
+
+      for (const point of dataPoints) {
+        const distance = Math.abs(mouseX - point.x);
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestPoint = point;
+        }
+      }
+
+      // 计算实际图表宽度的一半作为阈值
+      const actualChartWidth = chartWidth * actualScaleX;
+      const threshold = actualChartWidth / chartData.length / 2;
+
+      if (minDistance <= threshold) {
+        setLineChartTooltip({
+          visible: true,
+          x: nearestPoint.x + 10,
+          y: mouseY - 10,
+          date: nearestPoint.data.date,
+          calls: nearestPoint.data.calls,
+          tokens: nearestPoint.data.tokens,
+          users: nearestPoint.data.users,
+        });
+      } else {
+        setLineChartTooltip((prev) => ({ ...prev, visible: false }));
+      }
+    };
+
+    const handleMouseLeave = () => {
+      setLineChartTooltip((prev) => ({ ...prev, visible: false }));
+    };
 
     return (
-      <div className={styles.trendChartContainer}>
+      <div
+        className={styles.trendChartContainer}
+        style={{ height }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         <svg
           width="100%"
           height={height}
@@ -521,19 +622,24 @@ export default function BusinessOverviewPage() {
             </g>
           ))}
 
-          {/* X轴 */}
-          {xTicks.map((tick, i) => (
-            <text
-              key={`x-${i}`}
-              x={tick.x}
-              y={height - 8}
-              textAnchor="middle"
-              fontSize="11"
-              fill="#999"
-            >
-              {tick.label}
-            </text>
-          ))}
+          {/* X轴日期标签 */}
+          {chartData.map((d, i) => {
+            // 根据间隔决定是否显示标签
+            const showLabel = i % dateInterval === 0 || i === chartData.length - 1;
+            return (
+              <text
+                key={`x-${i}`}
+                x={xScale(i)}
+                y={height - 20}
+                textAnchor="middle"
+                fontSize="10"
+                fill={showLabel ? "#666" : "#ccc"}
+                transform={`rotate(-45, ${xScale(i)}, ${height - 20})`}
+              >
+                {d.date.slice(5)}
+              </text>
+            );
+          })}
 
           {/* 调用次数折线 */}
           <path
@@ -563,93 +669,167 @@ export default function BusinessOverviewPage() {
             strokeLinecap="round"
           />
 
-          {/* 数据点 */}
-          {chartData
-            .filter(
-              (_, i) =>
-                i === 0 ||
-                i === chartData.length - 1 ||
-                i === Math.floor(chartData.length / 2),
-            )
-            .map((d) => (
-              <circle
-                key={d.date}
-                cx={xScale(chartData.indexOf(d))}
-                cy={yCallsScale(d.calls)}
-                r="4"
-                fill="#1890ff"
-              />
-            ))}
+          {/* 所有数据点 - 调用次数 */}
+          {chartData.map((d, i) => (
+            <circle
+              key={`calls-${i}`}
+              cx={xScale(i)}
+              cy={chartHeight - (d.calls / maxCalls) * chartHeight + padding.top}
+              r="4"
+              fill="#1890ff"
+              stroke="#fff"
+              strokeWidth="2"
+            />
+          ))}
+
+          {/* 所有数据点 - Token */}
+          {chartData.map((d, i) => (
+            <circle
+              key={`tokens-${i}`}
+              cx={xScale(i)}
+              cy={chartHeight - (d.tokens / maxTokens) * chartHeight + padding.top}
+              r="3"
+              fill="#52c41a"
+              stroke="#fff"
+              strokeWidth="1.5"
+            />
+          ))}
+
+          {/* 所有数据点 - 用户 */}
+          {chartData.map((d, i) => (
+            <circle
+              key={`users-${i}`}
+              cx={xScale(i)}
+              cy={chartHeight - (d.users / maxUsers) * chartHeight + padding.top}
+              r="3"
+              fill="#faad14"
+              stroke="#fff"
+              strokeWidth="1.5"
+            />
+          ))}
+
+          {/* 高亮当前悬浮的数据点 */}
+          {lineChartTooltip.visible && (() => {
+            const dataIndex = chartData.findIndex(d => d.date === lineChartTooltip.date);
+            if (dataIndex === -1) return null;
+            const x = xScale(dataIndex);
+            return (
+              <>
+                {/* 垂直参考线 */}
+                <line
+                  x1={x}
+                  y1={padding.top}
+                  x2={x}
+                  y2={chartHeight + padding.top}
+                  stroke="#1890ff"
+                  strokeWidth="1"
+                  strokeDasharray="4,4"
+                  opacity="0.5"
+                />
+                {/* 高亮的数据点 */}
+                <circle
+                  cx={x}
+                  cy={chartHeight - (chartData[dataIndex].calls / maxCalls) * chartHeight + padding.top}
+                  r="7"
+                  fill="#1890ff"
+                  stroke="#fff"
+                  strokeWidth="3"
+                />
+                <circle
+                  cx={x}
+                  cy={chartHeight - (chartData[dataIndex].tokens / maxTokens) * chartHeight + padding.top}
+                  r="5"
+                  fill="#52c41a"
+                  stroke="#fff"
+                  strokeWidth="2"
+                />
+                <circle
+                  cx={x}
+                  cy={chartHeight - (chartData[dataIndex].users / maxUsers) * chartHeight + padding.top}
+                  r="5"
+                  fill="#faad14"
+                  stroke="#fff"
+                  strokeWidth="2"
+                />
+              </>
+            );
+          })()}
         </svg>
+
+        {/* 悬浮 Tooltip */}
+        {lineChartTooltip.visible && (
+          <div
+            className={styles.lineChartTooltip}
+            style={{
+              position: "absolute",
+              left: lineChartTooltip.x,
+              top: lineChartTooltip.y,
+            }}
+          >
+            <div className={styles.tooltipDate}>{lineChartTooltip.date}</div>
+            <div className={styles.tooltipRow}>
+              <span className={styles.tooltipDot} style={{ background: "#1890ff" }} />
+              <span>调用: {formatNumber(lineChartTooltip.calls)}</span>
+            </div>
+            <div className={styles.tooltipRow}>
+              <span className={styles.tooltipDot} style={{ background: "#52c41a" }} />
+              <span>Token: {formatTokens(lineChartTooltip.tokens)}</span>
+            </div>
+            <div className={styles.tooltipRow}>
+              <span className={styles.tooltipDot} style={{ background: "#faad14" }} />
+              <span>用户: {formatNumber(lineChartTooltip.users)}</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
   // ============================================================
-  // 渲染：柱状图
+  // 渲染：柱状图（带悬浮效果）
   // ============================================================
   const renderBarChart = (
-    chartData: { name: string; value: number }[],
+    chartData: { name: string; fullName?: string; value: number }[],
     height: number = 220,
   ) => {
-    const maxValue = Math.max(...chartData.map((d) => d.value));
+    const maxValue = Math.max(...chartData.map((d) => d.value), 1);
 
     return (
       <div className={styles.barChartContainer} style={{ height }}>
         {chartData.map((item, index) => {
           const percentage = (item.value / maxValue) * 100;
+          const fullName = item.fullName || item.name;
+          const displayValue = formatTokens(item.value);
           return (
-            <div key={index} className={styles.barItem}>
-              <span className={styles.barLabel}>{item.name}</span>
-              <div className={styles.barTrack}>
-                <div
-                  className={styles.barFill}
-                  style={{
-                    width: `${percentage}%`,
-                    background: BAR_COLORS[index % BAR_COLORS.length],
-                  }}
-                />
-                <span className={styles.barValue}>
-                  {formatTokens(item.value)}
-                </span>
+            <Tooltip
+              key={index}
+              title={`${fullName}: ${displayValue}`}
+              mouseLeaveDelay={0}
+              mouseEnterDelay={0}
+              placement="top"
+              getPopupContainer={(triggerNode) => triggerNode.parentElement as HTMLElement}
+            >
+              <div className={styles.barItem}>
+                <div className={styles.barLabelRow}>
+                  <span className={styles.barLabel}>{fullName}</span>
+                  <span className={styles.barLabelValue}>{displayValue}</span>
+                </div>
+                <div className={styles.barTrack}>
+                  <div
+                    className={styles.barFill}
+                    style={{
+                      width: `${Math.max(percentage, 5)}%`,
+                      background: BAR_COLORS[index % BAR_COLORS.length],
+                    }}
+                  />
+                </div>
               </div>
-            </div>
+            </Tooltip>
           );
         })}
       </div>
     );
   };
-
-  // ============================================================
-  // 渲染：技能列表
-  // ============================================================
-  const renderSkillList = (skills: SkillRow[], metric: "calls" | "tokens") => (
-    <div className={styles.skillList}>
-      {skills.map((skill, index) => (
-        <div key={skill.name} className={styles.skillItem}>
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
-          >
-            {index + 1}
-          </span>
-          <span className={styles.skillName}>{skill.name}</span>
-          <span className={styles.skillValue}>
-            {metric === "calls"
-              ? formatNumber(skill.calls)
-              : formatTokens(skill.tokens)}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
 
   // ============================================================
   // 渲染：用户列表
@@ -732,7 +912,7 @@ export default function BusinessOverviewPage() {
               value={startDate}
               onChange={handleStartDateChange}
               format="YYYY-MM-DD"
-              disabledDate={disabledDate}
+              disabledDate={disabledStartDate}
             />
             <span className={styles.dateRangeArrow}>→</span>
             <DatePicker
@@ -741,6 +921,7 @@ export default function BusinessOverviewPage() {
               onChange={handleEndDateChange}
               disabled={timeRange !== "custom"}
               format="YYYY-MM-DD"
+              disabledDate={disabledEndDate}
             />
           </div>
         </div>
@@ -754,7 +935,7 @@ export default function BusinessOverviewPage() {
           <Option value="all">全部平台</Option>
           {sources.map((source) => (
             <Option key={source} value={source}>
-              {source}
+              {getPlatformDisplayName(source)}
             </Option>
           ))}
         </Select>
@@ -762,10 +943,10 @@ export default function BusinessOverviewPage() {
 
       {/* ==================== 第一屏：核心运营指标 + 趋势分析 ==================== */}
       <div className={styles.sectionTitle}>
-        <span>📈 核心运营指标</span>
+        <span>核心运营指标</span>
       </div>
       <div className={styles.metricsRow}>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[0] }}>
           <div className={styles.metricLabel}>总调用次数</div>
           <div className={styles.metricValue}>
             {formatNumber(metricData.totalCalls)}
@@ -778,7 +959,7 @@ export default function BusinessOverviewPage() {
             {formatChange(metricData.callsGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[1] }}>
           <div className={styles.metricLabel}>总Token消耗</div>
           <div className={styles.metricValue}>
             {formatTokens(metricData.totalTokens)}
@@ -791,7 +972,7 @@ export default function BusinessOverviewPage() {
             {formatChange(metricData.tokensGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[2] }}>
           <div className={styles.metricLabel}>总使用用户</div>
           <div className={styles.metricValue}>
             {formatNumber(platformData.totalUsers)}
@@ -804,7 +985,7 @@ export default function BusinessOverviewPage() {
             {formatChange(platformData.userGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[3] }}>
           <div className={styles.metricLabel}>接入平台数</div>
           <div className={styles.metricValue}>
             {formatNumber(platformData.totalPlatforms)}
@@ -853,17 +1034,23 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.skillRow}>
         <Col xs={24} lg={12}>
           <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>🔥 热门技能 Top5</div>
+            <div className={styles.cardTitle}>热门技能 Top5</div>
             {renderBarChart(
-              (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({ name: truncateName(s.skill_name, 18), value: s.count })),
+              (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({
+                name: s.skill_name,
+                value: s.count
+              })),
             )}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>🛠️ 热门工具 Top5</div>
+            <div className={styles.cardTitle}>热门MCP服务 Top5</div>
             {renderBarChart(
-              (overviewStats?.top_mcp_tools || []).slice(0, 5).map((t: any) => ({ name: truncateName(t.tool_name, 18), value: t.count })),
+              (overviewStats?.mcp_servers || []).slice(0, 5).map((s: any) => ({
+                name: s.server_name,
+                value: s.total_calls
+              })),
             )}
           </div>
         </Col>
@@ -873,23 +1060,34 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.modelRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>🤖 模型使用分布</div>
+            <div className={styles.cardTitle}>模型使用分布</div>
             {renderPieChart(
-              (overviewStats?.model_distribution || []).map((m: any) => ({ name: truncateName(m.model_name, 18), value: m.count })),
+              (overviewStats?.model_distribution || []).map((m: any) => ({
+                name: truncateName(m.model_name, 11),
+                fullName: m.model_name,
+                value: m.count
+              })),
             )}
             {renderLegend(
-              (overviewStats?.model_distribution || []).map((m: any) => ({ name: truncateName(m.model_name, 15), value: m.count })),
+              (overviewStats?.model_distribution || []).map((m: any) => ({
+                name: truncateName(m.model_name, 15),
+                fullName: m.model_name,
+                value: m.count
+              })),
             )}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📊 各模型Token消耗</div>
+            <div className={styles.cardTitle}>各模型Token消耗</div>
             {renderBarChart(
               (overviewStats?.model_distribution || [])
                 .sort((a: any, b: any) => b.total_tokens - a.total_tokens)
                 .slice(0, 5)
-                .map((m: any) => ({ name: truncateName(m.model_name, 18), value: m.total_tokens })),
+                .map((m: any) => ({
+                  name: m.model_name,
+                  value: m.total_tokens
+                })),
               260,
             )}
           </div>
@@ -898,7 +1096,7 @@ export default function BusinessOverviewPage() {
 
       {/* ==================== 第二屏：用户分析 ==================== */}
       <div className={styles.sectionTitle}>
-        <span>👥 用户分析</span>
+        <span>用户分析</span>
       </div>
 
       {/* 核心指标卡片 */}
@@ -943,16 +1141,32 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.distributionRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📱 平台用户分布</div>
-            {renderPieChart(platformData.platformUserDistribution)}
-            {renderLegend(platformData.platformUserDistribution)}
+            <div className={styles.cardTitle}>平台用户分布{platform !== "all" ? ` · ${getPlatformDisplayName(platform)}` : ""}</div>
+            {renderPieChart(platformData.platformUserDistribution.map(item => ({
+              name: getPlatformDisplayName(item.name),
+              fullName: getPlatformDisplayName(item.name),
+              value: item.value,
+            })))}
+            {renderLegend(platformData.platformUserDistribution.map(item => ({
+              name: getPlatformDisplayName(item.name),
+              fullName: getPlatformDisplayName(item.name),
+              value: item.value,
+            })))}
           </div>
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
-            <div className={styles.cardTitle}>📞 平台调用次数分布</div>
-            {renderPieChart(platformData.platformCallDistribution)}
-            {renderLegend(platformData.platformCallDistribution)}
+            <div className={styles.cardTitle}>平台调用次数分布{platform !== "all" ? ` · ${getPlatformDisplayName(platform)}` : ""}</div>
+            {renderPieChart(platformData.platformCallDistribution.map(item => ({
+              name: getPlatformDisplayName(item.name),
+              fullName: getPlatformDisplayName(item.name),
+              value: item.value,
+            })))}
+            {renderLegend(platformData.platformCallDistribution.map(item => ({
+              name: getPlatformDisplayName(item.name),
+              fullName: getPlatformDisplayName(item.name),
+              value: item.value,
+            })))}
           </div>
         </Col>
       </Row>
@@ -961,7 +1175,7 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.userRow}>
         <Col xs={24} lg={12}>
           <div className={styles.userCard}>
-            <div className={styles.cardTitle}>🏆 调用数 Top5</div>
+            <div className={styles.cardTitle}>调用数 Top5</div>
             {renderUserList(
               [...topUsers].sort((a, b) => b.calls - a.calls).slice(0, 5),
               "calls",
@@ -970,7 +1184,7 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.userCard}>
-            <div className={styles.cardTitle}>🕐 最近活跃 Top5</div>
+            <div className={styles.cardTitle}>最近活跃 Top5</div>
             {renderUserList(
               [...topUsers]
                 .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())

@@ -502,3 +502,9 @@ CRON_WPLUS_PRIVATE_KEY = EnvVarLoader.get_str(
     "SWE_CRON_WPLUS_PRIVATE_KEY",
     "",
 )
+
+# User Info API URL (区分环境的用户信息查询接口地址)
+USER_INFO_API_URL = EnvVarLoader.get_str(
+    "SWE_USER_INFO_API_URL",
+    "",
+)

@@ -36,6 +36,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# 需要从统计中排除的 source_id（测试平台等）
+EXCLUDED_SOURCE_IDS = ["default"]
+
 
 def _matches_trace_filters(
     trace: Trace,
@@ -230,17 +233,16 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
             span.trace_id,
             span.source_id,
-            span.parent_span_id,
             span.name,
             span.event_type.value
             if isinstance(span.event_type, EventType)
@@ -260,7 +262,6 @@ class TraceStore:
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
         )
         await self.db.execute(query, params)
 
@@ -281,7 +282,6 @@ class TraceStore:
                 output_tokens = %s,
                 tool_output = %s,
                 error = %s,
-                metadata = %s,
                 event_type = %s
             WHERE span_id = %s
         """
@@ -292,7 +292,6 @@ class TraceStore:
             span.output_tokens,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
             span.event_type.value
             if hasattr(span.event_type, "value")
             else span.event_type,
@@ -332,11 +331,11 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
         for span in spans:
@@ -345,7 +344,6 @@ class TraceStore:
                     span.span_id,
                     span.trace_id,
                     span.source_id,
-                    span.parent_span_id,
                     span.name,
                     span.event_type.value
                     if isinstance(span.event_type, EventType)
@@ -365,7 +363,6 @@ class TraceStore:
                     json.dumps(span.tool_input) if span.tool_input else None,
                     span.tool_output,
                     span.error,
-                    json.dumps(span.metadata) if span.metadata else None,
                 ),
             )
         await self.db.execute_many(query, params_list)
@@ -517,7 +514,9 @@ class TraceStore:
 
         # If source_id is "all", get distribution across all sources
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT
                     source_id,
                     COUNT(DISTINCT user_id) as user_count,
@@ -526,10 +525,14 @@ class TraceStore:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id IS NOT NULL AND source_id != ''
+                  AND source_id NOT IN ({exclude_placeholders})
                 GROUP BY source_id
                 ORDER BY call_count DESC
             """
-            rows = await self.db.fetch_all(query, (start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
         else:
             query = """
                 SELECT
@@ -542,7 +545,10 @@ class TraceStore:
                 GROUP BY source_id
                 ORDER BY call_count DESC
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
 
         platform_user_dist = []
         platform_call_dist = []
@@ -551,14 +557,18 @@ class TraceStore:
         for row in rows:
             src_id = row["source_id"]
             sources.append(src_id)
-            platform_user_dist.append({
-                "name": src_id,
-                "value": row["user_count"] or 0,
-            })
-            platform_call_dist.append({
-                "name": src_id,
-                "value": row["call_count"] or 0,
-            })
+            platform_user_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["user_count"] or 0,
+                },
+            )
+            platform_call_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["call_count"] or 0,
+                },
+            )
 
         return {
             "platformUserDistribution": platform_user_dist,
@@ -578,7 +588,7 @@ class TraceStore:
             end_date: Optional end date filter
 
         Returns:
-            List of source_id strings
+            List of source_id strings (excluding test platforms)
         """
         if self.db is None or not self.db.is_connected:
             logger.error("Database not connected in get_sources")
@@ -589,14 +599,21 @@ class TraceStore:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        query = """
+        # 构建排除测试平台的条件
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        query = f"""
             SELECT DISTINCT source_id
             FROM swe_tracing_traces
             WHERE start_time >= %s AND start_time <= %s
               AND source_id IS NOT NULL AND source_id != ''
+              AND source_id NOT IN ({exclude_placeholders})
             ORDER BY source_id
         """
-        rows = await self.db.fetch_all(query, (start_date, end_date))
+        rows = await self.db.fetch_all(
+            query,
+            (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+        )
         return [row["source_id"] for row in rows]
 
     async def get_growth_stats(
@@ -685,7 +702,10 @@ class TraceStore:
             "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),
             "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),
             "userGrowth": calc_growth(curr["users"], prev["users"]),
-            "platformGrowth": calc_growth(curr["platforms"], prev["platforms"]),
+            "platformGrowth": calc_growth(
+                curr["platforms"],
+                prev["platforms"],
+            ),
         }
 
     async def get_daily_trend(
@@ -739,11 +759,16 @@ class TraceStore:
                 GROUP BY DATE(start_time)
                 ORDER BY date
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
 
         return [
             {
-                "date": row["date"].strftime("%Y-%m-%d") if row["date"] else "",
+                "date": row["date"].strftime("%Y-%m-%d")
+                if row["date"]
+                else "",
                 "calls": row["calls"] or 0,
                 "tokens": row["tokens"] or 0,
                 "users": row["users"] or 0,
@@ -775,11 +800,18 @@ class TraceStore:
         """
         # Build where clauses based on source_id
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
+
+        # 排除测试用户
+        where_clauses.append("user_id != 'default'")
 
         if user_id:
             where_clauses.append("user_id LIKE %s")
@@ -842,7 +874,8 @@ class TraceStore:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend([source_id, source_id, page_size, offset])
+            # 子查询参数在前，然后是 WHERE 子句参数，最后是 LIMIT/OFFSET
+            params = [source_id, source_id] + params + [page_size, offset]
         rows = await self.db.fetch_all(query, tuple(params))
         users = [
             UserListItem(
@@ -1282,16 +1315,8 @@ class TraceStore:
                     end_time=span.end_time,
                     duration_ms=span.duration_ms or 0,
                     skill_name=span.skill_name,
-                    confidence=(
-                        span.metadata.get("confidence", 1.0)
-                        if span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        span.metadata.get("trigger_reason", "declared")
-                        if span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     children=[],
                 )
 
@@ -1401,16 +1426,8 @@ class TraceStore:
                     start_time=skill_span.start_time,
                     end_time=skill_span.end_time,
                     duration_ms=skill_span.duration_ms or 0,
-                    confidence=(
-                        skill_span.metadata.get("confidence", 1.0)
-                        if skill_span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        skill_span.metadata.get("trigger_reason", "declared")
-                        if skill_span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     tools=tools,
                     total_tool_calls=len(tools),
                     tool_duration_ms=sum(t.duration_ms for t in tools),
@@ -1728,21 +1745,32 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> int:
-        """Get total users count."""
+        """Get total users count (excluding test users)."""
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT COUNT(DISTINCT user_id) as total_users
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
             """
-            row = await self.db.fetch_one(query, (start_date, end_date))
+            row = await self.db.fetch_one(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
         else:
             query = """
                 SELECT COUNT(DISTINCT user_id) as total_users
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
             """
-            row = await self.db.fetch_one(query, (source_id, start_date, end_date))
+            row = await self.db.fetch_one(
+                query,
+                (source_id, start_date, end_date),
+            )
         result = row["total_users"] if row else 0
         return result
 
@@ -1769,7 +1797,10 @@ class TraceStore:
                 FROM swe_tracing_spans
                 WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''
             """
-            rows = await self.db.fetch_all(query, (source_id, online_threshold))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, online_threshold),
+            )
         user_ids = [row["user_id"] for row in rows if row["user_id"]]
         return len(user_ids), user_ids
 
@@ -1779,9 +1810,11 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> Optional[dict]:
-        """Get token statistics."""
+        """Get token statistics (excluding test platforms)."""
         if source_id == "all":
-            query = """
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
                 SELECT
                     SUM(total_input_tokens) as input_tokens,
                     SUM(total_output_tokens) as output_tokens,
@@ -1791,8 +1824,12 @@ class TraceStore:
                     AVG(duration_ms) as avg_duration
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
             """
-            return await self.db.fetch_one(query, (start_date, end_date))
+            return await self.db.fetch_one(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
         else:
             query = """
                 SELECT
@@ -1842,7 +1879,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ModelUsage(
                 model_name=row["model_name"],
@@ -1890,7 +1930,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ToolUsage(
                 tool_name=row["tool_name"],
@@ -1933,7 +1976,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            rows = await self.db.fetch_all(query, (source_id, start_date, end_date))
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             SkillUsage(
                 skill_name=row["skill_name"],
@@ -2039,7 +2085,10 @@ class TraceStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            mcp_tool_rows = await self.db.fetch_all(mcp_tool_query, (start_date, end_date))
+            mcp_tool_rows = await self.db.fetch_all(
+                mcp_tool_query,
+                (start_date, end_date),
+            )
         else:
             mcp_tool_query = """
                 SELECT tool_name, mcp_server, COUNT(*) as count,
@@ -2098,7 +2147,10 @@ class TraceStore:
                 GROUP BY mcp_server
                 ORDER BY total_calls DESC
             """
-            server_rows = await self.db.fetch_all(query, (start_date, end_date))
+            server_rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date),
+            )
         else:
             query = """
                 SELECT mcp_server,
@@ -2160,7 +2212,10 @@ class TraceStore:
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
-            rows = await self.db.fetch_all(query, (start_date, end_date, server_name))
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, server_name),
+            )
         else:
             query = """
                 SELECT tool_name, mcp_server, COUNT(*) as count,
@@ -2384,7 +2439,6 @@ class TraceStore:
             span_id=row["span_id"],
             trace_id=row["trace_id"],
             source_id=row["source_id"],
-            parent_span_id=row["parent_span_id"],
             name=row["name"],
             event_type=EventType(row["event_type"]),
             start_time=row["start_time"],
@@ -2404,5 +2458,4 @@ class TraceStore:
             else None,
             tool_output=row["tool_output"],
             error=row["error"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
         )

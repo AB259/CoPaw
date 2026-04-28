@@ -273,7 +273,10 @@ def _build_user_messages_csv_response(
 @router.get("/overview", response_model=OverviewStats)
 async def get_overview(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    source_id: Optional[str] = Query(
+        None,
+        description="Source identifier, use 'all' for all platforms",
+    ),
     start_date: Optional[str] = Query(
         None,
         description="Start date (YYYY-MM-DD)",
@@ -309,7 +312,10 @@ async def get_overview(
 @router.get("/users", response_model=dict)
 async def get_users(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    source_id: Optional[str] = Query(
+        None,
+        description="Source identifier, use 'all' for all platforms",
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     user_id: Optional[str] = Query(
@@ -919,7 +925,10 @@ async def get_trace_timeline(
 @router.get("/sources", response_model=dict)
 async def get_sources(
     request: Request,
-    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
 ) -> dict:
     """Get list of all distinct source_ids (platforms).
@@ -947,8 +956,14 @@ async def get_sources(
 @router.get("/channel-distribution", response_model=dict)
 async def get_channel_distribution(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
-    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    source_id: Optional[str] = Query(
+        None,
+        description="Source identifier, use 'all' for all platforms",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
 ) -> dict:
     """Get channel (platform) distribution statistics.
@@ -982,10 +997,16 @@ async def get_channel_distribution(
 @router.get("/growth-stats", response_model=dict)
 async def get_growth_stats(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    source_id: Optional[str] = Query(
+        None,
+        description="Source identifier, use 'all' for all platforms",
+    ),
     start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
-    time_range: str = Query("day", description="Time range: day, week, month, custom"),
+    time_range: str = Query(
+        "day",
+        description="Time range: day, week, month, custom",
+    ),
 ) -> dict:
     """Get growth statistics compared to previous period.
 
@@ -1016,15 +1037,24 @@ async def get_growth_stats(
     end = _parse_date(end_date, "end_date", add_day=True)
 
     return await store.get_growth_stats(
-        actual_source_id, start, end, time_range
+        actual_source_id,
+        start,
+        end,
+        time_range,
     )
 
 
 @router.get("/daily-trend", response_model=dict)
 async def get_daily_trend(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
-    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    source_id: Optional[str] = Query(
+        None,
+        description="Source identifier, use 'all' for all platforms",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
 ) -> dict:
     """Get daily trend data for the specified period.
@@ -1050,93 +1080,3 @@ async def get_daily_trend(
 
     trend = await store.get_daily_trend(actual_source_id, start, end)
     return {"trendData": trend}
-@router.get("/overview", response_model=OverviewStats)
-async def get_overview(
-    request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
-    start_date: Optional[str] = Query(
-        None,
-        description="Start date (YYYY-MM-DD)",
-    ),
-    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-) -> OverviewStats:
-    """Get overview statistics for the dashboard.
-
-    Args:
-        source_id: Source identifier (use 'all' or leave empty for all platforms)
-        start_date: Optional start date filter
-        end_date: Optional end date filter
-
-    Returns:
-        Overview statistics including user counts, token usage,
-        model distribution.
-    """
-    # Use 'all' to get data across all sources when not specified
-    actual_source_id = source_id or "all"
-    try:
-        manager = get_trace_manager()
-        store = manager.store
-    except RuntimeError:
-        # Tracing not initialized, return empty stats
-        return OverviewStats()
-
-    start = _parse_date(start_date, "start_date")
-    end = _parse_date(end_date, "end_date", add_day=True)
-
-    return await store.get_overview_stats(actual_source_id, start, end)
-
-
-@router.get("/users", response_model=dict)
-async def get_users(
-    request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Page size"),
-    user_id: Optional[str] = Query(
-        None,
-        description="Filter by user ID (partial match)",
-    ),
-    start_date: Optional[str] = Query(
-        None,
-        description="Start date (YYYY-MM-DD)",
-    ),
-    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-) -> dict:
-    """Get list of users with their statistics.
-
-    Args:
-        source_id: Source identifier (use 'all' or leave empty for all platforms)
-        page: Page number
-        page_size: Page size
-        user_id: Filter by user ID
-        start_date: Start date filter
-        end_date: End date filter
-
-    Returns:
-        Paginated list of users with stats
-    """
-    # Use 'all' to get data across all sources when not specified
-    actual_source_id = source_id or "all"
-    try:
-        manager = get_trace_manager()
-        store = manager.store
-    except RuntimeError:
-        return {"items": [], "total": 0, "page": page, "page_size": page_size}
-
-    start = _parse_date(start_date, "start_date")
-    end = _parse_date(end_date, "end_date", add_day=True)
-
-    users, total = await store.get_users(
-        actual_source_id,
-        page,
-        page_size,
-        user_id,
-        start,
-        end,
-    )
-    return {
-        "items": [u.model_dump() for u in users],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
