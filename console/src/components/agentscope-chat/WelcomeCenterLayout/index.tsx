@@ -1,25 +1,29 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Input, Upload } from "antd";
+import { Input, Upload, Tooltip, message } from "antd";
+import type { UploadFile } from "antd";
 import { SparkAttachmentLine } from "@agentscope-ai/icons";
 import { IconButton } from "@agentscope-ai/design";
-import { Tooltip } from "antd";
+import { Attachments } from "@/components/agentscope-chat";
+import { chatApi } from "@/api/modules/chat";
 import Style from "./style";
 import KnowledgeTabs from "../KnowledgeTabs";
 import FeaturedCases from "../FeaturedCases";
 import CaseDetailDrawer from "../CaseDetailDrawer";
 import { featuredCasesApi } from "@/api/modules/featuredCases";
 import type { FeaturedCase } from "@/api/types/featuredCases";
-import type { GreetingDisplay } from "@/api/types/greeting";
 import sendIcon from '../../../assets/icons/send_highlight.svg'
+import { useTranslation } from 'react-i18next';
 
 interface WelcomeCenterLayoutProps {
   greeting?: string;
-  onSubmit: (data: { query: string }) => void;
+  onSubmit: (data: { query: string; fileList?: any[] }) => void;
 }
 
 export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
   const { greeting, onSubmit } = props;
+  const { t } = useTranslation();
   const [inputValue, setInputValue] = useState("");
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [selectedCase, setSelectedCase] = useState<FeaturedCase | null>(null);
   const [randomPlaceholder, setRandomPlaceholder] = useState('');
@@ -41,9 +45,15 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
   const handleSend = useCallback(() => {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    onSubmit({ query: trimmed });
+    
+    // Filter files that have been successfully uploaded (have response.url)
+    const uploadedFiles = fileList.filter((f) => f.response?.url);
+    
+    // Submit with file list
+    onSubmit({ query: trimmed, fileList: uploadedFiles });
     setInputValue("");
-  }, [inputValue, onSubmit]);
+    setFileList([]); // Clear attachment list
+  }, [inputValue, fileList, onSubmit]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -82,6 +92,65 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
     setSelectedCase(null);
   }, []);
 
+  // Handle file upload - use chatApi to upload files (same as bottom Input)
+  const handleBeforeUpload = useCallback((file: File) => {
+    const uid = `welcome-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const uploadFile: UploadFile = {
+      uid,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      status: "uploading",
+      percent: 0,
+      originFileObj: file as any,
+    };
+
+    setFileList((prev) => [...prev, uploadFile]);
+
+    // If it's an image, generate thumbnail for preview
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result;
+        if (typeof dataUrl === "string") {
+          setFileList((prev) =>
+            prev.map((f) =>
+              f.uid === uid ? { ...f, thumbUrl: dataUrl } : f,
+            ),
+          );
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Actually upload the file using chatApi
+    chatApi
+      .uploadFile(file)
+      .then((res) => {
+        // Upload succeeded, update with URL
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === uid
+              ? {
+                  ...f,
+                  status: "done" as const,
+                  percent: 100,
+                  response: { url: chatApi.filePreviewUrl(res.url) },
+                }
+              : f,
+          ),
+        );
+      })
+      .catch((error) => {
+        console.error("File upload failed:", error);
+        message.error(t("chat.attachments.uploadFailed"));
+        // Mark as error and remove from list
+        setFileList((prev) => prev.filter((f) => f.uid !== uid));
+      });
+
+    return false; // Prevent default upload behavior
+  }, [t]);
+
   return (
     <>
       <Style />
@@ -89,8 +158,18 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
         {/* Greeting */}
         <div className="welcome-greeting">{greeting}</div>
 
-        {/* Input Card */}
+        {/* Input Card with upload */}
         <div className="welcome-input-card">
+          {/* Attachment preview area */}
+          {fileList.length > 0 && (
+            <div style={{ marginBottom: -8, marginTop: -8, marginLeft: -20 }}>
+              <Attachments
+                items={fileList}
+                onChange={(info) => setFileList(info.fileList)}
+              />
+            </div>
+          )}
+          
           <Input.TextArea
             className="welcome-input-placeholder"
             value={inputValue}
@@ -108,14 +187,7 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
                     ref={uploadRef}
                     showUploadList={false}
                     accept="*/*"
-                    beforeUpload={(file) => {
-                      document.dispatchEvent(
-                        new CustomEvent("pasteFile", {
-                          detail: { file },
-                        }),
-                      );
-                      return false;
-                    }}
+                    beforeUpload={handleBeforeUpload}
                   >
                     <IconButton
                       icon={<SparkAttachmentLine />}
