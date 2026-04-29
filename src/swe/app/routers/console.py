@@ -14,11 +14,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, 
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from agentscope_runtime.engine.schemas.agent_schemas import (
-    AgentRequest,
-    TextContent,
-    ContentType,
-)
+from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
 
 
@@ -40,41 +36,29 @@ def _safe_filename(name: str) -> str:
 def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
     """Extract run_key (ChatSpec.id), session_id, and native payload.
 
+    Align with qwenpaw: keep full multimodal content parts (text/file/image/audio/video)
+    instead of dropping non-text blocks.
+
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
     """
-    # First convert to dict to handle both AgentRequest and raw dict uniformly
     if isinstance(request_data, AgentRequest):
-        request_dict = request_data.model_dump()
-        # AgentRequest doesn't have 'channel', default to 'console'
-        channel_id = "console"
-        sender_id = request_dict.get("user_id") or "default"
-        session_id = request_dict.get("session_id") or "default"
-        input_data = request_dict.get("input", [])
+        channel_id = getattr(request_data, "channel", None) or "console"
+        sender_id = request_data.user_id or "default"
+        session_id = request_data.session_id or "default"
+        content_parts = list(request_data.input[0].content) if request_data.input else []
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
 
-    # Extract content parts from input messages and convert to TextContent objects
-    content_parts: List[Any] = []
-    for msg in input_data:
-        if isinstance(msg, dict) and "content" in msg:
-            for part in msg.get("content") or []:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    # Convert dict to TextContent object
-                    content_parts.append(
-                        TextContent(
-                            type=ContentType.TEXT,
-                            text=part.get("text", ""),
-                        ),
-                    )
-                elif (
-                    hasattr(part, "type")
-                    and getattr(part, "type") == ContentType.TEXT
-                ):
-                    # Already a Content object
-                    content_parts.append(part)
+        content_parts: List[Any] = []
+        for content_part in input_data:
+            # pydantic model (rare in this branch) or plain dict
+            if hasattr(content_part, "content"):
+                content_parts.extend(list(content_part.content or []))
+            elif isinstance(content_part, dict) and "content" in content_part:
+                content_parts.extend(content_part.get("content") or [])
 
     native_payload = {
         "channel_id": channel_id,
