@@ -26,6 +26,14 @@
 
 ## 二、架构总览
 
+### 部署架构
+
+market 是独立服务，代码位于仓库根目录 `market/src/`，使用 Python + FastAPI，与主服务（`src/swe/`）独立部署。
+
+两者通过以下方式共享数据：
+- **数据库**：共享同一 MySQL 实例，market 服务读写 `swe_*` 前缀表
+- **文件系统**：通过 NAS 挂载共享，market 服务可直接读写 `~/.swe.marketplace/` 和 `~/.swe/<user_id>/` 目录
+
 ### 存储层
 
 **文件系统（内容存储）**
@@ -42,19 +50,21 @@
 
 **数据库（操作日志）**
 
-新增 `marketplace_operation_logs` 表，记录所有写操作，支持分发记录查询和数据分析。
+新增 `swe_marketplace_operation_logs` 表，记录所有写操作，支持分发记录查询和数据分析。
 
 ### 服务层
 
 新增 `MarketplaceService`，职责：
 - 市场技能 CRUD（管理员操作）
 - 按 source-id + bbk-id 过滤内容
-- 分发：将市场内容写入目标用户的 `~/.swe/<user_id>/` 目录
+- 分发：通过 NAS 共享直接将市场内容写入目标用户的 `~/.swe/<user_id>/` 目录
 - 写操作同步记录日志到数据库
 
 ### API 层
 
-在 `src/swe/app/routers/` 新增 `marketplace_router.py`，通过请求头 `X-Source-Id` 和 `manager` 标识做权限校验。
+在 `market/src/` 下新增 FastAPI 路由，通过请求头 `X-Source-Id` 和 `manager` 标识做权限校验。
+
+> **实施注意**：所有后端代码统一放在 `market/src/` 目录下；前端新增页面统一放在 `console/src/pages/Market/` 目录下。
 
 ### 前端层
 
@@ -117,27 +127,30 @@
 
 ### 3.3 数据库日志表
 
-#### 用户技能操作日志
+#### 用户操作日志
+
+技能和 MCP 共用一张表，通过 `item_type` 区分。
 
 ```sql
-CREATE TABLE user_skill_operation_logs (
+CREATE TABLE swe_user_item_operation_logs (
   id           BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
   source_id    VARCHAR(64)  NOT NULL COMMENT '应用入口标识',
   user_id      VARCHAR(128) NOT NULL COMMENT '操作用户ID',
   user_name    VARCHAR(256) COMMENT '操作用户名称',
   operation    VARCHAR(32)  NOT NULL COMMENT '操作类型：create/edit/delete',
-  skill_name   VARCHAR(256) NOT NULL COMMENT '技能名称',
+  item_type    VARCHAR(16)  NOT NULL COMMENT '条目类型：skill/mcp',
+  item_name    VARCHAR(256) NOT NULL COMMENT '条目名称',
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
   INDEX idx_source_id (source_id),
   INDEX idx_user_id (user_id),
-  INDEX idx_skill_name (skill_name)
-) COMMENT='用户技能操作日志';
+  INDEX idx_item_type (item_type)
+) COMMENT='用户技能/MCP操作日志';
 ```
 
 #### 市场操作日志
 
 ```sql
-CREATE TABLE marketplace_operation_logs (
+CREATE TABLE swe_marketplace_operation_logs (
   id             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
   source_id      VARCHAR(64)  NOT NULL COMMENT '应用入口标识',
   operator_id    VARCHAR(64)  NOT NULL COMMENT '操作人用户ID',
@@ -157,7 +170,7 @@ CREATE TABLE marketplace_operation_logs (
 ```
 
 字段说明：
-- `marketplace_operation_logs.operation`：`publish`（上架）/ `unpublish`（下架）/ `distribute`（分发）
+- `swe_marketplace_operation_logs.operation`：`publish`（上架）/ `unpublish`（下架）/ `distribute`（分发）
 - `item_type`：`skill` / `mcp`
 - `target_user_id`：分发时展开到用户粒度，每个用户一条记录
 - `target_bbk_id`：分发时快照目标用户所属机构，用于机构维度聚合统计
@@ -165,15 +178,15 @@ CREATE TABLE marketplace_operation_logs (
 常用查询：
 ```sql
 -- 某技能分发给了多少人
-SELECT COUNT(DISTINCT target_user_id) FROM marketplace_operation_logs
+SELECT COUNT(DISTINCT target_user_id) FROM swe_marketplace_operation_logs
 WHERE item_id = ? AND operation = 'distribute';
 
 -- 某 bbk_id 下收到了多少技能
-SELECT COUNT(DISTINCT item_id) FROM marketplace_operation_logs
+SELECT COUNT(DISTINCT item_id) FROM swe_marketplace_operation_logs
 WHERE target_bbk_id = ? AND operation = 'distribute';
 
 -- 某用户收到了哪些技能
-SELECT * FROM marketplace_operation_logs
+SELECT * FROM swe_marketplace_operation_logs
 WHERE target_user_id = ? AND operation = 'distribute';
 ```
 
@@ -182,7 +195,7 @@ WHERE target_user_id = ? AND operation = 'distribute';
 按 source-id 隔离，暂不提供管理页面，直接操作数据库配置。
 
 ```sql
-CREATE TABLE marketplace_categories (
+CREATE TABLE swe_marketplace_categories (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
   source_id   VARCHAR(64)  NOT NULL COMMENT '应用入口标识',
   name        VARCHAR(128) NOT NULL COMMENT '分类名称',
@@ -264,6 +277,20 @@ DELETE /api/skills/{skill_name}                 # 删除技能（复用现有接
 ---
 
 ## 六、前端页面设计
+
+### UI 风格规范
+
+参考 `D:\Vibe Coding\CmbCoworkAgent-main` 项目的应用市场、MCP、技能页面，尽量模仿其 UI 和交互风格，使用 Ant Design 5 + antd-style 实现：
+
+- **布局**：左侧分类树 + 右侧卡片网格，参考 `MarketPanel.tsx`
+- **卡片**：`Card` 组件 + `hoverable`，悬停时白色背景 + 阴影过渡（200ms）
+- **徽章系统**：`Tag` 组件实现分类标签和状态标记（已安装、有更新等）
+- **统计指标**：卡片内渐变背景小块展示调用次数、用户量，参考 `MarketPanel.tsx`
+- **颜色**：跟随 CoPaw 现有主题色，不移植 CmbCoworkAgent 的棕色系
+- **参考文件**：
+  - `D:\Vibe Coding\CmbCoworkAgent-main\src\renderer\src\components\customize\MarketPanel.tsx`
+  - `D:\Vibe Coding\CmbCoworkAgent-main\src\renderer\src\components\customize\McpPanel.tsx`
+  - `D:\Vibe Coding\CmbCoworkAgent-main\src\renderer\src\components\customize\SkillsPanel.tsx`
 
 ### 菜单结构
 
