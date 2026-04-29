@@ -10,6 +10,7 @@ from ...marketplace.schemas import (
     MarketSkillResponse,
     PublishSkillRequest,
 )
+from ..deps import require_source_id
 
 router = APIRouter()
 
@@ -17,15 +18,6 @@ router = APIRouter()
 def _require_manager(x_manager: Optional[str]) -> None:
     if x_manager != "true":
         raise HTTPException(status_code=403, detail="Manager access required")
-
-
-def _require_source_id(x_source_id: Optional[str]) -> str:
-    if not x_source_id:
-        raise HTTPException(
-            status_code=400,
-            detail="X-Source-Id header is required",
-        )
-    return x_source_id
 
 
 @router.post(
@@ -40,7 +32,7 @@ async def publish_skill(
     x_manager: Optional[str] = Header(default=None, alias="X-Manager"),
 ):
     """上架技能（管理员）."""
-    source_id = _require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     _require_manager(x_manager)
     svc = request.app.state.marketplace
     item = await svc.publish_skill(source_id, req)
@@ -72,7 +64,7 @@ async def unpublish_skill(
     x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
 ):
     """下架技能（管理员）."""
-    source_id = _require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     _require_manager(x_manager)
     svc = request.app.state.marketplace
     ok = await svc.unpublish_skill(
@@ -99,7 +91,7 @@ async def distribute_skill(
     x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
 ):
     """分发技能（管理员）."""
-    source_id = _require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     _require_manager(x_manager)
     svc = request.app.state.marketplace
     try:
