@@ -1,0 +1,128 @@
+# -*- coding: utf-8 -*-
+"""市场文件系统工具.
+
+市场目录结构：
+  <marketplace_root>/<source_id>/index.json
+  <marketplace_root>/<source_id>/skills/<item_id>/skill.json
+  <marketplace_root>/<source_id>/skills/<item_id>/SKILL.md
+
+用户技能目录：
+  <swe_root>/<user_id>/workspaces/<agent_id>/skills/<skill_name>/
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from .models import MarketItem
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_AGENT_ID = "default"
+
+
+def get_marketplace_dir(marketplace_root: Path, source_id: str) -> Path:
+    return marketplace_root / source_id
+
+
+def get_index_path(marketplace_root: Path, source_id: str) -> Path:
+    return get_marketplace_dir(marketplace_root, source_id) / "index.json"
+
+
+def get_skill_dir(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+) -> Path:
+    return (
+        get_marketplace_dir(marketplace_root, source_id) / "skills" / item_id
+    )
+
+
+def get_user_skills_dir(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> Path:
+    return swe_root / user_id / "workspaces" / agent_id / "skills"
+
+
+def load_index(marketplace_root: Path, source_id: str) -> list[MarketItem]:
+    """读取市场索引，不存在时返回空列表."""
+    path = get_index_path(marketplace_root, source_id)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [MarketItem(**item) for item in data.get("items", [])]
+    except Exception as e:
+        logger.error("Failed to load index %s: %s", path, e)
+        return []
+
+
+def save_index(
+    marketplace_root: Path,
+    source_id: str,
+    items: list[MarketItem],
+) -> None:
+    """原子写入市场索引."""
+    path = get_index_path(marketplace_root, source_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"items": [item.model_dump() for item in items]}
+    _atomic_write_json(path, data)
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """原子写入 JSON 文件，防止并发损坏."""
+    dir_ = path.parent
+    dir_.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def copy_skill_to_user(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+    swe_root: Path,
+    user_id: str,
+    skill_name: str,
+    distributed_by: str,
+    version: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> None:
+    """将市场技能复制到用户工作目录，并写入分发元数据."""
+    src_dir = get_skill_dir(marketplace_root, source_id, item_id)
+    dst_dir = get_user_skills_dir(swe_root, user_id, agent_id) / skill_name
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    src_skill_md = src_dir / "SKILL.md"
+    if src_skill_md.exists():
+        (dst_dir / "SKILL.md").write_bytes(src_skill_md.read_bytes())
+
+    src_skill_json = src_dir / "skill.json"
+    skill_data: dict = {}
+    if src_skill_json.exists():
+        try:
+            skill_data = json.loads(src_skill_json.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    skill_data["source"] = f"marketplace:{item_id}"
+    skill_data["distributed_by"] = distributed_by
+    skill_data["received_version"] = version
+
+    _atomic_write_json(dst_dir / "skill.json", skill_data)
