@@ -7,18 +7,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..__version__ import __version__
-from ..config.constant import (
-    DOCS_ENABLED,
-    CORS_ORIGINS,
-    DB_HOST,
-    DB_PORT,
-    DB_USER,
-    DB_ACCESS,
-    DB_NAME,
-    DB_MIN_CONN,
-    DB_MAX_CONN,
-)
-from ..database.connection import DatabaseConfig, DatabaseConnection
+from ..config.constant import DOCS_ENABLED, CORS_ORIGINS
+from ..database.config import get_database_config
+from ..database.connection import DatabaseConnection
 from .routers import api_router
 
 logger = logging.getLogger(__name__)
@@ -29,21 +20,25 @@ async def lifespan(fastapi_app: FastAPI):
     logger.info("Market service starting up...")
     logger.info(f"Environment: {os.environ.get('MARKET_ENV', 'prd')}")
 
-    db_config = DatabaseConfig(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_ACCESS,
-        database=DB_NAME,
-        min_connections=DB_MIN_CONN,
-        max_connections=DB_MAX_CONN,
-    )
+    db_config = get_database_config()
     db = DatabaseConnection(db_config)
-    if DB_HOST:
+    if db_config.host:
         try:
             await db.connect()
+            if not db.is_connected:
+                raise RuntimeError(
+                    "Database connection failed after connect(). Check DB config.",
+                )
+            logger.info("Database connection established: %s", db_config.host)
+        except RuntimeError:
+            raise
         except Exception as e:
-            logger.warning("DB connection failed (non-fatal): %s", e)
+            logger.error("Failed to initialize database connection: %s", e)
+            raise RuntimeError(
+                "Database connection is required. Check database configuration.",
+            ) from e
+    else:
+        logger.info("Database connection disabled (no host configured)")
     fastapi_app.state.db = db
 
     yield

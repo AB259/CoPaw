@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from .config import DatabaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +17,6 @@ except ImportError:
     logger.debug(
         "aiomysql not installed, database features will be unavailable",
     )
-
-
-class DatabaseConfig(BaseModel):
-    host: str = Field(default="localhost")
-    port: int = Field(default=3306)
-    user: str = Field(default="root")
-    password: str = Field(default="")
-    database: str = Field(default="swe")
-    min_connections: int = Field(default=2)
-    max_connections: int = Field(default=10)
-    charset: str = Field(default="utf8mb4")
 
 
 class DatabaseConnection:
