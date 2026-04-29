@@ -21,7 +21,7 @@ class MarketItem(BaseModel):
     category_id: Optional[int] = None
     bbk_ids: list[str] = Field(default_factory=list)
     status: str = "active"
-    created_at: Optional[str] = None
+    created_at: Optional[str] = None  # ISO8601 string from index.json
     updated_at: Optional[str] = None
 
 
@@ -32,7 +32,7 @@ class CategoryItem(BaseModel):
     source_id: str
     name: str
     sort_order: int = 0
-    created_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None  # datetime from MySQL
 
 
 class SkillManifest(BaseModel):

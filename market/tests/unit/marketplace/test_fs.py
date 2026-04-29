@@ -59,3 +59,105 @@ def test_get_user_skills_dir(tmp_path):
 
     result = get_user_skills_dir(tmp_path, "user1", "agent1")
     assert result == tmp_path / "user1" / "workspaces" / "agent1" / "skills"
+
+
+def test_copy_skill_to_user_happy_path(tmp_path):
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skills_dir,
+    )
+    import json
+
+    # Setup source skill
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Skill", encoding="utf-8")
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "test"}),
+        encoding="utf-8",
+    )
+    # Copy
+    copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-1",
+        tmp_path / "swe",
+        "user1",
+        "my_skill",
+        "admin1",
+        "1.0.0",
+    )
+    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill"
+    assert (dst_dir / "SKILL.md").read_text() == "# Skill"
+    data = json.loads((dst_dir / "skill.json").read_text())
+    assert data["source"] == "marketplace:item-1"
+    assert data["distributed_by"] == "admin1"
+    assert data["received_version"] == "1.0.0"
+
+
+def test_copy_skill_to_user_missing_skill_md(tmp_path):
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skills_dir,
+    )
+    import json
+
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-2")
+    src_dir.mkdir(parents=True)
+    # No SKILL.md, only skill.json
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "test"}),
+        encoding="utf-8",
+    )
+    copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-2",
+        tmp_path / "swe",
+        "user1",
+        "my_skill2",
+        "admin1",
+        "1.0.0",
+    )
+    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill2"
+    assert not (dst_dir / "SKILL.md").exists()
+    data = json.loads((dst_dir / "skill.json").read_text())
+    assert data["source"] == "marketplace:item-2"
+
+
+def test_copy_skill_to_user_missing_skill_json(tmp_path):
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skills_dir,
+    )
+    import json
+
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-3")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Skill", encoding="utf-8")
+    # No skill.json
+    copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-3",
+        tmp_path / "swe",
+        "user1",
+        "my_skill3",
+        "admin1",
+        "2.0.0",
+    )
+    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill3"
+    data = json.loads((dst_dir / "skill.json").read_text())
+    assert data["source"] == "marketplace:item-3"
+    assert data["received_version"] == "2.0.0"
+
+
+def test_validate_path_segment_rejects_traversal(tmp_path):
+    from market.marketplace.fs import get_marketplace_dir
+    import pytest
+
+    with pytest.raises(ValueError):
+        get_marketplace_dir(tmp_path, "../../etc")

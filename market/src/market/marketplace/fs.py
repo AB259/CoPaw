@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -24,12 +25,25 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_ID = "default"
 
+# Allows alphanumerics, underscores, hyphens, and dots (for version strings like "1.0.0")
+_SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+
+def _validate_path_segment(value: str, name: str = "segment") -> None:
+    """Raise ValueError if value contains path traversal or unsafe characters."""
+    if not _SAFE_SEGMENT_RE.match(value):
+        raise ValueError(
+            f"Invalid {name} {value!r}: only alphanumerics, underscores, hyphens, and dots are allowed",
+        )
+
 
 def get_marketplace_dir(marketplace_root: Path, source_id: str) -> Path:
+    _validate_path_segment(source_id, "source_id")
     return marketplace_root / source_id
 
 
 def get_index_path(marketplace_root: Path, source_id: str) -> Path:
+    _validate_path_segment(source_id, "source_id")
     return get_marketplace_dir(marketplace_root, source_id) / "index.json"
 
 
@@ -38,6 +52,8 @@ def get_skill_dir(
     source_id: str,
     item_id: str,
 ) -> Path:
+    _validate_path_segment(source_id, "source_id")
+    _validate_path_segment(item_id, "item_id")
     return (
         get_marketplace_dir(marketplace_root, source_id) / "skills" / item_id
     )
@@ -48,6 +64,8 @@ def get_user_skills_dir(
     user_id: str,
     agent_id: str = DEFAULT_AGENT_ID,
 ) -> Path:
+    _validate_path_segment(user_id, "user_id")
+    _validate_path_segment(agent_id, "agent_id")
     return swe_root / user_id / "workspaces" / agent_id / "skills"
 
 
@@ -59,7 +77,7 @@ def load_index(marketplace_root: Path, source_id: str) -> list[MarketItem]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return [MarketItem(**item) for item in data.get("items", [])]
-    except Exception as e:
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         logger.error("Failed to load index %s: %s", path, e)
         return []
 
@@ -105,6 +123,7 @@ def copy_skill_to_user(
     agent_id: str = DEFAULT_AGENT_ID,
 ) -> None:
     """将市场技能复制到用户工作目录，并写入分发元数据."""
+    _validate_path_segment(skill_name, "skill_name")
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
     dst_dir = get_user_skills_dir(swe_root, user_id, agent_id) / skill_name
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -118,8 +137,12 @@ def copy_skill_to_user(
     if src_skill_json.exists():
         try:
             skill_data = json.loads(src_skill_json.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to read source skill.json %s: %s",
+                src_skill_json,
+                e,
+            )
 
     skill_data["source"] = f"marketplace:{item_id}"
     skill_data["distributed_by"] = distributed_by
