@@ -4,7 +4,7 @@ import { featuredCasesApi } from "@/api/modules/featuredCases";
 import caseIcon from '../../../assets/icons/default_case.svg'
 
 export interface FeaturedCase {
-  id: string;
+  id: number;
   label: string;
   value: string;
   image?: string;
@@ -13,8 +13,17 @@ export interface FeaturedCase {
 export interface FeaturedCasesProps {
   cases?: FeaturedCase[];
   onFillInput?: (text: string) => void;
-  onViewCase?: (caseId: string) => void;
+  onViewCase?: (id: number) => void;
 }
+
+const DEFAULT_CASES: FeaturedCase[] = [
+  {
+    id: 1,
+    label: "默认案例",
+    value: "default",
+    image: caseIcon,
+  },
+];
 
 function MoreIcon() {
   return (
@@ -59,13 +68,17 @@ export default function FeaturedCases(props: FeaturedCasesProps) {
     const loadCases = async () => {
       try {
         const apiCases = await featuredCasesApi.listCases();
-        const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
-          id: c.id,
-          label: c.label,
-          value: c.value,
-          image: c.image_url,
-        }));
-        setCases(featuredCases);
+        if(apiCases && apiCases.length > 0){
+          const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
+            id: c.id,
+            label: c.label,
+            value: c.value,
+            image: c.image_url,
+          }));
+          setCases(featuredCases);
+        }else{
+          setCases(DEFAULT_CASES);
+        }
       } catch (error) {
         console.error("Failed to load cases:", error);
         // Keep empty array on error

@@ -8,16 +8,13 @@ import re
 import asyncio
 import uuid
 from pathlib import Path
-from typing import AsyncGenerator, Union, List, Any
+from typing import AsyncGenerator, Union, List, Any, Optional, Dict
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, Body
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from agentscope_runtime.engine.schemas.agent_schemas import (
-    AgentRequest,
-    TextContent,
-    ContentType,
-)
+from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
 
 
@@ -39,41 +36,29 @@ def _safe_filename(name: str) -> str:
 def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
     """Extract run_key (ChatSpec.id), session_id, and native payload.
 
+    Align with qwenpaw: keep full multimodal content parts (text/file/image/audio/video)
+    instead of dropping non-text blocks.
+
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
     """
-    # First convert to dict to handle both AgentRequest and raw dict uniformly
     if isinstance(request_data, AgentRequest):
-        request_dict = request_data.model_dump()
-        # AgentRequest doesn't have 'channel', default to 'console'
-        channel_id = "console"
-        sender_id = request_dict.get("user_id") or "default"
-        session_id = request_dict.get("session_id") or "default"
-        input_data = request_dict.get("input", [])
+        channel_id = getattr(request_data, "channel", None) or "console"
+        sender_id = request_data.user_id or "default"
+        session_id = request_data.session_id or "default"
+        content_parts = list(request_data.input[0].content) if request_data.input else []
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
 
-    # Extract content parts from input messages and convert to TextContent objects
-    content_parts: List[Any] = []
-    for msg in input_data:
-        if isinstance(msg, dict) and "content" in msg:
-            for part in msg.get("content") or []:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    # Convert dict to TextContent object
-                    content_parts.append(
-                        TextContent(
-                            type=ContentType.TEXT,
-                            text=part.get("text", ""),
-                        ),
-                    )
-                elif (
-                    hasattr(part, "type")
-                    and getattr(part, "type") == ContentType.TEXT
-                ):
-                    # Already a Content object
-                    content_parts.append(part)
+        content_parts: List[Any] = []
+        for content_part in input_data:
+            # pydantic model (rare in this branch) or plain dict
+            if hasattr(content_part, "content"):
+                content_parts.extend(list(content_part.content or []))
+            elif isinstance(content_part, dict) and "content" in content_part:
+                content_parts.extend(content_part.get("content") or [])
 
     native_payload = {
         "channel_id": channel_id,
@@ -328,3 +313,60 @@ async def get_suggestions(
     tenant_id = getattr(request.state, "tenant_id", None)
     suggestions = await take_suggestions(session_id, tenant_id=tenant_id)
     return {"suggestions": suggestions}
+
+
+class QAContentRequest(BaseModel):
+    """Q&A 内容请求模型."""
+
+    chat_id: str = Field(..., description="Chat id (backend chat.id)")
+    user_message: str = Field(..., description="User message text")
+
+
+class QAContentResponse(BaseModel):
+    """Q&A 内容响应模型."""
+
+    success: bool = Field(..., description="Whether Q&A content was found")
+    qa_content: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Extracted Q&A content (user_message, assistant_response)",
+    )
+
+
+@router.post("/suggestions/qa-content", response_model=QAContentResponse)
+async def get_suggestions_qa_content(
+    request: Request,
+    body: QAContentRequest,
+):
+    """根据用户问题获取后端提取的 Q&A 内容.
+
+    前端在响应完成后调用此接口，获取后端提取的 Q&A 关键内容，
+    用于调用外部 suggestions API。
+
+    Args:
+        chat_id: 后端 chat.id（UUID）
+        user_message: 用户问题文本（用于匹配）
+
+    Returns:
+        success: 是否找到 Q&A 内容
+        qa_content: 提取后的用户问题和助手回答（总长度不超过配置上限）
+    """
+    from ..suggestions import get_qa_content
+
+    tenant_id = getattr(request.state, "tenant_id", None)
+
+    entry = await get_qa_content(
+        chat_id=body.chat_id,
+        user_message=body.user_message,
+        tenant_id=tenant_id,
+    )
+
+    if entry is None:
+        return QAContentResponse(
+            success=False,
+            qa_content=None,
+        )
+
+    return QAContentResponse(
+        success=True,
+        qa_content=entry,
+    )

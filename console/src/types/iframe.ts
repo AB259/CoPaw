@@ -63,6 +63,8 @@ export interface IframeUserDataMessage {
     manager?: boolean | string;
     /** 自定义 headers 数组，每项包含 headerName 和 headerValue */
     auth?: AuthHeaderItem[];
+    /** 分行ID */
+    bbkId?: string;
     /** 其他任意参数 */
     [key: string]: unknown;
   };
@@ -124,6 +126,8 @@ export interface IframeContext {
   initialized: boolean;
   /** 用户 ID（来自 sapId） */
   userId: string | null;
+  /** 用户名称（从后端接口查询） */
+  userName: string | null;
   /** Claw 名称 */
   clawName: string | null;
   /** 空间标识 */

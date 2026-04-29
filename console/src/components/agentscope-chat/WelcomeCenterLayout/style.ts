@@ -28,10 +28,10 @@ export default createGlobalStyle`
   max-width: 100%;
   background-color: ${DESIGN_TOKENS.colorBgCard};
   border-radius: ${DESIGN_TOKENS.radiusCard}px;
-  padding: 16px 20px;
+  padding: 8px 20px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   margin-bottom: 28px;
 }
@@ -91,8 +91,7 @@ export default createGlobalStyle`
 }
 
 .welcome-cases-area {
-  width: 808px;
-  max-width: 100%;
+  width: 935px;
   margin: 0 auto;
 }
 `;
