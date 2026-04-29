@@ -7,12 +7,15 @@ import {
 import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
 import { useGetState } from "ahooks";
 import { useChatAnywhereInput } from "../../Context/ChatAnywhereInputContext";
+import { ChatAnywhereSessionsContext } from "../../Context/ChatAnywhereSessionsContext";
 import useAttachments from "./useAttachments";
 import { IAgentScopeRuntimeWebUIInputData } from "@/components/agentscope-chat";
 import {
   RUNTIME_INPUT_SET_CONTENT_EVENT,
   type RuntimeInputRestorePayload,
 } from "../hooks/followUpSubmit";
+import { ChatAnywhereMessagesContext } from "../../Context/ChatAnywhereMessagesContext";
+import { useContextSelector } from "use-context-selector";
 
 export interface InputProps {
   onCancel: () => void;
@@ -27,6 +30,15 @@ export default function Input(props: InputProps) {
   const prefixCls = useProviderContext().getPrefixCls("chat-anywhere-input");
   const senderOptions = useChatAnywhereOptions((v) => v.sender);
   const inputContext = useChatAnywhereInput((v) => v);
+  const messages = useContextSelector(
+    ChatAnywhereMessagesContext,
+    (v) => v.messages,
+  );
+  const hasMessages = messages && messages.length > 0;
+  const currentSessionId = useContextSelector(
+    ChatAnywhereSessionsContext,
+    (v) => v.currentSessionId,
+  );
 
   const {
     placeholder = "",
@@ -42,6 +54,7 @@ export default function Input(props: InputProps) {
   } = senderOptions || {};
 
   const {
+    fileList,
     getFileList,
     setFileList,
     handlePasteFile,
@@ -49,17 +62,12 @@ export default function Input(props: InputProps) {
     uploadFileListHeader,
   } = useAttachments(attachments, { disabled: !!inputContext.disabled });
 
-  // Listen for external pasteFile events (drag-drop upload)
+  // Clear attachments when session changes
   useEffect(() => {
-    const handler = (e: Event) => {
-      const file = (e as CustomEvent).detail?.file as File | undefined;
-      if (file && handlePasteFile) {
-        handlePasteFile(file);
-      }
-    };
-    document.addEventListener("pasteFile", handler);
-    return () => document.removeEventListener("pasteFile", handler);
-  }, [handlePasteFile]);
+    if (setFileList) {
+      setFileList([]);
+    }
+  }, [currentSessionId, setFileList]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -118,7 +126,7 @@ export default function Input(props: InputProps) {
 
   return (
     <div className={prefixCls}>
-      <div className={`${prefixCls}-wrapper`}>
+      <div className={`${prefixCls}-wrapper`} style={{ display: hasMessages || fileList.length > 0 ? "block" : "none" }}>
         {beforeUI}
         <ChatInput
           loading={inputContext.loading}
@@ -131,7 +139,7 @@ export default function Input(props: InputProps) {
               {prefix}
             </>
           }
-          header={uploadFileListHeader}
+          header={fileList.length > 0 ? uploadFileListHeader : undefined}
           onChange={handleContentChange}
           maxLength={maxLength}
           onSubmit={handleSubmit}
