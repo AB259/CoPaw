@@ -14,7 +14,7 @@ from ..deps import require_source_id
 router = APIRouter()
 
 
-@router.get("/marketplace/skills", response_model=list[MarketSkillResponse])
+@router.get("/market/skills", response_model=list[MarketSkillResponse])
 async def list_skills(
     request: Request,
     category_id: Optional[int] = None,
@@ -32,7 +32,7 @@ async def list_skills(
     )
 
 
-@router.get("/marketplace/skills/{item_id}", response_model=MarketSkillDetail)
+@router.get("/market/skills/{item_id}", response_model=MarketSkillDetail)
 async def get_skill_detail(
     item_id: str,
     request: Request,
@@ -49,7 +49,7 @@ async def get_skill_detail(
     return detail
 
 
-@router.get("/skills/mine", response_model=list[MySkillItem])
+@router.get("/market/skills/mine", response_model=list[MySkillItem])
 async def get_my_skills(
     request: Request,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
@@ -68,7 +68,7 @@ async def get_my_skills(
     return [s for s in all_skills if not s.is_received]
 
 
-@router.get("/skills/received", response_model=list[MySkillItem])
+@router.get("/market/skills/received", response_model=list[MySkillItem])
 async def get_received_skills(
     request: Request,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),

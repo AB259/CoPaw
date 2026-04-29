@@ -9,7 +9,7 @@ from ...marketplace.models import CategoryItem
 router = APIRouter()
 
 
-@router.get("/marketplace/categories", response_model=list[CategoryItem])
+@router.get("/market/categories", response_model=list[CategoryItem])
 async def get_categories(
     db: DbDep,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),

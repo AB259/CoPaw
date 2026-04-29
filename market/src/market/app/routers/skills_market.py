@@ -21,7 +21,7 @@ def _require_manager(x_manager: Optional[str]) -> None:
 
 
 @router.post(
-    "/marketplace/skills",
+    "/market/skills",
     response_model=MarketSkillResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -52,7 +52,7 @@ async def publish_skill(
 
 
 @router.delete(
-    "/marketplace/skills/{item_id}",
+    "/market/skills/{item_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def unpublish_skill(
@@ -78,7 +78,7 @@ async def unpublish_skill(
 
 
 @router.post(
-    "/marketplace/skills/{item_id}/distribute",
+    "/market/skills/{item_id}/distribute",
     response_model=DistributeResponse,
 )
 async def distribute_skill(
