@@ -102,12 +102,14 @@ export interface OrphanFileInfo {
   created_at: string;
   modified_at: string;
   path: string;
+  full_path: string;
 }
 
 export interface OrphanFilesResponse {
   files: OrphanFileInfo[];
   total_size: number;
   total_files: number;
+  workspace_dir: string;
 }
 
 export interface OrphanFileContentResponse {

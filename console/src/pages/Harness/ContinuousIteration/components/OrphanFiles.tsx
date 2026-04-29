@@ -15,6 +15,7 @@ import {
   Tag,
   Popconfirm,
   Typography,
+  Alert,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -97,11 +98,15 @@ export default function OrphanFilesPage() {
 
   const columns: ColumnsType<OrphanFileInfo> = [
     {
-      title: t("dreamLogs.orphanFiles.filename"),
-      dataIndex: "filename",
-      key: "filename",
-      width: 250,
-      render: (value: string) => <Tag icon={<FileOutlined />}>{value}</Tag>,
+      title: t("dreamLogs.orphanFiles.filePath"),
+      dataIndex: "full_path",
+      key: "full_path",
+      width: 350,
+      render: (value: string) => (
+        <Text copyable style={{ fontSize: 12 }}>
+          {value}
+        </Text>
+      ),
     },
     {
       title: t("dreamLogs.orphanFiles.size"),
@@ -155,6 +160,20 @@ export default function OrphanFilesPage() {
 
   return (
     <div className={styles.container}>
+      {orphanFiles && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<FolderOutlined />}
+          style={{ marginBottom: 16 }}
+          message={
+            <Space>
+              <Text strong>{t("dreamLogs.orphanFiles.workspaceDir")}:</Text>
+              <Text copyable>{orphanFiles.workspace_dir}</Text>
+            </Space>
+          }
+        />
+      )}
       {orphanFiles && (
         <Row gutter={16} className={styles.statsRow}>
           <Col span={12}>

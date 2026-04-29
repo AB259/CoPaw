@@ -1620,6 +1620,8 @@
     "tabCleanup": "文件清理",
     "orphanFiles": {
       "title": "临时文件列表",
+      "workspaceDir": "工作目录",
+      "filePath": "文件路径",
       "filename": "文件名",
       "size": "文件大小",
       "createdAt": "创建时间",

@@ -1429,6 +1429,8 @@
     "tabCleanup": "ファイル整理",
     "orphanFiles": {
       "title": "一時ファイル一覧",
+      "workspaceDir": "ワークスペースディレクトリ",
+      "filePath": "ファイルパス",
       "filename": "ファイル名",
       "size": "ファイルサイズ",
       "createdAt": "作成時間",

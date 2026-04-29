@@ -1614,6 +1614,8 @@
     "tabCleanup": "File Cleanup",
     "orphanFiles": {
       "title": "Orphan Files List",
+      "workspaceDir": "Workspace Directory",
+      "filePath": "File Path",
       "filename": "Filename",
       "size": "File Size",
       "createdAt": "Created At",

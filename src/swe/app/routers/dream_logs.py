@@ -151,7 +151,8 @@ class OrphanFileInfo(BaseModel):
     size: int
     created_at: str
     modified_at: str
-    path: str
+    path: str  # Relative path (filename only for workspace root files)
+    full_path: str  # Absolute path
 
 
 class OrphanFilesResponse(BaseModel):
@@ -160,6 +161,7 @@ class OrphanFilesResponse(BaseModel):
     files: list[OrphanFileInfo]
     total_size: int
     total_files: int
+    workspace_dir: str
 
 
 class OrphanFileContentResponse(BaseModel):
@@ -183,6 +185,8 @@ KEEP_FILES = {
     "jobs.json",
     "token_usage.json",
     "dream_logs.json",
+    "swe_file_metadata.json",
+    "skill.json",
 }
 
 KEEP_DIRS = {
@@ -797,7 +801,7 @@ async def get_backup_content(
 def _scan_orphan_files(workspace_dir: Path) -> list[OrphanFileInfo]:
     """Scan workspace directory for orphan files.
 
-    Returns files that are NOT in the keep list.
+    Returns files that are NOT in the keep list and NOT hidden files.
     """
     orphan_files: list[OrphanFileInfo] = []
 
@@ -805,6 +809,10 @@ def _scan_orphan_files(workspace_dir: Path) -> list[OrphanFileInfo]:
         return orphan_files
 
     for item in workspace_dir.iterdir():
+        # Skip hidden files (starting with .)
+        if item.name.startswith("."):
+            continue
+
         # Skip directories in keep list
         if item.is_dir() and item.name in KEEP_DIRS:
             continue
@@ -822,12 +830,13 @@ def _scan_orphan_files(workspace_dir: Path) -> list[OrphanFileInfo]:
                         filename=item.name,
                         size=stat.st_size,
                         created_at=datetime.fromtimestamp(
-                            stat.st_ctime
+                            stat.st_ctime,
                         ).isoformat(),
                         modified_at=datetime.fromtimestamp(
-                            stat.st_mtime
+                            stat.st_mtime,
                         ).isoformat(),
                         path=item.name,  # Relative to workspace_dir
+                        full_path=str(item),  # Absolute path
                     ),
                 )
             except Exception as e:
@@ -853,6 +862,7 @@ async def list_orphan_files(request: Request) -> OrphanFilesResponse:
         files=orphan_files,
         total_size=total_size,
         total_files=len(orphan_files),
+        workspace_dir=str(workspace_dir),
     )
 
 
@@ -894,7 +904,8 @@ async def get_orphan_file_content(
 
 
 @router.delete(
-    "/orphan-files/{filepath:path}", response_model=DeleteBackupResponse
+    "/orphan-files/{filepath:path}",
+    response_model=DeleteBackupResponse,
 )
 async def delete_orphan_file(
     request: Request,
@@ -918,6 +929,13 @@ async def delete_orphan_file(
         raise HTTPException(
             status_code=403,
             detail="Cannot delete protected file",
+        )
+
+    # Extra check: ensure file is NOT hidden (starting with .)
+    if file_path.name.startswith("."):
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete hidden file",
         )
 
     try:

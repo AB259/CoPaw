@@ -1409,6 +1409,8 @@
     },
     "orphanFiles": {
       "title": "Ненужные файлы",
+      "workspaceDir": "Рабочий каталог",
+      "filePath": "Путь к файлу",
       "filename": "Имя файла",
       "size": "Размер",
       "createdAt": "Время создания",
