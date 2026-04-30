@@ -8,6 +8,8 @@ from typing import List, Dict, Optional, Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from ..agent_context import get_agent_and_config_for_request
+
 router = APIRouter(prefix="/my-mcp", tags=["my-mcp"])
 
 
@@ -110,3 +112,32 @@ class PublishMCPResponse(BaseModel):
         default_factory=list,
         description="发布结果列表",
     )
+
+
+@router.get("", response_model=List[MyMCPListItem])
+async def list_my_mcp(request: Request) -> List[MyMCPListItem]:
+    """获取我的 MCP 列表."""
+    _, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None or not agent_config.mcp.clients:
+        return []
+
+    result = []
+    for client_key, client in agent_config.mcp.clients.items():
+        result.append(
+            MyMCPListItem(
+                client_key=client_key,
+                name=client.name,
+                description=client.description,
+                transport=client.transport,
+                enabled=client.enabled,
+                source=client.source,
+                market_client_key=client.market_client_key,
+                created_at=client.created_at,
+                updated_at=client.updated_at,
+            ),
+        )
+
+    # 按更新时间降序排序（最新的在前）
+    result.sort(key=lambda x: x.updated_at or "", reverse=True)
+    return result
