@@ -6,6 +6,7 @@ import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import { MySkill } from "../../api/modules/mySkills";
+import { marketApi } from "../../api/modules/market";
 
 const { Title, Text } = Typography;
 
@@ -41,8 +42,26 @@ export default function MySkillsPage() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    message.info(`上传功能开发中: ${file.name}`);
     e.target.value = "";
+
+    const userName = useIframeStore.getState().clawName || userId;
+
+    try {
+      message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
+      const result = await marketApi.uploadSkillToWorkspace(
+        sourceId,
+        userId,
+        userName,
+        bbkId,
+        file,
+        { enable: true, overwrite: false }
+      );
+      message.success({ content: `上传成功，导入 ${result.count} 个技能`, key: "upload" });
+      refresh();
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "上传失败";
+      message.error({ content: errorMsg, key: "upload" });
+    }
   };
 
   // Filter skills
