@@ -144,8 +144,11 @@ async def list_my_mcp(request: Request) -> List[MyMCPListItem]:
     return result
 
 
-def _mask_sensitive_values(client_key: str, client) -> MyMCPDetail:
-    """构建详情响应，脱敏 env 和 headers."""
+def _mask_sensitive_values(client) -> MyMCPDetail:
+    """构建详情响应，脱敏 env 和 headers.
+
+    client_key 字段由路由层填充，不在 helper 中设置。
+    """
     from ...config.config import MCPClientConfig
 
     masked_env = (
@@ -160,7 +163,7 @@ def _mask_sensitive_values(client_key: str, client) -> MyMCPDetail:
     )
 
     return MyMCPDetail(
-        client_key=client_key,
+        client_key="",  # 由路由层填充
         name=client.name,
         description=client.description,
         transport=client.transport,
@@ -195,4 +198,6 @@ async def get_my_mcp_detail(
     if client is None:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
-    return _mask_sensitive_values(client_key, client)
+    detail = _mask_sensitive_values(client)
+    detail.client_key = client_key
+    return detail
