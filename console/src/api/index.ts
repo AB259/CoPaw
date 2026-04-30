@@ -23,6 +23,8 @@ import { securityApi } from "./modules/security";
 import { userTimezoneApi } from "./modules/userTimezone";
 import { languageApi } from "./modules/language";
 import { instanceApi } from "./modules/instance";
+import { marketApi } from "./modules/market";
+import { mySkillsApi } from "./modules/mySkills";
 
 export const api = {
   // Root
@@ -80,9 +82,17 @@ export const api = {
 
   // Instance Management
   ...instanceApi,
+
+  // Market
+  ...marketApi,
+
+  // My Skills
+  ...mySkillsApi,
 };
 
 export default api;
 
 // Export individual APIs for direct access
 export { agentsApi };
+export * from "./modules/market";
+export * from "./modules/mySkills";

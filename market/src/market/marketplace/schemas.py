@@ -1,0 +1,78 @@
+# -*- coding: utf-8 -*-
+"""API 请求/响应模型."""
+from __future__ import annotations
+
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
+
+
+class PublishSkillRequest(BaseModel):
+    """上架技能请求体."""
+
+    name: str
+    description: str = ""
+    creator_id: str
+    creator_name: str = ""
+    category_id: Optional[int] = None
+    bbk_ids: list[str] = Field(default_factory=list)
+    skill_json: dict = Field(default_factory=dict)
+    skill_md: str = ""
+
+
+class DistributeRequest(BaseModel):
+    """分发技能请求体."""
+
+    target_type: Literal["all", "bbk_id", "user_id"]
+    target_values: list[str] = Field(default_factory=list)
+
+
+class MarketSkillResponse(BaseModel):
+    """市场技能列表/详情响应."""
+
+    item_id: str
+    name: str
+    description: str
+    version: str
+    creator_id: str
+    creator_name: str
+    category_id: Optional[int]
+    bbk_ids: list[str]
+    status: str
+    created_at: Optional[str]
+    updated_at: Optional[str]
+    call_count: int = 0
+    user_count: int = 0
+
+
+class SkillUserStat(BaseModel):
+    """技能详情页调用客户明细."""
+
+    user_id: str
+    user_name: str
+    call_count: int
+
+
+class MarketSkillDetail(MarketSkillResponse):
+    """技能详情（含调用客户明细）."""
+
+    user_stats: list[SkillUserStat] = Field(default_factory=list)
+
+
+class MySkillItem(BaseModel):
+    """我的技能列表条目."""
+
+    skill_name: str
+    source: str
+    description: str = ""
+    version: Optional[str] = None
+    received_version: Optional[str] = None
+    distributed_by: Optional[str] = None
+    is_received: bool = False
+    has_update: bool = False
+
+
+class DistributeResponse(BaseModel):
+    """分发结果."""
+
+    distributed_count: int
+    item_id: str
