@@ -3,12 +3,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Path as FastAPIPath, Request
+from fastapi import APIRouter, Body, HTTPException, Path as FastAPIPath, Request
 from pydantic import BaseModel, Field
 
 from ..agent_context import get_agent_and_config_for_request
+from ..utils import schedule_agent_reload
+from ...config.config import (
+    MCPClientConfig,
+    MCPConfig,
+    save_agent_config,
+)
 from .mcp import _mask_env_value
 
 router = APIRouter(prefix="/my-mcp", tags=["my-mcp"])
@@ -200,4 +207,62 @@ async def get_my_mcp_detail(
 
     detail = _mask_sensitive_values(client)
     detail.client_key = client_key
+    return detail
+
+
+@router.post("", response_model=MyMCPDetail, status_code=201)
+async def create_my_mcp(
+    request: Request,
+    body: MyMCPCreateRequest = Body(...),
+) -> MyMCPDetail:
+    """创建新的 MCP."""
+    workspace, agent_config = await get_agent_and_config_for_request(request)
+
+    # 初始化 MCP 配置（如果不存在）
+    if agent_config.mcp is None:
+        agent_config.mcp = MCPConfig(clients={})
+
+    # 检查 client_key 是否已存在
+    if body.client_key in agent_config.mcp.clients:
+        raise HTTPException(
+            400,
+            detail=f"MCP client '{body.client_key}' already exists",
+        )
+
+    # 创建新的客户端配置
+    now = datetime.now(timezone.utc).isoformat()
+    new_client = MCPClientConfig(
+        name=body.name,
+        description=body.description,
+        enabled=True,
+        transport=body.transport,
+        url=body.url,
+        headers=body.headers,
+        command=body.command,
+        args=body.args,
+        env=body.env,
+        cwd=body.cwd,
+        source="",  # 我创建的
+        created_at=now,
+        updated_at=now,
+    )
+
+    # 添加到配置并保存
+    agent_config.mcp.clients[body.client_key] = new_client
+    save_agent_config(
+        workspace.agent_id,
+        agent_config,
+        tenant_id=workspace.tenant_id,
+    )
+
+    # 热重载配置（异步，非阻塞）
+    schedule_agent_reload(
+        request,
+        workspace.agent_id,
+        tenant_id=workspace.tenant_id,
+    )
+
+    # 返回详情（脱敏敏感值）
+    detail = _mask_sensitive_values(new_client)
+    detail.client_key = body.client_key
     return detail

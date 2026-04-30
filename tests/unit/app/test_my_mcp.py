@@ -468,3 +468,164 @@ class TestGetMyMCPDetail:
             assert data["cwd"] == "/tmp"
             assert data["lazy_load"] is True
             assert data["distributed_by"] == "admin"
+
+
+class TestCreateMyMCP:
+    """Tests for POST /my-mcp endpoint."""
+
+    def test_create_success(self, client):
+        """创建新的 MCP."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.post(
+                        "/my-mcp", json={
+                            "client_key": "new-tool",
+                            "name": "New Tool",
+                            "transport": "stdio",
+                            "command": "npx",
+                            "args": ["-y", "new-mcp"],
+                        },
+                    )
+                    assert response.status_code == 201
+                    data = response.json()
+                    assert data["client_key"] == "new-tool"
+                    assert data["name"] == "New Tool"
+                    assert data["source"] == ""  # 我创建的
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_create_duplicate_key(self, client):
+        """重复 client_key 返回 400."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "existing": MCPClientConfig(name="Existing", command="npx"),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.post(
+                "/my-mcp", json={
+                    "client_key": "existing",
+                    "name": "Duplicate",
+                    "command": "npx",
+                },
+            )
+            assert response.status_code == 400
+
+    def test_create_with_all_fields(self, client):
+        """创建时包含所有字段."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.post(
+                        "/my-mcp", json={
+                            "client_key": "full-tool",
+                            "name": "Full Tool",
+                            "description": "完整配置",
+                            "transport": "stdio",
+                            "command": "npx",
+                            "args": ["-y", "full-mcp"],
+                            "env": {"API_KEY": "secret-key"},
+                            "cwd": "/tmp",
+                        },
+                    )
+                    assert response.status_code == 201
+                    data = response.json()
+                    assert data["client_key"] == "full-tool"
+                    assert data["name"] == "Full Tool"
+                    assert data["description"] == "完整配置"
+                    assert data["transport"] == "stdio"
+                    assert data["command"] == "npx"
+                    assert data["args"] == ["-y", "full-mcp"]
+                    assert data["cwd"] == "/tmp"
+                    # env 应被脱敏
+                    assert "API_KEY" in data["env"]
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_create_http_transport(self, client):
+        """创建 HTTP 传输类型的 MCP."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.post(
+                        "/my-mcp", json={
+                            "client_key": "http-tool",
+                            "name": "HTTP Tool",
+                            "transport": "streamable_http",
+                            "url": "https://example.com/mcp",
+                            "headers": {"Authorization": "Bearer token"},
+                        },
+                    )
+                    assert response.status_code == 201
+                    data = response.json()
+                    assert data["client_key"] == "http-tool"
+                    assert data["transport"] == "streamable_http"
+                    assert data["url"] == "https://example.com/mcp"
+                    # headers 应被脱敏
+                    assert "Authorization" in data["headers"]
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_create_mcp_none(self, client):
+        """MCP 配置为 None 时应自动初始化."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.post(
+                        "/my-mcp", json={
+                            "client_key": "new-tool",
+                            "name": "New Tool",
+                            "command": "npx",
+                        },
+                    )
+                    assert response.status_code == 201
+                    data = response.json()
+                    assert data["client_key"] == "new-tool"
+                    assert data["name"] == "New Tool"
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
