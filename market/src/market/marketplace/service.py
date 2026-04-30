@@ -479,3 +479,136 @@ class MarketplaceService:
         except Exception as e:
             logger.warning("Failed to resolve target users: %s", e)
         return []
+
+    def list_skill_files(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+    ) -> list[dict]:
+        """列出技能文件树（不包含 skill.json）."""
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+        if not skill_dir.exists():
+            return []
+
+        # 需要隐藏的文件名
+        HIDDEN_FILES = {"skill.json"}
+
+        def build_tree(path: Path, base: Path) -> dict:
+            relative = path.relative_to(base)
+            if path.is_file():
+                return {
+                    "name": path.name,
+                    "type": "file",
+                    "path": str(relative),
+                }
+            children = []
+            for child in sorted(path.iterdir()):
+                if child.name.startswith(".") or child.name in HIDDEN_FILES:
+                    continue
+                children.append(build_tree(child, base))
+            return {
+                "name": path.name,
+                "type": "directory",
+                "path": str(relative),
+                "children": children,
+            }
+
+        items = list(skill_dir.iterdir())
+        items.sort(
+            key=lambda p: (
+                0 if p.name == "SKILL.md" else 2 if p.is_dir() else 3,
+                p.name.lower(),
+            ),
+        )
+
+        return [
+            build_tree(item, skill_dir)
+            for item in items
+            if not item.name.startswith(".") and item.name not in HIDDEN_FILES
+        ]
+
+    def read_skill_file(
+        self,
+        user_id: str,
+        skill_name: str,
+        file_path: str,
+        agent_id: str = "default",
+    ) -> tuple[str | None, str]:
+        """读取技能文件内容，返回 (content, file_type)."""
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+        target = skill_dir / file_path
+
+        try:
+            target.resolve().relative_to(skill_dir.resolve())
+        except ValueError:
+            return None, "error"
+
+        if not target.exists() or not target.is_file():
+            return None, "error"
+
+        ext = target.suffix.lower()
+        if ext == ".md":
+            file_type = "markdown"
+        elif ext == ".json":
+            file_type = "json"
+        elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"):
+            return None, "binary"
+        else:
+            file_type = "text"
+
+        try:
+            content = target.read_text(encoding="utf-8")
+            return content, file_type
+        except Exception:
+            return None, "error"
+
+    def save_skill_file(
+        self,
+        user_id: str,
+        skill_name: str,
+        file_path: str,
+        content: str,
+        agent_id: str = "default",
+    ) -> bool:
+        """保存技能文件内容."""
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+        target = skill_dir / file_path
+
+        try:
+            target.resolve().relative_to(skill_dir.resolve())
+        except ValueError:
+            return False
+
+        if not target.exists() or not target.is_file():
+            return False
+
+        try:
+            target.write_text(content, encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+    def delete_skill(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+    ) -> bool:
+        """删除用户技能."""
+        import shutil
+
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+
+        if not skill_dir.exists():
+            return False
+
+        try:
+            shutil.rmtree(skill_dir)
+            return True
+        except Exception:
+            return False

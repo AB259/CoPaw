@@ -86,8 +86,8 @@ export const api = {
   // Market
   ...marketApi,
 
-  // My Skills
-  ...mySkillsApi,
+  // My Skills - 不合并到 api 对象，避免覆盖 skillApi 的方法
+  // mySkillsApi 应该直接从 "../../api/modules/mySkills" 导入使用
 };
 
 export default api;

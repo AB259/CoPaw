@@ -72,6 +72,7 @@ async function _uploadZipToMarket(
     overwrite?: boolean;
     target_name?: string;
     rename_map?: Record<string, string>;
+    category_id?: number;
   }
 ): Promise<Record<string, unknown>> {
   const formData = new FormData();
@@ -89,6 +90,9 @@ async function _uploadZipToMarket(
   }
   if (options?.rename_map && Object.keys(options.rename_map).length) {
     params.set("rename_map", JSON.stringify(options.rename_map));
+  }
+  if (options?.category_id !== undefined) {
+    params.set("category_id", String(options.category_id));
   }
   const qs = params.toString();
   const url = getApiUrl(`${endpoint}${qs ? `?${qs}` : ""}`);
@@ -220,11 +224,14 @@ export const marketApi = {
       overwrite?: boolean;
       target_name?: string;
       rename_map?: Record<string, string>;
+      category_id?: number;
     }
   ): Promise<{
     imported: string[];
     count: number;
     enabled: boolean;
+    name?: string;
+    description?: string;
     conflicts?: Array<{
       reason: string;
       skill_name: string;
@@ -242,6 +249,8 @@ export const marketApi = {
       imported: string[];
       count: number;
       enabled: boolean;
+      name?: string;
+      description?: string;
       conflicts?: Array<{
         reason: string;
         skill_name: string;

@@ -5,6 +5,7 @@ import { SkillCard } from "./SkillCard";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
 import { PublishModal } from "./PublishModal";
 import { DistributeModal } from "./DistributeModal";
+import UploadSkillModal from "./components/UploadSkillModal";
 import { useMarket } from "./useMarket";
 import { MarketSkill } from "../../api/modules/market";
 
@@ -43,6 +44,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeResourceType, setActiveResourceType] = useState<ResourceType>("skill");
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   useEffect(() => {
     refreshCategories();
@@ -83,7 +85,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
             <Title level={4} style={{ margin: 0 }}>应用市场</Title>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button icon={<UploadOutlined />}>
+            <Button icon={<UploadOutlined />} onClick={() => setUploadModalOpen(true)}>
               上传技能
             </Button>
             {isManager && (
@@ -298,6 +300,15 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
           />
         </>
       )}
+      <UploadSkillModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onSuccess={refreshSkills}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        bbkId={bbkId}
+      />
     </div>
   );
 }

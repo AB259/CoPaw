@@ -76,3 +76,37 @@ class DistributeResponse(BaseModel):
 
     distributed_count: int
     item_id: str
+
+
+class FileTreeNode(BaseModel):
+    """文件树节点."""
+
+    name: str
+    type: Literal["file", "directory"]
+    path: str
+    children: list["FileTreeNode"] | None = None
+
+
+class FileContentResponse(BaseModel):
+    """文件内容响应."""
+
+    content: str
+    file_type: str  # "markdown" | "json" | "text" | "binary"
+
+
+class OperationResponse(BaseModel):
+    """操作结果响应."""
+
+    success: bool = True
+    message: str | None = None
+
+
+class UploadSkillResponse(BaseModel):
+    """技能上传响应."""
+
+    imported: list[str] = Field(default_factory=list)
+    count: int = 0
+    enabled: bool = True
+    name: str | None = None
+    description: str | None = None
+    conflicts: list[dict] | None = None

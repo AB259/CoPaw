@@ -4,17 +4,31 @@ import asyncio
 import io
 import json
 import logging
+import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 
 from ...marketplace.fs import get_user_skills_dir
 from ...marketplace.schemas import (
+    FileContentResponse,
+    FileTreeNode,
     MarketSkillDetail,
     MarketSkillResponse,
     MySkillItem,
+    OperationResponse,
+    UploadSkillResponse,
 )
 from ..deps import require_source_id
 
@@ -53,81 +67,138 @@ async def _read_validated_zip_upload(file: UploadFile) -> bytes:
     return data
 
 
-def _find_skill_candidates(zf: zipfile.ZipFile) -> set[str]:
-    """Find skill directories in zip file."""
-    candidates: set[str] = set()
-    for name in zf.namelist():
-        normalized = name.replace("\\", "/")
-        parts = normalized.split("/")
-        if len(parts) >= 2 and parts[-1] in ("skill.json", "SKILL.md"):
-            candidates.add(parts[0])
-    return candidates
+def _decode_zip_filename(filename: str) -> str:
+    """Decode zip filename, handling GBK encoding from Windows."""
+    try:
+        raw = filename.encode("cp437")
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        try:
+            return raw.decode("gbk")
+        except UnicodeDecodeError:
+            pass
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+    return filename
 
 
-def _extract_skill_files(
-    zf: zipfile.ZipFile,
-    skill_name: str,
-    skill_dir: Path,
-) -> dict[str, Any]:
-    """Extract skill files from zip and return skill.json data."""
-    skill_data: dict[str, Any] = {}
-    prefix = f"{skill_name}/"
-    for member in zf.namelist():
-        normalized = member.replace("\\", "/")
-        if not normalized.startswith(prefix):
-            continue
-        rel_path = normalized[len(prefix) :]
-        if not rel_path:  # Skip directory itself
-            continue
-        target_path = skill_dir / rel_path
-        if member.endswith("/"):
-            target_path.mkdir(parents=True, exist_ok=True)
-        else:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            content = zf.read(member)
-            target_path.write_bytes(content)
-            if rel_path == "skill.json":
-                try:
-                    skill_data = json.loads(content.decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
-    return skill_data
+def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
+    """Extract and validate a skill zip.
 
+    Returns ``(tmp_dir, found_skills)`` where each skill is ``(skill_dir, skill_name)``.
+    """
+    if not zipfile.is_zipfile(io.BytesIO(data)):
+        raise ValueError("Uploaded file is not a valid zip archive")
 
-def _import_single_skill(
-    zf: zipfile.ZipFile,
-    skill_name: str,
-    skills_dir: Path,
-    user_id: str,
-    user_name: str,
-    bbk_id: str,
-    overwrite: bool,
-    target_name: str,
-) -> tuple[str | None, dict[str, str] | None]:
-    """Import a single skill from zip. Returns (imported_name, conflict_info)."""
-    final_name = target_name or skill_name
-    skill_dir = skills_dir / final_name
+    tmp_dir = Path(tempfile.mkdtemp(prefix="copaw_myskill_upload_"))
+    root_path = tmp_dir.resolve()
 
-    if skill_dir.exists() and not overwrite:
-        return None, {
-            "reason": "already_exists",
-            "skill_name": final_name,
-            "suggested_name": f"{final_name}_1",
-        }
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        # Check total size
+        total = sum(info.file_size for info in zf.infolist())
+        if total > 200 * 1024 * 1024:  # 200MB limit
+            raise ValueError("Uncompressed zip exceeds 200MB limit")
 
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    skill_data = _extract_skill_files(zf, skill_name, skill_dir)
+        # Security check for path traversal (use decoded filename)
+        for info in zf.infolist():
+            decoded_name = _decode_zip_filename(info.filename)
+            target = (tmp_dir / decoded_name).resolve()
+            if not target.is_relative_to(root_path):
+                raise ValueError(f"Unsafe path in zip: {info.filename}")
 
-    skill_data["source"] = "customized"
-    skill_data["creator_id"] = user_id
-    skill_data["creator_name"] = user_name
-    skill_data["bbk_id"] = bbk_id
+        # Extract files with corrected encoding for Chinese filenames
+        for info in zf.infolist():
+            # Decode filename correctly
+            decoded_name = _decode_zip_filename(info.filename)
+            target = tmp_dir / decoded_name
 
-    (skill_dir / "skill.json").write_text(
-        json.dumps(skill_data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # Use ZipInfo object to read data, avoiding encoding issues with filename
+                target.write_bytes(zf.read(info))
+
+    # Find skill directories
+    real_entries = [
+        path
+        for path in tmp_dir.iterdir()
+        if not path.name.startswith(".") and not path.name.startswith("_")
+    ]
+
+    # Handle single skill at root
+    extract_root = (
+        real_entries[0]
+        if len(real_entries) == 1 and real_entries[0].is_dir()
+        else tmp_dir
     )
-    return final_name, None
+
+    if (extract_root / "SKILL.md").exists():
+        skill_name = _resolve_skill_name(extract_root)
+        found = [(extract_root, skill_name)]
+    else:
+        found = [
+            (path, _resolve_skill_name(path))
+            for path in sorted(extract_root.iterdir())
+            if not path.name.startswith(".")
+            and not path.name.startswith("_")
+            and path.is_dir()
+            and (path / "SKILL.md").exists()
+        ]
+
+    if not found:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise ValueError(
+            "No valid skills found in uploaded zip (missing SKILL.md)",
+        )
+
+    return tmp_dir, found
+
+
+def _resolve_skill_name(skill_dir: Path) -> str:
+    """Resolve skill name from SKILL.md frontmatter or directory name."""
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.exists():
+        return skill_dir.name
+
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except Exception:
+        return skill_dir.name
+
+    if not content.startswith("---"):
+        return skill_dir.name
+
+    # Parse YAML frontmatter
+    for line in content.split("\n")[1:]:
+        if line.startswith("---"):
+            break
+        if line.startswith("name:"):
+            name = line.split(":", 1)[1].strip()
+            if name:
+                return name
+
+    return skill_dir.name
+
+
+def _import_skill_dir(
+    skill_dir: Path,
+    skills_root: Path,
+    skill_name: str,
+    overwrite: bool,
+) -> bool:
+    """Import a skill directory to the user skills folder."""
+    target_dir = skills_root / skill_name
+    if target_dir.exists() and not overwrite:
+        return False
+
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+
+    shutil.copytree(skill_dir, target_dir)
+    return True
 
 
 def _import_skill_from_zip(
@@ -138,43 +209,93 @@ def _import_skill_from_zip(
     bbk_id: str,
     overwrite: bool = False,
     target_name: str = "",
+    category_id: int | None = None,
 ) -> dict[str, Any]:
     """Import skill from zip data to user skills directory."""
     imported: list[str] = []
     conflicts: list[dict[str, str]] = []
+    tmp_dir: Path | None = None
+    parsed_name: str | None = None
+    parsed_description: str | None = None
 
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            skill_candidates = _find_skill_candidates(zf)
-            if not skill_candidates:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid skill found in zip (missing skill.json or SKILL.md)",
-                )
+        tmp_dir, found_skills = _extract_zip_skills(data)
 
-            for skill_name in skill_candidates:
-                name, conflict = _import_single_skill(
-                    zf,
-                    skill_name,
-                    skills_dir,
-                    user_id,
-                    user_name,
-                    bbk_id,
-                    overwrite,
-                    target_name,
+        existing_names = (
+            {p.name for p in skills_dir.iterdir() if p.is_dir()}
+            if skills_dir.exists()
+            else set()
+        )
+
+        for skill_dir, skill_name in found_skills:
+            # Apply target_name if single skill
+            if target_name and len(found_skills) == 1:
+                skill_name = target_name.strip()
+
+            if skill_name in existing_names and not overwrite:
+                conflicts.append(
+                    {
+                        "reason": "already_exists",
+                        "skill_name": skill_name,
+                        "suggested_name": f"{skill_name}_1",
+                    },
                 )
-                if name:
-                    imported.append(name)
-                elif conflict:
-                    conflicts.append(conflict)
+                continue
+
+            if _import_skill_dir(skill_dir, skills_dir, skill_name, overwrite):
+                # Update skill.json with metadata
+                skill_json_path = skills_dir / skill_name / "skill.json"
+                skill_data: dict[str, Any] = {}
+                if skill_json_path.exists():
+                    try:
+                        skill_data = json.loads(
+                            skill_json_path.read_text(encoding="utf-8"),
+                        )
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
+                # Ensure name and description are set
+                skill_data["name"] = skill_data.get("name") or skill_name
+                skill_data.setdefault("description", "")
+                skill_data["source"] = "customized"
+                skill_data["creator_id"] = user_id
+                skill_data["creator_name"] = user_name
+                skill_data["bbk_id"] = bbk_id
+                if category_id is not None:
+                    skill_data["category_id"] = category_id
+
+                skill_json_path.write_text(
+                    json.dumps(skill_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                imported.append(skill_name)
+
+                # Capture parsed name and description from first skill
+                if parsed_name is None:
+                    parsed_name = skill_data.get("name")
+                    parsed_description = skill_data.get("description")
 
     except zipfile.BadZipFile as e:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid zip file: {e}",
         ) from e
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        ) from e
+    finally:
+        # Clean up temp directory
+        if tmp_dir and tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    result = {"imported": imported, "count": len(imported)}
+    result = {
+        "imported": imported,
+        "count": len(imported),
+        "name": parsed_name,
+        "description": parsed_description,
+    }
     if conflicts:
         result["conflicts"] = conflicts
     return result
@@ -253,7 +374,7 @@ async def get_skill_detail(
     return detail
 
 
-@router.post("/market/skills/upload")
+@router.post("/market/skills/upload", response_model=UploadSkillResponse)
 async def upload_skill_to_workspace(
     request: Request,
     file: UploadFile = File(..., description="Skill zip file to upload"),
@@ -264,8 +385,9 @@ async def upload_skill_to_workspace(
     enable: bool = True,
     overwrite: bool = False,
     target_name: str = "",
+    category_id: Optional[int] = None,
 ):
-    """上传技能到工作区，记录 user_id, bbk_id, user_name."""
+    """上传技能到工作区，记录 user_id, bbk_id, user_name。可选指定分类。"""
     source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
@@ -296,6 +418,7 @@ async def upload_skill_to_workspace(
         bbk_id,
         overwrite=overwrite,
         target_name=target_name,
+        category_id=category_id,
     )
 
     # Log upload operation
@@ -303,7 +426,7 @@ async def upload_skill_to_workspace(
         try:
             await svc.db.execute(
                 """
-                INSERT INTO swe_marketplace_operation_logs
+                INSERT INTO swe_user_item_operation_logs
                     (source_id, operator_id, operator_name, operation,
                      item_type, item_id, item_name,
                      target_user_id, target_user_name, target_bbk_id)
@@ -327,3 +450,135 @@ async def upload_skill_to_workspace(
 
     result["enabled"] = enable
     return result
+
+
+@router.get(
+    "/market/skills/mine/{skill_name}/files",
+    response_model=list[FileTreeNode],
+)
+async def list_skill_files(
+    skill_name: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """获取技能文件树."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    return svc.list_skill_files(x_user_id, skill_name, agent_id)
+
+
+@router.get(
+    "/market/skills/mine/{skill_name}/files/{file_path:path}",
+    response_model=FileContentResponse,
+)
+async def read_skill_file(
+    skill_name: str,
+    file_path: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """读取技能文件内容."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    content, file_type = svc.read_skill_file(
+        x_user_id,
+        skill_name,
+        file_path,
+        agent_id,
+    )
+    if content is None:
+        if file_type == "binary":
+            raise HTTPException(
+                status_code=400,
+                detail="Binary file not supported for preview",
+            )
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileContentResponse(content=content, file_type=file_type)
+
+
+@router.put(
+    "/market/skills/mine/{skill_name}/files/{file_path:path}",
+    response_model=OperationResponse,
+)
+async def save_skill_file(
+    skill_name: str,
+    file_path: str,
+    request: Request,
+    content: str = Body(..., embed=True),
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
+    agent_id: str = "default",
+):
+    """保存技能文件内容（仅我创建的技能支持）."""
+    source_id = require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+
+    svc = request.app.state.marketplace
+    skills = await svc.get_my_skills(source_id, x_user_id, agent_id)
+    skill = next((s for s in skills if s.skill_name == skill_name), None)
+    if skill is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    if skill.is_received:
+        raise HTTPException(
+            status_code=403,
+            detail="Only created skills can be edited",
+        )
+
+    ok = svc.save_skill_file(
+        x_user_id,
+        skill_name,
+        file_path,
+        content,
+        agent_id,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save file")
+    return OperationResponse(success=True)
+
+
+@router.delete(
+    "/market/skills/mine/{skill_name}",
+    response_model=OperationResponse,
+)
+async def delete_my_skill(
+    skill_name: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """删除技能."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+
+    svc = request.app.state.marketplace
+    ok = svc.delete_skill(x_user_id, skill_name, agent_id)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail="Skill not found or delete failed",
+        )
+    return OperationResponse(success=True)
