@@ -341,3 +341,29 @@ async def update_my_mcp(
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
     return detail
+
+
+@router.delete("/{client_key}", response_model=Dict[str, str])
+async def delete_my_mcp(
+    request: Request,
+    client_key: str = FastAPIPath(...),
+) -> Dict[str, str]:
+    """删除 MCP 客户端配置."""
+    workspace, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    del agent_config.mcp.clients[client_key]
+    save_agent_config(
+        workspace.agent_id,
+        agent_config,
+        tenant_id=workspace.tenant_id,
+    )
+    schedule_agent_reload(
+        request,
+        workspace.agent_id,
+        tenant_id=workspace.tenant_id,
+    )
+
+    return {"message": f"MCP client '{client_key}' deleted"}
