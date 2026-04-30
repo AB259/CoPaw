@@ -31,6 +31,7 @@ import VoiceTranscriptionPage from "../../pages/Settings/VoiceTranscription";
 import AgentsPage from "../../pages/Settings/Agents";
 import AnalyticsPage from "../../pages/Analytics";
 import InstancePage from "../../pages/Instance";
+import MonitorPage from "../../pages/Monitor";
 
 const { Content } = Layout;
 
@@ -60,6 +61,7 @@ const pathToKey: Record<string, string> = {
   "/analytics/messages": "analytics-messages",
   "/analytics/traces": "analytics-traces",
   "/analytics/business-overview": "analytics-business-overview",
+  "/monitor/cron-overview": "monitor-cron-overview",
   "/instance/overview": "instance-overview",
   "/instance/instances": "instance-instances",
   "/instance/allocations": "instance-allocations",
@@ -124,6 +126,7 @@ export default function MainLayout() {
                 element={<VoiceTranscriptionPage />}
               />
               <Route path="/analytics/*" element={<AnalyticsPage />} />
+              <Route path="/monitor/*" element={<MonitorPage />} />
               <Route path="/instance/*" element={<InstancePage />} />
             </Routes>
           </div>
