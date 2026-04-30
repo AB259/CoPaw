@@ -66,7 +66,11 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
-import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
+import {
+  deriveChatTaskState,
+  getTaskOpenTarget,
+  shouldMarkTaskReadOnOpen,
+} from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
 import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
@@ -652,15 +656,15 @@ export default function ChatPage() {
 
   const handleTaskOpen = useCallback(
     (task: CronJobSpecOutput) => {
-      const taskChatId = task.task?.chat_id;
-      if (!taskChatId) return;
+      const taskOpenTarget = getTaskOpenTarget(task);
+      if (!taskOpenTarget) return;
 
       // Force loading to render immediately before navigate triggers re-render
       flushSync(() => {
         setSessionLoading(true);
       });
 
-      navigate(`/chat/${taskChatId}`, { replace: true });
+      navigate(`/chat/${taskOpenTarget}`, { replace: true });
     },
     [navigate, setSessionLoading],
   );
