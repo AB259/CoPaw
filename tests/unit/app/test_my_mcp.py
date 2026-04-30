@@ -886,3 +886,125 @@ class TestDeleteMyMCP:
 
             response = client.delete("/my-mcp/weather")
             assert response.status_code == 404
+
+
+class TestToggleMyMCP:
+    """Tests for PATCH /my-mcp/{client_key}/toggle endpoint."""
+
+    def test_toggle_enable(self, client):
+        """启用 MCP（从 False 到 True）."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Weather",
+                    command="npx",
+                    enabled=False,
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at="2026-04-29T10:00:00Z",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.patch("/my-mcp/weather/toggle")
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["enabled"] is True
+                    assert data["client_key"] == "weather"
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_toggle_disable(self, client):
+        """禁用 MCP（从 True 到 False）."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Weather",
+                    command="npx",
+                    enabled=True,
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at="2026-04-29T10:00:00Z",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.patch("/my-mcp/weather/toggle")
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["enabled"] is False
+                    assert data["client_key"] == "weather"
+
+    def test_toggle_not_found(self, client):
+        """不存在的 MCP 返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.patch("/my-mcp/nonexistent/toggle")
+            assert response.status_code == 404
+            assert "nonexistent" in response.json()["detail"]
+
+    def test_toggle_mcp_none(self, client):
+        """MCP 配置为 None 时返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.patch("/my-mcp/weather/toggle")
+            assert response.status_code == 404
+
+    def test_toggle_updates_timestamp(self, client):
+        """切换应更新 updated_at 时间戳."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        original_updated_at = "2026-04-29T10:00:00Z"
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Weather",
+                    command="npx",
+                    enabled=False,
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at=original_updated_at,
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.patch("/my-mcp/weather/toggle")
+                    assert response.status_code == 200
+                    data = response.json()
+                    # updated_at 应被更新（不同于原始值）
+                    assert data["updated_at"] != original_updated_at

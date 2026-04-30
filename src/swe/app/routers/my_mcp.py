@@ -367,3 +367,38 @@ async def delete_my_mcp(
     )
 
     return {"message": f"MCP client '{client_key}' deleted"}
+
+
+@router.patch("/{client_key}/toggle", response_model=MyMCPDetail)
+async def toggle_my_mcp(
+    request: Request,
+    client_key: str = FastAPIPath(...),
+) -> MyMCPDetail:
+    """启用/禁用 MCP.
+
+    切换 enabled 字段：True → False 或 False → True。
+    同时更新 updated_at 时间戳。
+    """
+    workspace, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    client = agent_config.mcp.clients[client_key]
+    client.enabled = not client.enabled
+    client.updated_at = datetime.now(timezone.utc).isoformat()
+
+    save_agent_config(
+        workspace.agent_id,
+        agent_config,
+        tenant_id=workspace.tenant_id,
+    )
+    schedule_agent_reload(
+        request,
+        workspace.agent_id,
+        tenant_id=workspace.tenant_id,
+    )
+
+    detail = _mask_sensitive_values(client)
+    detail.client_key = client_key
+    return detail
