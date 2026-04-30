@@ -20,6 +20,7 @@ class MarketItem(BaseModel):
     creator_name: str = ""
     category_id: Optional[int] = None
     bbk_ids: list[str] = Field(default_factory=list)
+    client_key: str = ""  # MCP 专用，业务唯一键
     status: str = "active"
     created_at: Optional[str] = None  # ISO8601 string from index.json
     updated_at: Optional[str] = None
