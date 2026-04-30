@@ -406,6 +406,59 @@ async def toggle_my_mcp(
     return detail
 
 
+def _require_manager(request: Request) -> None:
+    """校验管理员权限."""
+    manager = getattr(request.state, "manager", False)
+    if not manager:
+        raise HTTPException(403, detail="Manager access required")
+
+
+@router.post("/publish", response_model=PublishMCPResponse)
+async def publish_my_mcp_to_market(
+    request: Request,
+    body: PublishMCPRequest = Body(...),
+) -> PublishMCPResponse:
+    """发布 MCP 到市场（管理员）.
+
+    管理员可以将本地 MCP 配置发布到市场供其他用户订阅。
+    目前是骨架实现，实际市场服务调用将在计划 B 完成后补充。
+    """
+    _require_manager(request)
+
+    if not body.client_keys:
+        raise HTTPException(400, detail="No client_keys provided")
+
+    _, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None:
+        raise HTTPException(400, detail="No MCP clients configured")
+
+    results = []
+    for client_key in body.client_keys:
+        client = agent_config.mcp.clients.get(client_key)
+        if client is None:
+            results.append(
+                PublishMCPResult(
+                    client_key=client_key,
+                    success=False,
+                    error=f"MCP client '{client_key}' not found",
+                ),
+            )
+            continue
+
+        # TODO: 调用 market 服务发布（计划 B 完成后补充）
+        # 目前返回占位结果
+        results.append(
+            PublishMCPResult(
+                client_key=client_key,
+                success=True,
+                item_id="placeholder-item-id",  # Will be replaced with actual item_id
+            ),
+        )
+
+    return PublishMCPResponse(results=results)
+
+
 class MCPTestResult(BaseModel):
     """测试连接结果."""
 

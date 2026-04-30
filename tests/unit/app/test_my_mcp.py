@@ -2,7 +2,7 @@
 """Unit tests for my-mcp endpoints."""
 import pytest
 from unittest.mock import MagicMock, patch
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from swe.config.config import MCPClientConfig, MCPConfig
@@ -1125,3 +1125,129 @@ class TestMyMCPConnection:
                 data = response.json()
                 assert data["success"] is True
                 assert len(data["tools"]) == 1
+
+
+class TestPublishMyMCP:
+    """Tests for POST /my-mcp/publish endpoint."""
+
+    @pytest.fixture
+    def client_with_manager(self):
+        """Create a TestClient with manager middleware."""
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from swe.app.routers.my_mcp import router
+
+        class ManagerMiddleware(BaseHTTPMiddleware):
+            """Middleware that sets request.state.manager = True."""
+
+            async def dispatch(self, request, call_next):
+                request.state.manager = True
+                return await call_next(request)
+
+        app = FastAPI()
+        app.add_middleware(ManagerMiddleware)
+        app.include_router(router)
+        return TestClient(app)
+
+    def test_publish_requires_manager(self, client):
+        """非管理员不允许发布."""
+        # Mock workspace 和 config
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(name="Weather", command="npx"),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            # 默认 client 没有 manager middleware，request.state.manager 为 False
+            response = client.post(
+                "/my-mcp/publish",
+                json={"client_keys": ["weather"]},
+            )
+            # Without manager flag, should return 403
+            assert response.status_code == 403
+
+    def test_publish_empty_keys(self, client_with_manager):
+        """空 client_keys 返回 400."""
+        response = client_with_manager.post(
+            "/my-mcp/publish",
+            json={"client_keys": []},
+        )
+        assert response.status_code == 400
+
+    def test_publish_success_placeholder(self, client_with_manager):
+        """发布成功（骨架返回占位结果）."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(name="Weather", command="npx"),
+                "search": MCPClientConfig(name="Search", command="npx"),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client_with_manager.post(
+                "/my-mcp/publish",
+                json={"client_keys": ["weather", "search"]},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert "results" in data
+            assert len(data["results"]) == 2
+            for result in data["results"]:
+                assert result["success"] is True
+                assert result["item_id"] == "placeholder-item-id"
+
+    def test_publish_not_found(self, client_with_manager):
+        """不存在的 client_key 返回错误结果."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(name="Weather", command="npx"),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client_with_manager.post(
+                "/my-mcp/publish",
+                json={"client_keys": ["weather", "nonexistent"]},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["results"]) == 2
+            # nonexistent should have success=False
+            for result in data["results"]:
+                if result["client_key"] == "nonexistent":
+                    assert result["success"] is False
+                    assert "not found" in result["error"]
+
+    def test_publish_mcp_none(self, client_with_manager):
+        """MCP 配置为 None 时返回 400."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client_with_manager.post(
+                "/my-mcp/publish",
+                json={"client_keys": ["weather"]},
+            )
+
+            assert response.status_code == 400
+            assert "No MCP clients" in response.json()["detail"]
