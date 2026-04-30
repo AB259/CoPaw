@@ -61,7 +61,11 @@
     "instanceAllocations": "用户分配",
     "instanceOperationLogs": "操作日志",
     "harness": "Harness Engineering",
-    "continuousIteration": "持续治理"
+    "continuousIteration": "持续治理",
+    "marketGroup": "应用市场",
+    "market": "应用市场",
+    "mySkills": "我的技能",
+    "myMcp": "我的 MCP"
   },
   "cases": {
     "title": "案例管理",
