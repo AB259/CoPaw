@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Literal
 
@@ -421,7 +422,7 @@ async def publish_my_mcp_to_market(
     """发布 MCP 到市场（管理员）.
 
     管理员可以将本地 MCP 配置发布到市场供其他用户订阅。
-    目前是骨架实现，实际市场服务调用将在计划 B 完成后补充。
+    调用市场服务的 POST /api/market/mcp 接口。
     """
     _require_manager(request)
 
@@ -432,6 +433,10 @@ async def publish_my_mcp_to_market(
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail="No MCP clients configured")
+
+    source_id = _get_source_id(request)
+    user_id = getattr(request.state, "user_id", "")
+    user_name = getattr(request.state, "user_name", "")
 
     results = []
     for client_key in body.client_keys:
@@ -446,15 +451,66 @@ async def publish_my_mcp_to_market(
             )
             continue
 
-        # TODO: 调用 market 服务发布（计划 B 完成后补充）
-        # 目前返回占位结果
-        results.append(
-            PublishMCPResult(
-                client_key=client_key,
-                success=True,
-                item_id="placeholder-item-id",  # Will be replaced with actual item_id
-            ),
-        )
+        # 调用市场服务发布 MCP
+        try:
+            market_url = "http://127.0.0.1:8090/api/market/mcp"
+            publish_req = {
+                "client_key": client_key,
+                "name": client.name,
+                "description": client.description,
+                "creator_id": user_id,
+                "creator_name": user_name,
+                "category_id": body.category_id,
+                "bbk_ids": body.bbk_ids,
+                "config": client.model_dump(mode="json"),
+            }
+
+            async with httpx.AsyncClient() as http:
+                resp = await http.post(
+                    market_url,
+                    json=publish_req,
+                    headers={
+                        "X-Source-Id": source_id or "",
+                        "X-Manager": "true",
+                        "X-User-Id": user_id,
+                        "X-User-Name": user_name or "",
+                    },
+                    timeout=30.0,
+                )
+
+            if resp.status_code == 201:
+                data = resp.json()
+                results.append(
+                    PublishMCPResult(
+                        client_key=client_key,
+                        success=True,
+                        item_id=data.get("item_id"),
+                    ),
+                )
+            else:
+                results.append(
+                    PublishMCPResult(
+                        client_key=client_key,
+                        success=False,
+                        error=resp.text,
+                    ),
+                )
+        except httpx.HTTPError as e:
+            results.append(
+                PublishMCPResult(
+                    client_key=client_key,
+                    success=False,
+                    error=f"HTTP error: {e}",
+                ),
+            )
+        except Exception as e:
+            results.append(
+                PublishMCPResult(
+                    client_key=client_key,
+                    success=False,
+                    error=str(e),
+                ),
+            )
 
     return PublishMCPResponse(results=results)
 

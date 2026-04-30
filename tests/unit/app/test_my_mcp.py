@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for my-mcp endpoints."""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -1179,8 +1179,8 @@ class TestPublishMyMCP:
         )
         assert response.status_code == 400
 
-    def test_publish_success_placeholder(self, client_with_manager):
-        """发布成功（骨架返回占位结果）."""
+    def test_publish_success(self, client_with_manager):
+        """发布成功（调用市场服务返回 item_id）."""
         mock_workspace = MagicMock()
         mock_workspace.agent_id = "test-agent"
         mock_config = MagicMock()
@@ -1191,21 +1191,33 @@ class TestPublishMyMCP:
             },
         )
 
+        # Mock httpx.AsyncClient 返回成功响应
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"item_id": "mcp-weather-123"}
+
+        # 使用 AsyncMock 模拟异步上下文管理器
+        mock_http_client = AsyncMock()
+        mock_http_client.post.return_value = mock_response
+        mock_http_client.__aenter__.return_value = mock_http_client
+        mock_http_client.__aexit__.return_value = None
+
         with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
-            response = client_with_manager.post(
-                "/my-mcp/publish",
-                json={"client_keys": ["weather", "search"]},
-            )
+            with patch("httpx.AsyncClient", return_value=mock_http_client):
+                response = client_with_manager.post(
+                    "/my-mcp/publish",
+                    json={"client_keys": ["weather", "search"]},
+                )
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "results" in data
-            assert len(data["results"]) == 2
-            for result in data["results"]:
-                assert result["success"] is True
-                assert result["item_id"] == "placeholder-item-id"
+                assert response.status_code == 200
+                data = response.json()
+                assert "results" in data
+                assert len(data["results"]) == 2
+                for result in data["results"]:
+                    assert result["success"] is True
+                    assert result["item_id"] == "mcp-weather-123"
 
     def test_publish_not_found(self, client_with_manager):
         """不存在的 client_key 返回错误结果."""
@@ -1234,6 +1246,43 @@ class TestPublishMyMCP:
                 if result["client_key"] == "nonexistent":
                     assert result["success"] is False
                     assert "not found" in result["error"]
+
+    def test_publish_market_error(self, client_with_manager):
+        """市场服务返回错误时，结果包含错误信息."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(name="Weather", command="npx"),
+            },
+        )
+
+        # Mock httpx.AsyncClient 返回错误响应
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post.return_value = mock_response
+        mock_http_client.__aenter__.return_value = mock_http_client
+        mock_http_client.__aexit__.return_value = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            with patch("httpx.AsyncClient", return_value=mock_http_client):
+                response = client_with_manager.post(
+                    "/my-mcp/publish",
+                    json={"client_keys": ["weather"]},
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert len(data["results"]) == 1
+                result = data["results"][0]
+                assert result["success"] is False
+                assert "Internal Server Error" in result["error"]
 
     def test_publish_mcp_none(self, client_with_manager):
         """MCP 配置为 None 时返回 400."""
