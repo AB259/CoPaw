@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Literal
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Body, HTTPException, Path as FastAPIPath, Request
 from pydantic import BaseModel, Field
 
 from ..agent_context import get_agent_and_config_for_request
+from ..mcp.stateful_client import StdIOStatefulClient, HttpStatefulClient
 from ..utils import schedule_agent_reload
 from ...config.config import (
     MCPClientConfig,
@@ -402,3 +404,97 @@ async def toggle_my_mcp(
     detail = _mask_sensitive_values(client)
     detail.client_key = client_key
     return detail
+
+
+class MCPTestResult(BaseModel):
+    """测试连接结果."""
+
+    success: bool = Field(..., description="连接是否成功")
+    tools: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="可用工具列表",
+    )
+    error: str = Field(default="", description="错误信息")
+
+
+async def _test_mcp_connection(
+    client: MCPClientConfig,
+    timeout: float = 30.0,
+) -> MCPTestResult:
+    """测试 MCP 连接.
+
+    Args:
+        client: MCP 客户端配置
+        timeout: 连接超时时间（秒）
+
+    Returns:
+        MCPTestResult: 测试结果，包含成功状态、工具列表和错误信息
+    """
+    mcp_client = None
+    try:
+        # 根据传输类型选择客户端
+        if client.transport == "stdio":
+            mcp_client = StdIOStatefulClient(
+                name="test-connection",
+                command=client.command,
+                args=client.args or [],
+                env=client.env or None,
+                cwd=client.cwd or None,
+            )
+        else:
+            # HTTP 或 SSE 传输
+            mcp_client = HttpStatefulClient(
+                name="test-connection",
+                transport=client.transport,
+                url=client.url,
+                headers=client.headers or None,
+            )
+
+        # 连接并获取工具列表
+        await mcp_client.connect(timeout=timeout)
+        tools = await mcp_client.list_tools(timeout=timeout)
+
+        # 关闭连接
+        await mcp_client.close()
+
+        return MCPTestResult(
+            success=True,
+            tools=[
+                {"name": t.name, "description": t.description or ""}
+                for t in tools
+            ],
+        )
+    except asyncio.TimeoutError:
+        # 确保关闭连接
+        if mcp_client:
+            try:
+                await mcp_client.close(ignore_errors=True)
+            except Exception:
+                pass
+        return MCPTestResult(success=False, error="连接超时")
+    except Exception as e:
+        # 确保关闭连接
+        if mcp_client:
+            try:
+                await mcp_client.close(ignore_errors=True)
+            except Exception:
+                pass
+        return MCPTestResult(success=False, error=str(e))
+
+
+@router.post("/{client_key}/test", response_model=MCPTestResult)
+async def test_my_mcp_connection(
+    request: Request,
+    client_key: str = FastAPIPath(...),
+) -> MCPTestResult:
+    """测试 MCP 连接.
+
+    连接到 MCP 服务器并获取可用工具列表。
+    """
+    _, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    client = agent_config.mcp.clients[client_key]
+    return await _test_mcp_connection(client)

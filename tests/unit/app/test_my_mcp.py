@@ -1008,3 +1008,120 @@ class TestToggleMyMCP:
                     data = response.json()
                     # updated_at 应被更新（不同于原始值）
                     assert data["updated_at"] != original_updated_at
+
+
+class TestMyMCPConnection:
+    """Tests for POST /my-mcp/{client_key}/test endpoint."""
+
+    def test_test_connection_success(self, client):
+        """测试连接成功."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Weather",
+                    command="npx",
+                    args=["-y", "weather-mcp"],
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+                mock_get.return_value = (mock_workspace, mock_config)
+                mock_test.return_value = {
+                    "success": True,
+                    "tools": [{"name": "get_weather", "description": "Get weather"}],
+                    "error": "",
+                }
+
+                response = client.post("/my-mcp/weather/test")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert len(data["tools"]) == 1
+                assert data["tools"][0]["name"] == "get_weather"
+
+    def test_test_connection_failure(self, client):
+        """测试连接失败."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Weather",
+                    command="npx",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+                mock_get.return_value = (mock_workspace, mock_config)
+                mock_test.return_value = {
+                    "success": False,
+                    "tools": [],
+                    "error": "Connection timeout",
+                }
+
+                response = client.post("/my-mcp/weather/test")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is False
+                assert "error" in data
+                assert data["error"] == "Connection timeout"
+
+    def test_test_connection_not_found(self, client):
+        """不存在的 MCP 返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.post("/my-mcp/nonexistent/test")
+            assert response.status_code == 404
+            assert "nonexistent" in response.json()["detail"]
+
+    def test_test_connection_mcp_none(self, client):
+        """MCP 配置为 None 时返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.post("/my-mcp/weather/test")
+            assert response.status_code == 404
+
+    def test_test_connection_http_transport(self, client):
+        """HTTP 传输类型的连接测试."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "http-tool": MCPClientConfig(
+                    name="HTTP Tool",
+                    transport="streamable_http",
+                    url="https://example.com/mcp",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+                mock_get.return_value = (mock_workspace, mock_config)
+                mock_test.return_value = {
+                    "success": True,
+                    "tools": [{"name": "query", "description": "Query data"}],
+                    "error": "",
+                }
+
+                response = client.post("/my-mcp/http-tool/test")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["success"] is True
+                assert len(data["tools"]) == 1
