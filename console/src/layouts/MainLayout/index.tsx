@@ -32,6 +32,13 @@ import AgentsPage from "../../pages/Settings/Agents";
 import AnalyticsPage from "../../pages/Analytics";
 import InstancePage from "../../pages/Instance";
 import MonitorPage from "../../pages/Monitor";
+import ContinuousIterationPage from "../../pages/Harness/ContinuousIteration";
+// ==================== 测试页面 (用于验证新功能) ====================
+import TestDownloadCardPage from "../../pages/TestDownloadCard";
+// ==================== 测试页面结束 ====================
+import MarketPage from "../../pages/Market";
+import MySkillsPage from "../../pages/MySkills";
+import MyMCPPage from "../../pages/MyMCP";
 
 const { Content } = Layout;
 
@@ -66,6 +73,10 @@ const pathToKey: Record<string, string> = {
   "/instance/instances": "instance-instances",
   "/instance/allocations": "instance-allocations",
   "/instance/operation-logs": "instance-operation-logs",
+  "/continuous-iteration": "continuous-iteration",
+  "/market": "market",
+  "/my-skills": "my-skills",
+  "/my-mcp": "my-mcp",
 };
 
 export default function MainLayout() {
@@ -128,6 +139,13 @@ export default function MainLayout() {
               <Route path="/analytics/*" element={<AnalyticsPage />} />
               <Route path="/monitor/*" element={<MonitorPage />} />
               <Route path="/instance/*" element={<InstancePage />} />
+              <Route path="/continuous-iteration" element={<ContinuousIterationPage />} />
+              {/* ==================== 测试路由 ==================== */}
+              <Route path="/test-download-card" element={<TestDownloadCardPage />} />
+              {/* ==================== 测试路由结束 ==================== */}
+              <Route path="/market" element={<MarketPage />} />
+              <Route path="/my-skills" element={<MySkillsPage />} />
+              <Route path="/my-mcp" element={<MyMCPPage />} />
             </Routes>
           </div>
         </Content>
