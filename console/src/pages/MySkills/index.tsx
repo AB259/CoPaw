@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty } from "antd";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox } from "antd";
 import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
@@ -9,21 +9,6 @@ import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
 
 const { Title, Text } = Typography;
-
-const DISABLED_SKILLS_KEY = "copaw_disabled_skills";
-
-function getDisabledSkills(): Set<string> {
-  try {
-    const raw = localStorage.getItem(DISABLED_SKILLS_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function setDisabledSkills(set: Set<string>) {
-  localStorage.setItem(DISABLED_SKILLS_KEY, JSON.stringify([...set]));
-}
 
 export default function MySkillsPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
@@ -42,11 +27,14 @@ export default function MySkillsPage() {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileType, setFileType] = useState<string | null>(null);
   const [skillFiles, setSkillFiles] = useState<Record<string, FileTreeNode[]>>({});
-  const [disabledSkills, setDisabledSkillsState] = useState<Set<string>>(getDisabledSkills);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Batch operation state
+  const [batchMode, setBatchMode] = useState<boolean>(false);
+  const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set());
 
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -161,15 +149,20 @@ export default function MySkillsPage() {
     }
   }, [sourceId, userId, userName, bbkId]);
 
-  const toggleDisabled = useCallback((skillName: string) => {
-    setDisabledSkillsState((prev) => {
-      const next = new Set(prev);
-      if (next.has(skillName)) next.delete(skillName);
-      else next.add(skillName);
-      setDisabledSkills(next);
-      return next;
-    });
-  }, []);
+  const handleToggleEnabled = useCallback(async (skill: MySkill) => {
+    const action = skill.enabled ? "disable" : "enable";
+    try {
+      if (skill.enabled) {
+        await mySkillsApi.disableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      } else {
+        await mySkillsApi.enableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      }
+      message.success(`${action === "enable" ? "启用" : "禁用"}成功`);
+      refresh();
+    } catch (err) {
+      message.error(`${action === "enable" ? "启用" : "禁用"}失败`);
+    }
+  }, [sourceId, userId, userName, bbkId, refresh]);
 
   const handleDelete = useCallback(async (skill: MySkill) => {
     try {
@@ -188,6 +181,54 @@ export default function MySkillsPage() {
       message.error("删除失败");
     }
   }, [sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchDeleteSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功删除 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量删除失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchEnable = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchEnableSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功启用 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量启用失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchDisable = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchDisableSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功禁用 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量禁用失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
 
   const handleSaveContent = useCallback(async () => {
     if (!selectedSkill || !selectedFile || !isEditing) return;
@@ -278,8 +319,7 @@ export default function MySkillsPage() {
   const SkillListItem = ({ skill, isSelected }: { skill: MySkill; isSelected: boolean }) => {
     const isExpanded = expandedSkills.has(skill.skill_name);
     const files = skillFiles[skill.skill_name] || [];
-    const isDisabled = disabledSkills.has(skill.skill_name);
-    const canExpand = !skill.is_received || files.length > 0;
+    const isDisabled = !skill.enabled;
 
     return (
       <div
@@ -292,10 +332,10 @@ export default function MySkillsPage() {
         }}
       >
         <div
-          onClick={() => toggleSkillExpand(skill)}
+          onClick={() => !batchMode && toggleSkillExpand(skill)}
           style={{
             padding: "8px 10px",
-            cursor: "pointer",
+            cursor: batchMode ? "default" : "pointer",
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -303,11 +343,26 @@ export default function MySkillsPage() {
             borderBottom: isExpanded ? "1px solid #f0f0f0" : "none",
           }}
         >
-          {isExpanded ? (
+          {batchMode && (
+            <Checkbox
+              style={{ marginRight: 8 }}
+              checked={selectedForBatch.has(skill.skill_name)}
+              onChange={(e) => {
+                setSelectedForBatch((prev) => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(skill.skill_name);
+                  else next.delete(skill.skill_name);
+                  return next;
+                });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+          {!batchMode && (isExpanded ? (
             <DownOutlined style={{ fontSize: 10, color: "#8c8c8c", flexShrink: 0 }} />
           ) : (
             <RightOutlined style={{ fontSize: 10, color: "#8c8c8c", flexShrink: 0 }} />
-          )}
+          ))}
           <Text
             strong={isSelected}
             style={{
@@ -481,7 +536,7 @@ export default function MySkillsPage() {
       );
     }
 
-    const isDisabled = disabledSkills.has(skill.skill_name);
+    const isDisabled = !skill.enabled;
     const canEdit = !skill.is_received;
     const isLoading = selectedFile && fileContent === null;
 
@@ -548,7 +603,7 @@ export default function MySkillsPage() {
             <Button
               size="small"
               icon={isDisabled ? <CheckCircleOutlined /> : <StopOutlined />}
-              onClick={() => toggleDisabled(skill.skill_name)}
+              onClick={() => handleToggleEnabled(skill)}
             >
               {isDisabled ? "启用" : "禁用"}
             </Button>
@@ -672,6 +727,35 @@ export default function MySkillsPage() {
               <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
             </Button>
           </div>
+        </div>
+
+        {/* Batch operation bar */}
+        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center" }}>
+          <Button
+            size="small"
+            onClick={() => {
+              setBatchMode(!batchMode);
+              setSelectedForBatch(new Set());
+            }}
+          >
+            {batchMode ? "取消批量" : "批量管理"}
+          </Button>
+          {batchMode && (
+            <>
+              <Button size="small" type="primary" onClick={handleBatchEnable} disabled={selectedForBatch.size === 0}>
+                批量启用 ({selectedForBatch.size})
+              </Button>
+              <Button size="small" onClick={handleBatchDisable} disabled={selectedForBatch.size === 0}>
+                批量禁用
+              </Button>
+              <Button size="small" danger onClick={handleBatchDelete} disabled={selectedForBatch.size === 0}>
+                批量删除
+              </Button>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                已选择 {selectedForBatch.size} 个
+              </Text>
+            </>
+          )}
         </div>
 
         {/* Skill groups */}
