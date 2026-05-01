@@ -10,6 +10,7 @@ export interface MySkill {
   distributed_by: string | null;
   is_received: boolean;
   has_update: boolean;
+  enabled: boolean;
   category?: string;
   creator_name?: string;
 }
@@ -24,6 +25,12 @@ export interface FileTreeNode {
 export interface FileContentResponse {
   content: string;
   file_type: string;
+}
+
+export interface BatchOperationResponse {
+  results: Record<string, { success: boolean; reason?: string }>;
+  success_count: number;
+  failed_count: number;
 }
 
 function mergeHeaders(extra?: Record<string, string>): RequestInit {
@@ -136,5 +143,106 @@ export const mySkillsApi = {
       }),
     };
     await request<void>(`/market/skills/mine/${skillName}`, opts);
+  },
+
+  enableSkill: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    skillName: string
+  ): Promise<void> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "X-Source-Id": sourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Bbk-Id": bbkId,
+      }),
+    };
+    await request<void>(`/market/skills/mine/${skillName}/enable`, opts);
+  },
+
+  disableSkill: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    skillName: string
+  ): Promise<void> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "X-Source-Id": sourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Bbk-Id": bbkId,
+      }),
+    };
+    await request<void>(`/market/skills/mine/${skillName}/disable`, opts);
+  },
+
+  batchDeleteSkills: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    skillNames: string[]
+  ): Promise<BatchOperationResponse> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        "X-Source-Id": sourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Bbk-Id": bbkId,
+      }),
+      body: JSON.stringify({ skills: skillNames }),
+    };
+    return request<BatchOperationResponse>(`/market/skills/mine/batch-delete`, opts);
+  },
+
+  batchEnableSkills: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    skillNames: string[]
+  ): Promise<BatchOperationResponse> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        "X-Source-Id": sourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Bbk-Id": bbkId,
+      }),
+      body: JSON.stringify({ skills: skillNames }),
+    };
+    return request<BatchOperationResponse>(`/market/skills/mine/batch-enable`, opts);
+  },
+
+  batchDisableSkills: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    skillNames: string[]
+  ): Promise<BatchOperationResponse> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        "X-Source-Id": sourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Bbk-Id": bbkId,
+      }),
+      body: JSON.stringify({ skills: skillNames }),
+    };
+    return request<BatchOperationResponse>(`/market/skills/mine/batch-disable`, opts);
   },
 };
