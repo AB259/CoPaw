@@ -22,6 +22,8 @@ from fastapi import (
 
 from ...marketplace.fs import get_user_skills_dir
 from ...marketplace.schemas import (
+    BatchOperationRequest,
+    BatchOperationResponse,
     FileContentResponse,
     FileTreeNode,
     MarketSkillDetail,
@@ -582,3 +584,148 @@ async def delete_my_skill(
             detail="Skill not found or delete failed",
         )
     return OperationResponse(success=True)
+
+
+@router.post(
+    "/market/skills/mine/{skill_name}/enable",
+    response_model=OperationResponse,
+)
+async def enable_my_skill(
+    skill_name: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """启用技能（含安全扫描）."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    result = await svc.enable_skill(x_user_id, skill_name, agent_id)
+    if not result.get("success"):
+        if result.get("reason") == "security_scan_failed":
+            raise HTTPException(
+                status_code=422,
+                detail=result,
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=result.get("reason", "Skill not found"),
+        )
+    return OperationResponse(success=True)
+
+
+@router.post(
+    "/market/skills/mine/{skill_name}/disable",
+    response_model=OperationResponse,
+)
+async def disable_my_skill(
+    skill_name: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """禁用技能."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    result = await svc.disable_skill(x_user_id, skill_name, agent_id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=404,
+            detail="Skill not found",
+        )
+    return OperationResponse(success=True)
+
+
+@router.post(
+    "/market/skills/mine/batch-delete",
+    response_model=BatchOperationResponse,
+)
+async def batch_delete_my_skills(
+    body: BatchOperationRequest,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """批量删除技能."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    results = await svc.batch_delete_skills(x_user_id, body.skills, agent_id)
+    success_count = sum(1 for r in results.values() if r.get("success"))
+    return BatchOperationResponse(
+        results=results,
+        success_count=success_count,
+        failed_count=len(body.skills) - success_count,
+    )
+
+
+@router.post(
+    "/market/skills/mine/batch-enable",
+    response_model=BatchOperationResponse,
+)
+async def batch_enable_my_skills(
+    body: BatchOperationRequest,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """批量启用技能."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    results = await svc.batch_enable_skills(x_user_id, body.skills, agent_id)
+    success_count = sum(1 for r in results.values() if r.get("success"))
+    return BatchOperationResponse(
+        results=results,
+        success_count=success_count,
+        failed_count=len(body.skills) - success_count,
+    )
+
+
+@router.post(
+    "/market/skills/mine/batch-disable",
+    response_model=BatchOperationResponse,
+)
+async def batch_disable_my_skills(
+    body: BatchOperationRequest,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    agent_id: str = "default",
+):
+    """批量禁用技能."""
+    require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+    svc = request.app.state.marketplace
+    results = await svc.batch_disable_skills(x_user_id, body.skills, agent_id)
+    success_count = sum(1 for r in results.values() if r.get("success"))
+    return BatchOperationResponse(
+        results=results,
+        success_count=success_count,
+        failed_count=len(body.skills) - success_count,
+    )
