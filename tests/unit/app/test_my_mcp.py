@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for my-mcp endpoints."""
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import FastAPI, Request
@@ -380,7 +381,9 @@ class TestGetMyMCPDetail:
             # headers 应被脱敏
             assert "Authorization" in data["headers"]
             # Bearer secret-token-123 长度 23，前2字符 + 17星号 + 后4字符
-            assert data["headers"]["Authorization"] == "Be*****************-123"
+            assert (
+                data["headers"]["Authorization"] == "Be*****************-123"
+            )
 
     def test_get_detail_empty_env_headers(self, client):
         """env 和 headers 为空时应返回空字典."""
@@ -482,13 +485,20 @@ class TestCreateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.post(
-                        "/my-mcp", json={
+                        "/my-mcp",
+                        json={
                             "client_key": "new-tool",
                             "name": "New Tool",
                             "transport": "stdio",
@@ -517,11 +527,14 @@ class TestCreateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.post(
-                "/my-mcp", json={
+                "/my-mcp",
+                json={
                     "client_key": "existing",
                     "name": "Duplicate",
                     "command": "npx",
@@ -538,13 +551,20 @@ class TestCreateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.post(
-                        "/my-mcp", json={
+                        "/my-mcp",
+                        json={
                             "client_key": "full-tool",
                             "name": "Full Tool",
                             "description": "完整配置",
@@ -578,13 +598,20 @@ class TestCreateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.post(
-                        "/my-mcp", json={
+                        "/my-mcp",
+                        json={
                             "client_key": "http-tool",
                             "name": "HTTP Tool",
                             "transport": "streamable_http",
@@ -611,13 +638,20 @@ class TestCreateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.post(
-                        "/my-mcp", json={
+                        "/my-mcp",
+                        json={
                             "client_key": "new-tool",
                             "name": "New Tool",
                             "command": "npx",
@@ -654,13 +688,20 @@ class TestUpdateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.put(
-                        "/my-mcp/weather", json={
+                        "/my-mcp/weather",
+                        json={
                             "name": "New Name",
                             "description": "New desc",
                         },
@@ -678,7 +719,9 @@ class TestUpdateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.put("/my-mcp/nonexistent", json={"name": "New"})
@@ -691,7 +734,9 @@ class TestUpdateMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.put("/my-mcp/weather", json={"name": "New"})
@@ -711,12 +756,15 @@ class TestUpdateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             # 尝试修改 command（敏感字段）
             response = client.put(
-                "/my-mcp/distributed", json={
+                "/my-mcp/distributed",
+                json={
                     "command": "new-command",
                 },
             )
@@ -743,14 +791,21 @@ class TestUpdateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     # 修改 name 和 description（非敏感字段）
                     response = client.put(
-                        "/my-mcp/distributed", json={
+                        "/my-mcp/distributed",
+                        json={
                             "name": "New Name",
                             "description": "New desc",
                         },
@@ -783,23 +838,34 @@ class TestUpdateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     # 发送脱敏后的值（与原始值匹配）
                     # secret-key-12345678 长度19，前2字符 + 13星号 + 后4字符
                     masked_value = "se*************5678"
                     response = client.put(
-                        "/my-mcp/test-client", json={
+                        "/my-mcp/test-client",
+                        json={
                             "env": {"API_KEY": masked_value},
                         },
                     )
                     assert response.status_code == 200
                     # 验证保存了原始值（而非脱敏值）
-                    saved_client = mock_save.call_args[0][1].mcp.clients["test-client"]
-                    assert saved_client.env["API_KEY"] == original_env["API_KEY"]
+                    saved_client = mock_save.call_args[0][1].mcp.clients[
+                        "test-client"
+                    ]
+                    assert (
+                        saved_client.env["API_KEY"] == original_env["API_KEY"]
+                    )
 
     def test_update_all_sensitive_fields_blocked(self, client):
         """测试所有敏感字段对市场分发 MCP 都被禁止."""
@@ -815,7 +881,9 @@ class TestUpdateMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             # 使用有效的字段值进行测试
@@ -831,9 +899,12 @@ class TestUpdateMyMCP:
 
             for field, value in test_values.items():
                 response = client.put(
-                    "/my-mcp/distributed", json={field: value},
+                    "/my-mcp/distributed",
+                    json={field: value},
                 )
-                assert response.status_code == 403, f"{field} should be forbidden"
+                assert (
+                    response.status_code == 403
+                ), f"{field} should be forbidden"
                 assert field in response.json()["detail"]
 
 
@@ -853,9 +924,15 @@ class TestDeleteMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.delete("/my-mcp/weather")
@@ -869,7 +946,9 @@ class TestDeleteMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.delete("/my-mcp/nonexistent")
@@ -881,7 +960,9 @@ class TestDeleteMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.delete("/my-mcp/weather")
@@ -910,9 +991,15 @@ class TestToggleMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.patch("/my-mcp/weather/toggle")
@@ -942,9 +1029,15 @@ class TestToggleMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.patch("/my-mcp/weather/toggle")
@@ -959,7 +1052,9 @@ class TestToggleMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.patch("/my-mcp/nonexistent/toggle")
@@ -972,7 +1067,9 @@ class TestToggleMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.patch("/my-mcp/weather/toggle")
@@ -998,9 +1095,15 @@ class TestToggleMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
-                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp.save_agent_config",
+            ) as mock_save:
+                with patch(
+                    "swe.app.routers.my_mcp.schedule_agent_reload",
+                ) as mock_reload:
                     mock_get.return_value = (mock_workspace, mock_config)
 
                     response = client.patch("/my-mcp/weather/toggle")
@@ -1027,12 +1130,18 @@ class TestMyMCPConnection:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp._test_mcp_connection",
+            ) as mock_test:
                 mock_get.return_value = (mock_workspace, mock_config)
                 mock_test.return_value = {
                     "success": True,
-                    "tools": [{"name": "get_weather", "description": "Get weather"}],
+                    "tools": [
+                        {"name": "get_weather", "description": "Get weather"},
+                    ],
                     "error": "",
                 }
 
@@ -1056,8 +1165,12 @@ class TestMyMCPConnection:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp._test_mcp_connection",
+            ) as mock_test:
                 mock_get.return_value = (mock_workspace, mock_config)
                 mock_test.return_value = {
                     "success": False,
@@ -1078,7 +1191,9 @@ class TestMyMCPConnection:
         mock_config = MagicMock()
         mock_config.mcp = MCPConfig(clients={})
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.post("/my-mcp/nonexistent/test")
@@ -1091,7 +1206,9 @@ class TestMyMCPConnection:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client.post("/my-mcp/weather/test")
@@ -1111,8 +1228,12 @@ class TestMyMCPConnection:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
-            with patch("swe.app.routers.my_mcp._test_mcp_connection") as mock_test:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
+            with patch(
+                "swe.app.routers.my_mcp._test_mcp_connection",
+            ) as mock_test:
                 mock_get.return_value = (mock_workspace, mock_config)
                 mock_test.return_value = {
                     "success": True,
@@ -1160,7 +1281,9 @@ class TestPublishMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             # 默认 client 没有 manager middleware，request.state.manager 为 False
@@ -1202,7 +1325,9 @@ class TestPublishMyMCP:
         mock_http_client.__aenter__.return_value = mock_http_client
         mock_http_client.__aexit__.return_value = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             with patch("httpx.AsyncClient", return_value=mock_http_client):
@@ -1230,7 +1355,9 @@ class TestPublishMyMCP:
             },
         )
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client_with_manager.post(
@@ -1268,7 +1395,9 @@ class TestPublishMyMCP:
         mock_http_client.__aenter__.return_value = mock_http_client
         mock_http_client.__aexit__.return_value = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             with patch("httpx.AsyncClient", return_value=mock_http_client):
@@ -1290,7 +1419,9 @@ class TestPublishMyMCP:
         mock_config = MagicMock()
         mock_config.mcp = None
 
-        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+        with patch(
+            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+        ) as mock_get:
             mock_get.return_value = (mock_workspace, mock_config)
 
             response = client_with_manager.post(

@@ -7,9 +7,12 @@ import type {
   MyMCPListItem,
   MyMCPDetail,
   MyMCPCreateRequest,
+  MyMCPDraftTestRequest,
   MyMCPUpdateRequest,
   PublishMCPRequest,
   PublishMCPResponse,
+  PublishSingleMCPRequest,
+  PublishSingleMCPResponse,
   MCPTestResult,
 } from "../types";
 
@@ -24,21 +27,21 @@ export const myMcpApi = {
    * 获取我的 MCP 列表
    */
   listMyMCP: async (): Promise<MyMCPListItem[]> => {
-    return request<MyMCPListItem[]>("/my-mcp");
+    return request<MyMCPListItem[]>("/market/my-mcp");
   },
 
   /**
    * 获取单个 MCP 详情
    */
   getMyMCPDetail: async (clientKey: string): Promise<MyMCPDetail> => {
-    return request<MyMCPDetail>(`/my-mcp/${encodeURIComponent(clientKey)}`);
+    return request<MyMCPDetail>(`/market/my-mcp/${encodeURIComponent(clientKey)}`);
   },
 
   /**
    * 创建新的 MCP
    */
   createMyMCP: async (data: MyMCPCreateRequest): Promise<MyMCPDetail> => {
-    return request<MyMCPDetail>("/my-mcp", {
+    return request<MyMCPDetail>("/market/my-mcp", {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -51,7 +54,7 @@ export const myMcpApi = {
     clientKey: string,
     data: MyMCPUpdateRequest
   ): Promise<MyMCPDetail> => {
-    return request<MyMCPDetail>(`/my-mcp/${encodeURIComponent(clientKey)}`, {
+    return request<MyMCPDetail>(`/market/my-mcp/${encodeURIComponent(clientKey)}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
@@ -62,7 +65,7 @@ export const myMcpApi = {
    */
   deleteMyMCP: async (clientKey: string): Promise<{ message: string }> => {
     return request<{ message: string }>(
-      `/my-mcp/${encodeURIComponent(clientKey)}`,
+      `/market/my-mcp/${encodeURIComponent(clientKey)}`,
       { method: "DELETE" }
     );
   },
@@ -72,7 +75,7 @@ export const myMcpApi = {
    */
   toggleMyMCP: async (clientKey: string): Promise<MyMCPDetail> => {
     return request<MyMCPDetail>(
-      `/my-mcp/${encodeURIComponent(clientKey)}/toggle`,
+      `/market/my-mcp/${encodeURIComponent(clientKey)}/toggle`,
       { method: "PATCH" }
     );
   },
@@ -82,9 +85,21 @@ export const myMcpApi = {
    */
   testMyMCPConnection: async (clientKey: string): Promise<MCPTestResult> => {
     return request<MCPTestResult>(
-      `/my-mcp/${encodeURIComponent(clientKey)}/test`,
+      `/market/my-mcp/${encodeURIComponent(clientKey)}/test`,
       { method: "POST" }
     );
+  },
+
+  /**
+   * 测试草稿 MCP 连接
+   */
+  testMyMCPDraftConnection: async (
+    data: MyMCPDraftTestRequest
+  ): Promise<MCPTestResult> => {
+    return request<MCPTestResult>("/market/my-mcp/draft-test", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   },
 
   /**
@@ -100,13 +115,40 @@ export const myMcpApi = {
       method: "POST",
       headers: new Headers({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
+        ...(sourceId ? { "X-Source-Id": sourceId } : {}),
         "X-User-Id": userId,
         "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
       }),
       body: JSON.stringify(data),
     };
-    return request<PublishMCPResponse>("/my-mcp/publish", opts);
+    return request<PublishMCPResponse>("/market/my-mcp/publish", opts);
+  },
+
+  /**
+   * 发布单个 MCP 到市场（管理员）
+   */
+  publishSingleToMarket: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    clientKey: string,
+    data: PublishSingleMCPRequest
+  ): Promise<PublishSingleMCPResponse> => {
+    const opts: RequestInit = {
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        ...(sourceId ? { "X-Source-Id": sourceId } : {}),
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Manager": "true",
+      }),
+      body: JSON.stringify(data),
+    };
+    return request<PublishSingleMCPResponse>(
+      `/market/my-mcp/${encodeURIComponent(clientKey)}/publish`,
+      opts
+    );
   },
 };

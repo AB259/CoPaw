@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """应用市场数据模型."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +15,9 @@ class MarketItem(BaseModel):
     item_id: str
     item_type: str = "skill"
     name: str
+    chinese_name: str = ""
     description: str = ""
+    guidance: str = ""
     version: str = "1.0.0"
     creator_id: str
     creator_name: str = ""

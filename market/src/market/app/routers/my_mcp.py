@@ -1,49 +1,53 @@
 # -*- coding: utf-8 -*-
-"""我的 MCP 管理路由."""
+"""我的 MCP 管理路由。"""
 
 from __future__ import annotations
 
 import asyncio
-import httpx
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Literal
+from typing import Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Path as FastAPIPath, Request
+from fastapi import (
+    APIRouter,
+    Body,
+    HTTPException,
+    Path as FastAPIPath,
+    Request,
+)
 from pydantic import BaseModel, Field
 
-from ..agent_context import get_agent_and_config_for_request
-from ..mcp.stateful_client import StdIOStatefulClient, HttpStatefulClient
-from ..utils import schedule_agent_reload
-from ...config.config import (
-    MCPClientConfig,
-    MCPConfig,
-    save_agent_config,
+from swe.app.mcp.stateful_client import HttpStatefulClient, StdIOStatefulClient
+from swe.config.config import MCPClientConfig, MCPConfig
+from swe.config.context import tenant_context
+from swe.app.routers.mcp import _mask_env_value, _restore_original_values
+
+from ...marketplace.schemas import PublishMCPRequest as MarketPublishMCPRequest
+from ..my_mcp_helpers import (
+    load_agent_config_for_request,
+    mark_request_state,
+    save_agent_config_for_request,
 )
-from .mcp import _mask_env_value, _restore_original_values
 
-router = APIRouter(prefix="/my-mcp", tags=["my-mcp"])
+router = APIRouter(prefix="/market/my-mcp", tags=["my-mcp"])
 
-# 市场分发的 MCP 不允许修改的敏感字段
-SENSITIVE_FIELDS = ["transport", "url", "headers", "command", "args", "env", "cwd"]
+SENSITIVE_FIELDS = [
+    "transport",
+    "url",
+    "headers",
+    "command",
+    "args",
+    "env",
+    "cwd",
+]
 
 
 def _is_distributed_from_market(client: MCPClientConfig) -> bool:
-    """判断 MCP 是否来自市场分发."""
+    """判断 MCP 是否来自市场分发。"""
     return client.source.startswith("marketplace:")
 
 
-def _get_tenant_id(request: Request) -> str | None:
-    """获取请求中的租户 ID."""
-    return getattr(request.state, "tenant_id", None)
-
-
-def _get_source_id(request: Request) -> str | None:
-    """获取请求中的来源 ID."""
-    return getattr(request.state, "source_id", None)
-
-
 class MyMCPListItem(BaseModel):
-    """我的 MCP 列表项."""
+    """我的 MCP 列表项。"""
 
     client_key: str = Field(..., description="唯一标识 key")
     name: str = Field(..., description="显示名称")
@@ -54,16 +58,22 @@ class MyMCPListItem(BaseModel):
     )
     enabled: bool = Field(default=True, description="是否启用")
     source: str = Field(default="", description="来源（本地/市场）")
-    market_client_key: str = Field(default="", description="市场原始 client_key")
+    market_client_key: str = Field(
+        default="",
+        description="市场原始 client_key",
+    )
     created_at: str = Field(default="", description="创建时间")
     updated_at: str = Field(default="", description="更新时间")
 
 
 class MyMCPDetail(MyMCPListItem):
-    """我的 MCP 详情."""
+    """我的 MCP 详情。"""
 
     url: str = Field(default="", description="HTTP/SSE URL")
-    headers: Dict[str, str] = Field(default_factory=dict, description="HTTP headers")
+    headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="HTTP headers",
+    )
     command: str = Field(default="", description="stdio 命令")
     args: List[str] = Field(default_factory=list, description="命令行参数")
     env: Dict[str, str] = Field(default_factory=dict, description="环境变量")
@@ -73,7 +83,7 @@ class MyMCPDetail(MyMCPListItem):
 
 
 class MyMCPCreateRequest(BaseModel):
-    """创建 MCP 请求."""
+    """创建 MCP 请求。"""
 
     client_key: str = Field(..., description="唯一标识 key")
     name: str = Field(..., description="显示名称")
@@ -83,15 +93,19 @@ class MyMCPCreateRequest(BaseModel):
         description="MCP 传输类型",
     )
     url: str = Field(default="", description="HTTP/SSE URL")
-    headers: Dict[str, str] = Field(default_factory=dict, description="HTTP headers")
+    headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="HTTP headers",
+    )
     command: str = Field(default="", description="stdio 命令")
     args: List[str] = Field(default_factory=list, description="命令行参数")
     env: Dict[str, str] = Field(default_factory=dict, description="环境变量")
     cwd: str = Field(default="", description="工作目录")
+    lazy_load: bool = Field(default=False, description="是否懒加载")
 
 
 class MyMCPUpdateRequest(BaseModel):
-    """更新 MCP 请求（所有字段可选）."""
+    """更新 MCP 请求（所有字段可选）。"""
 
     name: Optional[str] = Field(None, description="显示名称")
     description: Optional[str] = Field(None, description="描述")
@@ -105,18 +119,55 @@ class MyMCPUpdateRequest(BaseModel):
     args: Optional[List[str]] = Field(None, description="命令行参数")
     env: Optional[Dict[str, str]] = Field(None, description="环境变量")
     cwd: Optional[str] = Field(None, description="工作目录")
+    lazy_load: Optional[bool] = Field(None, description="是否懒加载")
+
+
+class MyMCPDraftTestRequest(BaseModel):
+    """测试草稿 MCP 请求。"""
+
+    baseline_client_key: Optional[str] = Field(
+        None,
+        description="编辑场景的原始 client_key，用于恢复脱敏字段",
+    )
+    name: str = Field(default="test-connection", description="显示名称")
+    transport: Literal["stdio", "streamable_http", "sse"] = Field(
+        default="stdio",
+        description="MCP 传输类型",
+    )
+    url: str = Field(default="", description="HTTP/SSE URL")
+    headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="HTTP headers",
+    )
+    command: str = Field(default="", description="stdio 命令")
+    args: List[str] = Field(default_factory=list, description="命令行参数")
+    env: Dict[str, str] = Field(default_factory=dict, description="环境变量")
+    cwd: str = Field(default="", description="工作目录")
 
 
 class PublishMCPRequest(BaseModel):
-    """发布到市场请求."""
+    """发布到市场请求。"""
 
     client_keys: List[str] = Field(..., description="要发布的 client_key 列表")
     category_id: Optional[int] = Field(None, description="分类 ID")
-    bbk_ids: List[str] = Field(default_factory=list, description="关联 BBK ID 列表")
+    bbk_ids: List[str] = Field(
+        default_factory=list,
+        description="关联 BBK ID 列表",
+    )
+
+
+class PublishSingleMCPRequest(BaseModel):
+    """单个 MCP 发布到市场请求。"""
+
+    category_id: Optional[int] = Field(None, description="分类 ID")
+    bbk_ids: List[str] = Field(
+        default_factory=list,
+        description="关联 BBK ID 列表",
+    )
 
 
 class PublishMCPResult(BaseModel):
-    """单个发布结果."""
+    """单个发布结果。"""
 
     client_key: str = Field(..., description="MCP client key")
     item_id: Optional[str] = Field(None, description="市场 item ID")
@@ -125,7 +176,7 @@ class PublishMCPResult(BaseModel):
 
 
 class PublishMCPResponse(BaseModel):
-    """发布响应."""
+    """发布响应。"""
 
     results: List[PublishMCPResult] = Field(
         default_factory=list,
@@ -133,41 +184,16 @@ class PublishMCPResponse(BaseModel):
     )
 
 
-@router.get("", response_model=List[MyMCPListItem])
-async def list_my_mcp(request: Request) -> List[MyMCPListItem]:
-    """获取我的 MCP 列表."""
-    _, agent_config = await get_agent_and_config_for_request(request)
+class PublishSingleMCPResponse(BaseModel):
+    """单个 MCP 发布响应。"""
 
-    if agent_config.mcp is None or not agent_config.mcp.clients:
-        return []
-
-    result = []
-    for client_key, client in agent_config.mcp.clients.items():
-        result.append(
-            MyMCPListItem(
-                client_key=client_key,
-                name=client.name,
-                description=client.description,
-                transport=client.transport,
-                enabled=client.enabled,
-                source=client.source,
-                market_client_key=client.market_client_key,
-                created_at=client.created_at,
-                updated_at=client.updated_at,
-            ),
-        )
-
-    # 按更新时间降序排序（最新的在前）
-    result.sort(key=lambda x: x.updated_at or "", reverse=True)
-    return result
+    client_key: str = Field(..., description="MCP client key")
+    item_id: str = Field(..., description="市场 item ID")
+    success: bool = Field(..., description="是否成功")
 
 
-def _mask_sensitive_values(client) -> MyMCPDetail:
-    """构建详情响应，脱敏 env 和 headers.
-
-    client_key 字段由路由层填充，不在 helper 中设置。
-    """
-    from ...config.config import MCPClientConfig
+def _mask_sensitive_values(client: MCPClientConfig) -> MyMCPDetail:
+    """构建详情响应，脱敏 env 和 headers。"""
 
     masked_env = (
         {k: _mask_env_value(v) for k, v in client.env.items()}
@@ -181,7 +207,7 @@ def _mask_sensitive_values(client) -> MyMCPDetail:
     )
 
     return MyMCPDetail(
-        client_key="",  # 由路由层填充
+        client_key="",
         name=client.name,
         description=client.description,
         transport=client.transport,
@@ -201,13 +227,43 @@ def _mask_sensitive_values(client) -> MyMCPDetail:
     )
 
 
+@router.get("", response_model=List[MyMCPListItem])
+async def list_my_mcp(request: Request) -> List[MyMCPListItem]:
+    """获取我的 MCP 列表。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
+
+    if agent_config.mcp is None or not agent_config.mcp.clients:
+        return []
+
+    result: list[MyMCPListItem] = []
+    for client_key, client in agent_config.mcp.clients.items():
+        result.append(
+            MyMCPListItem(
+                client_key=client_key,
+                name=client.name,
+                description=client.description,
+                transport=client.transport,
+                enabled=client.enabled,
+                source=client.source,
+                market_client_key=client.market_client_key,
+                created_at=client.created_at,
+                updated_at=client.updated_at,
+            ),
+        )
+
+    result.sort(key=lambda item: item.updated_at or "", reverse=True)
+    return result
+
+
 @router.get("/{client_key}", response_model=MyMCPDetail)
 async def get_my_mcp_detail(
     request: Request,
     client_key: str = FastAPIPath(..., description="MCP client key"),
 ) -> MyMCPDetail:
-    """获取单个 MCP 详情."""
-    _, agent_config = await get_agent_and_config_for_request(request)
+    """获取单个 MCP 详情。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
     if agent_config.mcp is None:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
@@ -226,21 +282,19 @@ async def create_my_mcp(
     request: Request,
     body: MyMCPCreateRequest = Body(...),
 ) -> MyMCPDetail:
-    """创建新的 MCP."""
-    workspace, agent_config = await get_agent_and_config_for_request(request)
+    """创建新的 MCP。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
-    # 初始化 MCP 配置（如果不存在）
     if agent_config.mcp is None:
         agent_config.mcp = MCPConfig(clients={})
 
-    # 检查 client_key 是否已存在
     if body.client_key in agent_config.mcp.clients:
         raise HTTPException(
             400,
             detail=f"MCP client '{body.client_key}' already exists",
         )
 
-    # 创建新的客户端配置
     now = datetime.now(timezone.utc).isoformat()
     new_client = MCPClientConfig(
         name=body.name,
@@ -253,27 +307,15 @@ async def create_my_mcp(
         args=body.args,
         env=body.env,
         cwd=body.cwd,
-        source="",  # 我创建的
+        lazy_load=body.lazy_load,
+        source="",
         created_at=now,
         updated_at=now,
     )
 
-    # 添加到配置并保存
     agent_config.mcp.clients[body.client_key] = new_client
-    save_agent_config(
-        workspace.agent_id,
-        agent_config,
-        tenant_id=workspace.tenant_id,
-    )
+    save_agent_config_for_request(context, agent_config)
 
-    # 热重载配置（异步，非阻塞）
-    schedule_agent_reload(
-        request,
-        workspace.agent_id,
-        tenant_id=workspace.tenant_id,
-    )
-
-    # 返回详情（脱敏敏感值）
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
     return detail
@@ -285,22 +327,16 @@ async def update_my_mcp(
     client_key: str = FastAPIPath(...),
     body: MyMCPUpdateRequest = Body(...),
 ) -> MyMCPDetail:
-    """更新 MCP 配置.
-
-    注意：市场分发的 MCP（source 以 "marketplace:" 开头）不允许修改敏感字段
-    （transport, url, headers, command, args, env, cwd）。
-    """
-    workspace, agent_config = await get_agent_and_config_for_request(request)
+    """更新 MCP 配置。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
     if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
     existing = agent_config.mcp.clients[client_key]
-
-    # 获取更新的数据（只包含实际设置的字段）
     update_data = body.model_dump(exclude_unset=True)
 
-    # 市场分发的 MCP 不允许修改连接配置敏感字段
     if _is_distributed_from_market(existing):
         for field in SENSITIVE_FIELDS:
             if field in update_data:
@@ -309,10 +345,8 @@ async def update_my_mcp(
                     detail=f"Cannot modify '{field}' for distributed MCP",
                 )
 
-    # 合并更新数据
     merged_data = existing.model_dump(mode="json")
 
-    # 处理 env/headers 脱敏值恢复（复用 mcp.py 逻辑）
     if "env" in update_data and update_data["env"] is not None:
         update_data["env"] = _restore_original_values(
             update_data["env"],
@@ -329,17 +363,7 @@ async def update_my_mcp(
 
     updated_client = MCPClientConfig.model_validate(merged_data)
     agent_config.mcp.clients[client_key] = updated_client
-
-    save_agent_config(
-        workspace.agent_id,
-        agent_config,
-        tenant_id=workspace.tenant_id,
-    )
-    schedule_agent_reload(
-        request,
-        workspace.agent_id,
-        tenant_id=workspace.tenant_id,
-    )
+    save_agent_config_for_request(context, agent_config)
 
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
@@ -351,24 +375,15 @@ async def delete_my_mcp(
     request: Request,
     client_key: str = FastAPIPath(...),
 ) -> Dict[str, str]:
-    """删除 MCP 客户端配置."""
-    workspace, agent_config = await get_agent_and_config_for_request(request)
+    """删除 MCP 客户端配置。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
     if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
     del agent_config.mcp.clients[client_key]
-    save_agent_config(
-        workspace.agent_id,
-        agent_config,
-        tenant_id=workspace.tenant_id,
-    )
-    schedule_agent_reload(
-        request,
-        workspace.agent_id,
-        tenant_id=workspace.tenant_id,
-    )
-
+    save_agent_config_for_request(context, agent_config)
     return {"message": f"MCP client '{client_key}' deleted"}
 
 
@@ -377,12 +392,9 @@ async def toggle_my_mcp(
     request: Request,
     client_key: str = FastAPIPath(...),
 ) -> MyMCPDetail:
-    """启用/禁用 MCP.
-
-    切换 enabled 字段：True → False 或 False → True。
-    同时更新 updated_at 时间戳。
-    """
-    workspace, agent_config = await get_agent_and_config_for_request(request)
+    """启用/禁用 MCP。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
     if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
@@ -390,17 +402,7 @@ async def toggle_my_mcp(
     client = agent_config.mcp.clients[client_key]
     client.enabled = not client.enabled
     client.updated_at = datetime.now(timezone.utc).isoformat()
-
-    save_agent_config(
-        workspace.agent_id,
-        agent_config,
-        tenant_id=workspace.tenant_id,
-    )
-    schedule_agent_reload(
-        request,
-        workspace.agent_id,
-        tenant_id=workspace.tenant_id,
-    )
+    save_agent_config_for_request(context, agent_config)
 
     detail = _mask_sensitive_values(client)
     detail.client_key = client_key
@@ -408,10 +410,80 @@ async def toggle_my_mcp(
 
 
 def _require_manager(request: Request) -> None:
-    """校验管理员权限."""
-    manager = getattr(request.state, "manager", False)
-    if not manager:
+    """校验管理员权限。"""
+    if request.headers.get("X-Manager", "").lower() != "true":
         raise HTTPException(403, detail="Manager access required")
+
+
+async def _publish_client_to_market(
+    marketplace,
+    *,
+    source_id: str,
+    user_id: str,
+    user_name: str,
+    client_key: str,
+    client: MCPClientConfig,
+    category_id: Optional[int],
+    bbk_ids: List[str],
+) -> PublishMCPResult:
+    """复用单个 MCP 的市场发布逻辑。"""
+    item = await marketplace.publish_mcp(
+        source_id,
+        MarketPublishMCPRequest(
+            client_key=client_key,
+            name=client.name,
+            description=client.description,
+            creator_id=user_id,
+            creator_name=user_name,
+            category_id=category_id,
+            bbk_ids=bbk_ids,
+            config=client.model_dump(mode="json"),
+        ),
+    )
+    return PublishMCPResult(
+        client_key=client_key,
+        success=True,
+        item_id=item.item_id,
+    )
+
+
+@router.post("/{client_key}/publish", response_model=PublishSingleMCPResponse)
+async def publish_single_my_mcp_to_market(
+    request: Request,
+    client_key: str = FastAPIPath(..., description="要发布的 client_key"),
+    body: PublishSingleMCPRequest = Body(...),
+) -> PublishSingleMCPResponse:
+    """发布单个 MCP 到市场（管理员）。"""
+    _require_manager(request)
+
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
+    source_id = context.source_id or "default"
+
+    if agent_config.mcp is None:
+        raise HTTPException(400, detail="No MCP clients configured")
+
+    client = agent_config.mcp.clients.get(client_key)
+    if client is None:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    marketplace = request.app.state.marketplace
+    user_name = request.headers.get("X-User-Name", "") or ""
+    result = await _publish_client_to_market(
+        marketplace,
+        source_id=source_id,
+        user_id=context.user_id,
+        user_name=user_name,
+        client_key=client_key,
+        client=client,
+        category_id=body.category_id,
+        bbk_ids=body.bbk_ids,
+    )
+    return PublishSingleMCPResponse(
+        client_key=result.client_key,
+        item_id=result.item_id or "",
+        success=result.success,
+    )
 
 
 @router.post("/publish", response_model=PublishMCPResponse)
@@ -419,26 +491,23 @@ async def publish_my_mcp_to_market(
     request: Request,
     body: PublishMCPRequest = Body(...),
 ) -> PublishMCPResponse:
-    """发布 MCP 到市场（管理员）.
-
-    管理员可以将本地 MCP 配置发布到市场供其他用户订阅。
-    调用市场服务的 POST /api/market/mcp 接口。
-    """
+    """发布 MCP 到市场（管理员）。"""
     _require_manager(request)
 
     if not body.client_keys:
         raise HTTPException(400, detail="No client_keys provided")
 
-    _, agent_config = await get_agent_and_config_for_request(request)
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
+    source_id = context.source_id or "default"
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail="No MCP clients configured")
 
-    source_id = _get_source_id(request)
-    user_id = getattr(request.state, "user_id", "")
-    user_name = getattr(request.state, "user_name", "")
+    marketplace = request.app.state.marketplace
+    user_name = request.headers.get("X-User-Name", "") or ""
 
-    results = []
+    results: list[PublishMCPResult] = []
     for client_key in body.client_keys:
         client = agent_config.mcp.clients.get(client_key)
         if client is None:
@@ -451,64 +520,24 @@ async def publish_my_mcp_to_market(
             )
             continue
 
-        # 调用市场服务发布 MCP
         try:
-            market_url = "http://127.0.0.1:8090/api/market/mcp"
-            publish_req = {
-                "client_key": client_key,
-                "name": client.name,
-                "description": client.description,
-                "creator_id": user_id,
-                "creator_name": user_name,
-                "category_id": body.category_id,
-                "bbk_ids": body.bbk_ids,
-                "config": client.model_dump(mode="json"),
-            }
-
-            async with httpx.AsyncClient() as http:
-                resp = await http.post(
-                    market_url,
-                    json=publish_req,
-                    headers={
-                        "X-Source-Id": source_id or "",
-                        "X-Manager": "true",
-                        "X-User-Id": user_id,
-                        "X-User-Name": user_name or "",
-                    },
-                    timeout=30.0,
-                )
-
-            if resp.status_code == 201:
-                data = resp.json()
-                results.append(
-                    PublishMCPResult(
-                        client_key=client_key,
-                        success=True,
-                        item_id=data.get("item_id"),
-                    ),
-                )
-            else:
-                results.append(
-                    PublishMCPResult(
-                        client_key=client_key,
-                        success=False,
-                        error=resp.text,
-                    ),
-                )
-        except httpx.HTTPError as e:
-            results.append(
-                PublishMCPResult(
-                    client_key=client_key,
-                    success=False,
-                    error=f"HTTP error: {e}",
-                ),
+            result = await _publish_client_to_market(
+                marketplace,
+                source_id=source_id,
+                user_id=context.user_id,
+                user_name=user_name,
+                client_key=client_key,
+                client=client,
+                category_id=body.category_id,
+                bbk_ids=body.bbk_ids,
             )
-        except Exception as e:
+            results.append(result)
+        except Exception as exc:  # pylint: disable=broad-except
             results.append(
                 PublishMCPResult(
                     client_key=client_key,
                     success=False,
-                    error=str(e),
+                    error=str(exc),
                 ),
             )
 
@@ -516,7 +545,7 @@ async def publish_my_mcp_to_market(
 
 
 class MCPTestResult(BaseModel):
-    """测试连接结果."""
+    """测试连接结果。"""
 
     success: bool = Field(..., description="连接是否成功")
     tools: List[Dict[str, str]] = Field(
@@ -530,18 +559,9 @@ async def _test_mcp_connection(
     client: MCPClientConfig,
     timeout: float = 30.0,
 ) -> MCPTestResult:
-    """测试 MCP 连接.
-
-    Args:
-        client: MCP 客户端配置
-        timeout: 连接超时时间（秒）
-
-    Returns:
-        MCPTestResult: 测试结果，包含成功状态、工具列表和错误信息
-    """
+    """测试 MCP 连接。"""
     mcp_client = None
     try:
-        # 根据传输类型选择客户端
         if client.transport == "stdio":
             mcp_client = StdIOStatefulClient(
                 name="test-connection",
@@ -551,7 +571,6 @@ async def _test_mcp_connection(
                 cwd=client.cwd or None,
             )
         else:
-            # HTTP 或 SSE 传输
             mcp_client = HttpStatefulClient(
                 name="test-connection",
                 transport=client.transport,
@@ -559,36 +578,96 @@ async def _test_mcp_connection(
                 headers=client.headers or None,
             )
 
-        # 连接并获取工具列表
         await mcp_client.connect(timeout=timeout)
         tools = await mcp_client.list_tools(timeout=timeout)
-
-        # 关闭连接
         await mcp_client.close()
 
         return MCPTestResult(
             success=True,
             tools=[
-                {"name": t.name, "description": t.description or ""}
-                for t in tools
+                {"name": tool.name, "description": tool.description or ""}
+                for tool in tools
             ],
         )
     except asyncio.TimeoutError:
-        # 确保关闭连接
         if mcp_client:
             try:
                 await mcp_client.close(ignore_errors=True)
             except Exception:
                 pass
         return MCPTestResult(success=False, error="连接超时")
-    except Exception as e:
-        # 确保关闭连接
+    except Exception as exc:  # pylint: disable=broad-except
         if mcp_client:
             try:
                 await mcp_client.close(ignore_errors=True)
             except Exception:
                 pass
-        return MCPTestResult(success=False, error=str(e))
+        return MCPTestResult(success=False, error=str(exc))
+
+
+def _build_draft_test_client(
+    body: MyMCPDraftTestRequest,
+    existing: MCPClientConfig | None = None,
+) -> MCPClientConfig:
+    """根据草稿请求构造临时 MCP 配置。"""
+    draft_env = body.env
+    draft_headers = body.headers
+    if existing is not None:
+        draft_env = _restore_original_values(draft_env, existing.env or {})
+        draft_headers = _restore_original_values(
+            draft_headers,
+            existing.headers or {},
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    return MCPClientConfig(
+        name=body.name or "test-connection",
+        description=existing.description if existing else "",
+        enabled=True,
+        transport=body.transport,
+        url=body.url,
+        headers=draft_headers,
+        command=body.command,
+        args=body.args,
+        env=draft_env,
+        cwd=body.cwd,
+        lazy_load=existing.lazy_load if existing else False,
+        source=existing.source if existing else "",
+        market_client_key=existing.market_client_key if existing else "",
+        distributed_by=existing.distributed_by if existing else "",
+        created_at=existing.created_at if existing else now,
+        updated_at=now,
+    )
+
+
+@router.post("/draft-test", response_model=MCPTestResult)
+async def test_my_mcp_draft_connection(
+    request: Request,
+    body: MyMCPDraftTestRequest = Body(...),
+) -> MCPTestResult:
+    """测试弹窗中的草稿 MCP 配置。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
+
+    existing: MCPClientConfig | None = None
+    if body.baseline_client_key:
+        if (
+            agent_config.mcp is None
+            or body.baseline_client_key not in agent_config.mcp.clients
+        ):
+            raise HTTPException(
+                404,
+                detail=f"MCP client '{body.baseline_client_key}' not found",
+            )
+        existing = agent_config.mcp.clients[body.baseline_client_key]
+
+    client = _build_draft_test_client(body, existing)
+    with tenant_context(
+        tenant_id=context.tenant_id,
+        user_id=context.user_id,
+        source_id=context.source_id,
+    ):
+        return await _test_mcp_connection(client)
 
 
 @router.post("/{client_key}/test", response_model=MCPTestResult)
@@ -596,14 +675,17 @@ async def test_my_mcp_connection(
     request: Request,
     client_key: str = FastAPIPath(...),
 ) -> MCPTestResult:
-    """测试 MCP 连接.
-
-    连接到 MCP 服务器并获取可用工具列表。
-    """
-    _, agent_config = await get_agent_and_config_for_request(request)
+    """测试 MCP 连接。"""
+    context, agent_config = load_agent_config_for_request(request)
+    mark_request_state(request, context)
 
     if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
     client = agent_config.mcp.clients[client_key]
-    return await _test_mcp_connection(client)
+    with tenant_context(
+        tenant_id=context.tenant_id,
+        user_id=context.user_id,
+        source_id=context.source_id,
+    ):
+        return await _test_mcp_connection(client)

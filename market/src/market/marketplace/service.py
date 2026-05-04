@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """应用市场业务服务."""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +28,9 @@ from .models import MarketItem
 from .schemas import (
     DistributeRequest,
     DistributeResponse,
+    MCPDistributionRequest,
+    MCPDistributionResponse,
+    MCPDistributionTenantResult,
     MarketMCPDetail,
     MarketMCPItem,
     MarketSkillDetail,
@@ -107,6 +111,76 @@ _QUERY_USERS_BY_BBK_SQL = """
     FROM swe_tenant_init_source
     WHERE source_id = %s AND bbk_id IN ({placeholders})
 """
+
+
+def _sort_items_by_updated_at_desc(
+    items: list[MarketItem],
+) -> list[MarketItem]:
+    """按更新时间倒序排列，缺失时回退到创建时间。"""
+
+    def sort_key(item: MarketItem) -> tuple[int, str]:
+        timestamp = item.updated_at or item.created_at or ""
+        return (1 if timestamp else 0, timestamp)
+
+    return sorted(items, key=sort_key, reverse=True)
+
+
+def _normalize_market_mcp_config_data(config_data: dict) -> dict:
+    """兼容旧市场条目中的原始 MCP 上传结构。
+
+    历史上部分市场条目直接把上传 JSON 原样保存到了 config 中，
+    例如 {"mcpServers": {...}}。详情展示和测试连接都需要先把这类
+    旧结构归一化成 MCPClientConfig 可识别的扁平字段。
+    """
+    if not isinstance(config_data, dict):
+        return {}
+
+    normalized = dict(config_data)
+
+    mcp_servers = normalized.get("mcpServers")
+    if isinstance(mcp_servers, dict) and mcp_servers:
+        _, first_value = next(iter(mcp_servers.items()))
+        if isinstance(first_value, dict):
+            normalized = dict(first_value)
+
+    advanced = normalized.get("advanced")
+    if isinstance(advanced, dict):
+        if "headers" not in normalized and isinstance(
+            advanced.get("headers"),
+            dict,
+        ):
+            normalized["headers"] = advanced.get("headers", {})
+        if "transport" not in normalized and isinstance(
+            advanced.get("transport"),
+            str,
+        ):
+            raw_transport = advanced["transport"].strip().lower()
+            if raw_transport == "streamable-http":
+                normalized["transport"] = "streamable_http"
+            elif raw_transport in {"stdio", "sse", "streamable_http"}:
+                normalized["transport"] = raw_transport
+
+    raw_transport = normalized.get("transport") or normalized.get("type")
+    if isinstance(raw_transport, str):
+        lowered = raw_transport.strip().lower()
+        if lowered == "streamable-http":
+            normalized["transport"] = "streamable_http"
+        elif lowered in {"stdio", "sse", "streamable_http"}:
+            normalized["transport"] = lowered
+
+    if "transport" not in normalized:
+        if (
+            isinstance(normalized.get("command"), str)
+            and normalized.get("command", "").strip()
+        ):
+            normalized["transport"] = "stdio"
+        elif (
+            isinstance(normalized.get("url"), str)
+            and normalized.get("url", "").strip()
+        ):
+            normalized["transport"] = "streamable_http"
+
+    return normalized
 
 
 def _bump_patch(version: str) -> str:
@@ -534,7 +608,11 @@ class MarketplaceService:
 
         # 按 client_key 查找已存在的 MCP 条目
         existing = next(
-            (i for i in items if i.item_type == "mcp" and i.client_key == req.client_key),
+            (
+                i
+                for i in items
+                if i.item_type == "mcp" and i.client_key == req.client_key
+            ),
             None,
         )
 
@@ -542,7 +620,9 @@ class MarketplaceService:
         if existing is not None:
             # 覆盖：复用 item_id
             existing.name = req.name
+            existing.chinese_name = req.chinese_name
             existing.description = req.description
+            existing.guidance = req.guidance
             existing.creator_id = req.creator_id
             existing.creator_name = req.creator_name
             existing.category_id = req.category_id
@@ -557,7 +637,9 @@ class MarketplaceService:
                 item_type="mcp",
                 client_key=req.client_key,
                 name=req.name,
+                chinese_name=req.chinese_name,
                 description=req.description,
+                guidance=req.guidance,
                 creator_id=req.creator_id,
                 creator_name=req.creator_name,
                 category_id=req.category_id,
@@ -573,7 +655,12 @@ class MarketplaceService:
             "client_key": req.client_key,
             "config": req.config,
         }
-        save_mcp_config(self.marketplace_root, source_id, item.item_id, mcp_config)
+        save_mcp_config(
+            self.marketplace_root,
+            source_id,
+            item.item_id,
+            mcp_config,
+        )
 
         # 更新索引
         save_index(self.marketplace_root, source_id, items)
@@ -618,7 +705,12 @@ class MarketplaceService:
             MCP 条目列表（含调用统计）。
         """
         items = load_index(self.marketplace_root, source_id)
-        mcp_items = [i for i in items if i.item_type == "mcp" and _item_visible(i, user_bbk_id)]
+        mcp_items = [
+            i
+            for i in items
+            if i.item_type == "mcp" and _item_visible(i, user_bbk_id)
+        ]
+        mcp_items = _sort_items_by_updated_at_desc(mcp_items)
 
         if category_id is not None:
             mcp_items = [i for i in mcp_items if i.category_id == category_id]
@@ -634,7 +726,10 @@ class MarketplaceService:
                     item_id=item.item_id,
                     client_key=item.client_key,
                     name=item.name,
+                    chinese_name=item.chinese_name,
                     description=item.description,
+                    guidance=item.guidance,
+                    version=item.version,
                     creator_id=item.creator_id,
                     creator_name=item.creator_name,
                     category_id=item.category_id,
@@ -665,7 +760,11 @@ class MarketplaceService:
         """
         items = load_index(self.marketplace_root, source_id)
         item = next(
-            (i for i in items if i.item_id == item_id and i.item_type == "mcp"),
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "mcp"
+            ),
             None,
         )
         if item is None or not _item_visible(item, user_bbk_id):
@@ -676,19 +775,32 @@ class MarketplaceService:
         if mcp_config is None:
             return None
 
-        call_count, user_count = await self._get_mcp_stats(item.client_key, source_id)
+        call_count, user_count = await self._get_mcp_stats(
+            item.client_key,
+            source_id,
+        )
         user_stats = await self._get_mcp_user_stats(item.client_key, source_id)
 
         # 获取并脱敏敏感字段
-        config_data = mcp_config.get("config", {})
-        masked_env = {k: _mask_env_value(v) for k, v in config_data.get("env", {}).items()}
-        masked_headers = {k: _mask_env_value(v) for k, v in config_data.get("headers", {}).items()}
+        config_data = _normalize_market_mcp_config_data(
+            mcp_config.get("config", {}),
+        )
+        masked_env = {
+            k: _mask_env_value(v)
+            for k, v in config_data.get("env", {}).items()
+        }
+        masked_headers = {
+            k: _mask_env_value(v)
+            for k, v in config_data.get("headers", {}).items()
+        }
 
         return MarketMCPDetail(
             item_id=item.item_id,
             client_key=item.client_key,
             name=item.name,
+            chinese_name=item.chinese_name,
             description=item.description,
+            guidance=item.guidance,
             creator_id=item.creator_id,
             creator_name=item.creator_name,
             category_id=item.category_id,
@@ -716,9 +828,9 @@ class MarketplaceService:
         item_id: str,
         operator_id: str,
         operator_name: str,
-        req: DistributeRequest,
-    ) -> DistributeResponse:
-        """分发 MCP 到目标用户。
+        req: MCPDistributionRequest,
+    ) -> MCPDistributionResponse:
+        """分发 MCP 到目标租户。
 
         Args:
             source_id: 来源 ID。
@@ -728,34 +840,46 @@ class MarketplaceService:
             req: 分发请求体。
 
         Returns:
-            分发结果（成功数量和条目 ID）。
+            分发结果（逐租户返回）。
 
         Raises:
             ValueError: 条目不存在。
         """
         items = load_index(self.marketplace_root, source_id)
         item = next(
-            (i for i in items if i.item_id == item_id and i.item_type == "mcp"),
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "mcp"
+            ),
             None,
         )
         if item is None:
-            raise ValueError(f"MCP item {item_id} not found in source {source_id}")
+            raise ValueError(
+                f"MCP item {item_id} not found in source {source_id}",
+            )
 
-        target_users = await self._resolve_target_users(source_id, req)
-        count = 0
+        results: list[MCPDistributionTenantResult] = []
 
-        for user in target_users:
+        for tenant_id in req.target_tenant_ids:
             try:
+                user_config_path = (
+                    self.swe_root
+                    / tenant_id
+                    / "workspaces"
+                    / "default"
+                    / "agent.json"
+                )
+                bootstrapped = not user_config_path.exists()
                 copy_mcp_to_user(
                     marketplace_root=self.marketplace_root,
                     source_id=source_id,
                     item_id=item_id,
                     swe_root=self.swe_root,
-                    user_id=user["tenant_id"],
+                    user_id=tenant_id,
                     client_key=item.client_key,
                     distributed_by=operator_id,
                 )
-                count += 1
 
                 # 记录分发日志
                 if self.db.is_connected:
@@ -770,22 +894,42 @@ class MarketplaceService:
                                 "mcp",
                                 item_id,
                                 item.name,
-                                user["tenant_id"],
-                                user.get("tenant_name", ""),
-                                user.get("bbk_id", ""),
+                                tenant_id,
+                                "",
+                                "",
                             ),
                         )
                     except Exception as e:
-                        logger.warning("Failed to log MCP distribute operation: %s", e)
+                        logger.warning(
+                            "Failed to log MCP distribute operation: %s",
+                            e,
+                        )
+                results.append(
+                    MCPDistributionTenantResult(
+                        tenant_id=tenant_id,
+                        success=True,
+                        bootstrapped=bootstrapped,
+                        default_agent_updated=[item.client_key],
+                    ),
+                )
             except Exception as e:
                 logger.warning(
                     "Failed to copy MCP to user %s: %s",
-                    user["tenant_id"],
+                    tenant_id,
                     e,
                 )
-                continue
+                results.append(
+                    MCPDistributionTenantResult(
+                        tenant_id=tenant_id,
+                        success=False,
+                        error=str(e),
+                    ),
+                )
 
-        return DistributeResponse(distributed_count=count, item_id=item_id)
+        return MCPDistributionResponse(
+            source_agent_id=item_id,
+            results=results,
+        )
 
     async def delete_mcp(
         self,
@@ -807,7 +951,11 @@ class MarketplaceService:
         """
         items = load_index(self.marketplace_root, source_id)
         item = next(
-            (i for i in items if i.item_id == item_id and i.item_type == "mcp"),
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "mcp"
+            ),
             None,
         )
         if item is None:
@@ -845,6 +993,37 @@ class MarketplaceService:
 
         return True
 
+    def update_mcp_metadata(
+        self,
+        *,
+        source_id: str,
+        item_id: str,
+        chinese_name: str | None,
+        description: str | None,
+        guidance: str | None,
+        bbk_ids: list[str],
+    ) -> MarketItem:
+        """仅更新 MCP 市场条目的展示元数据。"""
+        items = load_index(self.marketplace_root, source_id)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "mcp"
+            ),
+            None,
+        )
+        if item is None:
+            raise FileNotFoundError(f"MCP item '{item_id}' not found")
+
+        item.chinese_name = chinese_name or ""
+        item.description = description or ""
+        item.guidance = guidance or ""
+        item.bbk_ids = bbk_ids
+        item.updated_at = datetime.now(timezone.utc).isoformat()
+        save_index(self.marketplace_root, source_id, items)
+        return item
+
     async def _get_mcp_stats(
         self,
         client_key: str,
@@ -867,7 +1046,9 @@ class MarketplaceService:
                 (client_key, source_id),
             )
             if row:
-                return int(row.get("call_count", 0)), int(row.get("user_count", 0))
+                return int(row.get("call_count", 0)), int(
+                    row.get("user_count", 0),
+                )
         except Exception as e:
             logger.warning("Failed to get MCP stats for %s: %s", client_key, e)
         return 0, 0
@@ -902,5 +1083,9 @@ class MarketplaceService:
                 for r in rows
             ]
         except Exception as e:
-            logger.warning("Failed to get MCP user stats for %s: %s", client_key, e)
+            logger.warning(
+                "Failed to get MCP user stats for %s: %s",
+                client_key,
+                e,
+            )
         return []

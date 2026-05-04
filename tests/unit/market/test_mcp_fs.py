@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """MCP 文件系统操作测试。"""
+
 import pytest
 from pathlib import Path
 from market.marketplace.fs import (
@@ -82,5 +83,9 @@ class TestMCPConfigIO:
         from market.marketplace.fs import load_mcp_config
 
         marketplace_root = tmp_path / ".swe.marketplace"
-        loaded = load_mcp_config(marketplace_root, "nonexistent", "nonexistent")
+        loaded = load_mcp_config(
+            marketplace_root,
+            "nonexistent",
+            "nonexistent",
+        )
         assert loaded is None

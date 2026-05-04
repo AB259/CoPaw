@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integration tests for my-mcp CRUD workflow."""
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import FastAPI, Request
@@ -87,7 +88,9 @@ class TestMyMCPFullWorkflow:
                     assert create_data["client_key"] == "test-tool"
                     assert create_data["name"] == "Test Tool"
                     assert create_data["source"] == ""  # 我创建的
-                    assert create_data["env"]["API_KEY"] == "se**********2345"  # 脱敏（前2+后4，中间遮盖）
+                    assert (
+                        create_data["env"]["API_KEY"] == "se**********2345"
+                    )  # 脱敏（前2+后4，中间遮盖）
 
         # 模拟创建后的状态
         created_client = MCPClientConfig(
@@ -125,7 +128,9 @@ class TestMyMCPFullWorkflow:
             detail_data = detail_response.json()
             assert detail_data["client_key"] == "test-tool"
             assert detail_data["command"] == "npx"
-            assert detail_data["env"]["API_KEY"] == "se**********2345"  # 脱敏展示
+            assert (
+                detail_data["env"]["API_KEY"] == "se**********2345"
+            )  # 脱敏展示
 
         # ===== Step 4: 更新 MCP =====
         with patch(
@@ -136,7 +141,10 @@ class TestMyMCPFullWorkflow:
                 with patch("swe.app.routers.my_mcp.schedule_agent_reload"):
                     update_response = client.put(
                         "/my-mcp/test-tool",
-                        json={"name": "Updated Tool", "description": "Updated description"},
+                        json={
+                            "name": "Updated Tool",
+                            "description": "Updated description",
+                        },
                     )
                     assert update_response.status_code == 200
                     update_data = update_response.json()
@@ -156,7 +164,9 @@ class TestMyMCPFullWorkflow:
                     toggle_response = client.patch("/my-mcp/test-tool/toggle")
                     assert toggle_response.status_code == 200
                     toggle_data = toggle_response.json()
-                    assert toggle_data["enabled"] is False  # 从 True 变为 False
+                    assert (
+                        toggle_data["enabled"] is False
+                    )  # 从 True 变为 False
 
         # ===== Step 6: 再次启停（恢复启用） =====
         created_client.enabled = False
@@ -169,7 +179,9 @@ class TestMyMCPFullWorkflow:
                     toggle_response2 = client.patch("/my-mcp/test-tool/toggle")
                     assert toggle_response2.status_code == 200
                     toggle_data2 = toggle_response2.json()
-                    assert toggle_data2["enabled"] is True  # 从 False 变为 True
+                    assert (
+                        toggle_data2["enabled"] is True
+                    )  # 从 False 变为 True
 
         # ===== Step 7: 删除 MCP =====
         created_client.enabled = True
@@ -201,7 +213,11 @@ class TestMyMCPFullWorkflow:
 class TestDistributedMCPWorkflow:
     """市场分发 MCP 的特殊流程测试."""
 
-    def test_distributed_mcp_cannot_modify_sensitive_fields(self, client, mock_workspace):
+    def test_distributed_mcp_cannot_modify_sensitive_fields(
+        self,
+        client,
+        mock_workspace,
+    ):
         """市场分发的 MCP 禁止修改敏感字段."""
         # 创建一个市场分发的 MCP
         distributed_client = MCPClientConfig(
@@ -212,7 +228,9 @@ class TestDistributedMCPWorkflow:
             market_client_key="distributed-tool",
             distributed_by="admin-user",
         )
-        mcp_config = MCPConfig(clients={"distributed-tool": distributed_client})
+        mcp_config = MCPConfig(
+            clients={"distributed-tool": distributed_client},
+        )
         agent_config = MagicMock()
         agent_config.mcp = mcp_config
 
@@ -242,7 +260,11 @@ class TestDistributedMCPWorkflow:
                     assert update_response2.status_code == 200
                     assert update_response2.json()["name"] == "New Name"
 
-    def test_distributed_mcp_can_toggle_and_delete(self, client, mock_workspace):
+    def test_distributed_mcp_can_toggle_and_delete(
+        self,
+        client,
+        mock_workspace,
+    ):
         """市场分发的 MCP 可以启停和删除."""
         distributed_client = MCPClientConfig(
             name="Distributed Tool",
@@ -250,7 +272,9 @@ class TestDistributedMCPWorkflow:
             source="marketplace:item-uuid-123",
             enabled=True,
         )
-        mcp_config = MCPConfig(clients={"distributed-tool": distributed_client})
+        mcp_config = MCPConfig(
+            clients={"distributed-tool": distributed_client},
+        )
         agent_config = MagicMock()
         agent_config.mcp = mcp_config
 
@@ -261,7 +285,9 @@ class TestDistributedMCPWorkflow:
         ):
             with patch("swe.app.routers.my_mcp.save_agent_config"):
                 with patch("swe.app.routers.my_mcp.schedule_agent_reload"):
-                    toggle_response = client.patch("/my-mcp/distributed-tool/toggle")
+                    toggle_response = client.patch(
+                        "/my-mcp/distributed-tool/toggle",
+                    )
                     assert toggle_response.status_code == 200
                     assert toggle_response.json()["enabled"] is False
 
@@ -279,7 +305,11 @@ class TestDistributedMCPWorkflow:
 class TestMultipleMCPWorkflow:
     """多 MCP 操作流程测试."""
 
-    def test_create_multiple_and_batch_publish(self, client_with_manager, mock_workspace):
+    def test_create_multiple_and_batch_publish(
+        self,
+        client_with_manager,
+        mock_workspace,
+    ):
         """创建多个 MCP 并批量发布."""
         client = client_with_manager
         mcp_config = MCPConfig(clients={})
@@ -319,11 +349,13 @@ class TestMultipleMCPWorkflow:
                         assert response.status_code == 201
 
                         # 模拟创建后的状态
-                        mcp_config.clients[client_data["client_key"]] = MCPClientConfig(
-                            name=client_data["name"],
-                            command=client_data["command"],
-                            args=client_data["args"],
-                            source="",
+                        mcp_config.clients[client_data["client_key"]] = (
+                            MCPClientConfig(
+                                name=client_data["name"],
+                                command=client_data["command"],
+                                args=client_data["args"],
+                                source="",
+                            )
                         )
 
         # 验证列表包含所有 MCP
@@ -341,7 +373,9 @@ class TestMultipleMCPWorkflow:
         # Mock httpx.AsyncClient for market service calls
         mock_market_response = MagicMock()
         mock_market_response.status_code = 201
-        mock_market_response.json.return_value = {"item_id": "test-market-item-uuid"}
+        mock_market_response.json.return_value = {
+            "item_id": "test-market-item-uuid",
+        }
 
         mock_http_client = AsyncMock()
         mock_http_client.post = AsyncMock(return_value=mock_market_response)

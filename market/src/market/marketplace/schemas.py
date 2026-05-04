@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """API 请求/响应模型."""
+
 from __future__ import annotations
 
 from typing import Literal, Optional
@@ -78,13 +79,40 @@ class DistributeResponse(BaseModel):
     item_id: str
 
 
+class MCPDistributionRequest(BaseModel):
+    """MCP 分发请求体，语义与现有 MCP 菜单分发到租户保持一致。"""
+
+    target_tenant_ids: list[str] = Field(default_factory=list)
+    overwrite: bool = True
+
+
+class MCPDistributionTenantResult(BaseModel):
+    """单个租户的 MCP 分发结果。"""
+
+    tenant_id: str
+    success: bool
+    bootstrapped: bool = False
+    default_agent_updated: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class MCPDistributionResponse(BaseModel):
+    """MCP 分发响应。"""
+
+    source_agent_id: str
+    results: list[MCPDistributionTenantResult] = Field(default_factory=list)
+
+
 class MarketMCPItem(BaseModel):
     """市场 MCP 列表项."""
 
     item_id: str
     client_key: str
     name: str
+    chinese_name: str = ""
     description: str = ""
+    guidance: str = ""
+    version: str = "1.0.0"
     creator_id: str
     creator_name: str = ""
     category_id: Optional[int] = None
@@ -128,7 +156,9 @@ class PublishMCPRequest(BaseModel):
 
     client_key: str
     name: str
+    chinese_name: str = ""
     description: str = ""
+    guidance: str = ""
     creator_id: str
     creator_name: str = ""
     category_id: Optional[int] = None
@@ -141,3 +171,12 @@ class UploadMCPResponse(BaseModel):
 
     success: bool
     error: Optional[str] = None
+
+
+class UpdateMarketMCPMetadataRequest(BaseModel):
+    """MCP 市场元数据更新请求体。"""
+
+    chinese_name: str | None = None
+    description: str | None = None
+    guidance: str | None = None
+    bbk_ids: list[str] = Field(default_factory=list)

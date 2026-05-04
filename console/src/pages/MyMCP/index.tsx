@@ -1,59 +1,26 @@
 /**
- * 我的 MCP 页面 - 参考 CmbCoworkAgent UI 设计
+ * 我的 MCP 页面，结构对齐 CmbCoworkAgent-main 的 McpPanel。
  */
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import {
-  Input,
-  Button,
-  Typography,
-  Tag,
-  Spin,
-  Empty,
-  Popconfirm,
-  message,
-  Switch,
-  Descriptions,
-  Divider,
-  Alert,
-  Card,
-} from "antd";
-import {
-  PlusOutlined,
-  SearchOutlined,
-  ApiOutlined,
-  CheckOutlined,
-  CloseOutlined,
-  DeleteOutlined,
-  RocketOutlined,
-  ThunderboltOutlined,
-  DatabaseOutlined,
-  EditOutlined,
-  InfoCircleOutlined,
-} from "@ant-design/icons";
-import { Plug, Power, Trash2, Database, X, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Input, Spin, Tag, message } from "antd";
+import { PlusOutlined } from "@ant-design/icons";
+import { Plug, Search, X } from "lucide-react";
 import { useMyMCP } from "./useMyMCP";
 import { MCPFormModal } from "./MCPFormModal";
+import { MCPDetailPanel } from "./MCPDetailPanel";
 import { PublishMCPModal } from "./PublishMCPModal";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
-import type { MyMCPDetail, MyMCPListItem } from "../../api/types";
-
-const { Text, Title } = Typography;
-
-/** 获取 MCP 连接摘要 */
-function getConnectorSummary(mcp: MyMCPDetail): string {
-  if (mcp.transport === "stdio") {
-    return [mcp.command ?? "", ...(mcp.args ?? [])].filter(Boolean).join(" ");
-  }
-  return mcp.url ?? "";
-}
+import type { MyMCPListItem } from "../../api/types";
 
 export default function MyMCPPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const userId = getUserId();
   const userName = useIframeStore((state) => state.clawName) || "Unknown";
-  const isManager = useIframeStore((state) => state.manager);
+  const manager = useIframeStore((state) => state.manager);
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const canManage = manager || isSuperManager;
 
   const {
     mcpList,
@@ -61,16 +28,12 @@ export default function MyMCPPage() {
     loading,
     detailLoading,
     testResult,
-    testLoading,
     refreshList,
     fetchDetail,
     deleteMCP,
     toggleMCP,
-    createMCP,
-    updateMCP,
     testConnection,
     clearTestResult,
-    setSelectedMCP,
   } = useMyMCP();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -78,66 +41,72 @@ export default function MyMCPPage() {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [editingClientKey, setEditingClientKey] = useState<string | null>(null);
-  const [selectedForPublish, setSelectedForPublish] = useState<string[]>([]);
+  const [publishClientKey, setPublishClientKey] = useState<string>("");
   const [testing, setTesting] = useState(false);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
 
-  // 搜索防抖
+  useEffect(() => {
+    void refreshList();
+  }, [refreshList]);
+
+  useEffect(() => {
+    return () => clearTimeout(debounceTimer.current);
+  }, []);
+
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
     clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => setDebouncedQuery(value), 200);
   }, []);
 
-  useEffect(() => {
-    refreshList();
-  }, [refreshList]);
-
-  // 过滤列表
   const filteredList = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();
     if (!q) return mcpList;
     return mcpList.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.client_key.toLowerCase().includes(q)
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.client_key.toLowerCase().includes(q)
     );
   }, [mcpList, debouncedQuery]);
 
-  // 点击列表项
-  const handleItemClick = useCallback((item: MyMCPListItem) => {
-    fetchDetail(item.client_key);
-    setSelectedForPublish([]);
-    clearTestResult();
-  }, [fetchDetail, clearTestResult]);
-
-  // 编辑 MCP
-  const handleEdit = useCallback((clientKey: string) => {
-    setEditingClientKey(clientKey);
-    setFormModalOpen(true);
+  const isDistributed = useCallback((item: MyMCPListItem) => {
+    return !!item.source && item.source.startsWith("marketplace:");
   }, []);
 
-  // 删除 MCP
-  const handleDelete = useCallback(async (mcp: MyMCPDetail) => {
-    try {
-      await deleteMCP(mcp.client_key);
-      message.success("删除成功");
-    } catch {
-      message.error("删除失败");
-    }
-  }, [deleteMCP]);
+  const handleItemClick = useCallback(
+    (item: MyMCPListItem) => {
+      void fetchDetail(item.client_key);
+      clearTestResult();
+    },
+    [fetchDetail, clearTestResult]
+  );
 
-  // 启停 MCP
-  const handleToggle = useCallback(async (clientKey: string, enabled: boolean) => {
-    try {
-      await toggleMCP(clientKey);
-      message.success(enabled ? "已启用" : "已禁用");
-    } catch {
-      message.error("操作失败");
-    }
-  }, [toggleMCP]);
+  const handleDelete = useCallback(
+    async (clientKey: string) => {
+      try {
+        await deleteMCP(clientKey);
+        message.success("删除成功");
+      } catch {
+        message.error("删除失败");
+      }
+    },
+    [deleteMCP]
+  );
 
-  // 测试连接
+  const handleToggle = useCallback(
+    async (clientKey: string, enabled: boolean) => {
+      try {
+        await toggleMCP(clientKey);
+        message.success(enabled ? "已启用" : "已禁用");
+      } catch {
+        message.error("操作失败");
+      }
+    },
+    [toggleMCP]
+  );
+
   const handleTest = useCallback(async () => {
     if (!selectedMCP) return;
     setTesting(true);
@@ -148,397 +117,284 @@ export default function MyMCPPage() {
     }
   }, [selectedMCP, testConnection]);
 
-  // 判断是否为市场分发的 MCP
-  const isDistributed = useCallback((item: MyMCPListItem | MyMCPDetail) => {
-    return item.source && item.source.startsWith("marketplace:");
+  const openCreateModal = useCallback(() => {
+    setEditingClientKey(null);
+    setFormModalOpen(true);
   }, []);
 
-  // 清除搜索
-  const clearSearch = useCallback(() => {
-    setSearchQuery("");
-    setDebouncedQuery("");
+  const openEditModal = useCallback((clientKey: string) => {
+    setEditingClientKey(clientKey);
+    setFormModalOpen(true);
   }, []);
 
-  // 切换发布选择
-  const togglePublishSelection = useCallback((clientKey: string, checked: boolean) => {
-    if (checked) {
-      setSelectedForPublish([...selectedForPublish, clientKey]);
-    } else {
-      setSelectedForPublish(selectedForPublish.filter(k => k !== clientKey));
-    }
-  }, [selectedForPublish]);
+  const openPublishModal = useCallback((clientKey: string) => {
+    setPublishClientKey(clientKey);
+    setPublishModalOpen(true);
+  }, []);
 
   return (
-    <div className="flex h-full bg-[#fafafa]">
-      {/* 左侧列表 */}
-      <div className="w-[330px] shrink-0 border-r border-[#f0f0f0] flex flex-col bg-white">
-        {/* 头部 */}
-        <div className="p-3 border-b border-[#f0f0f0] space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="size-7 rounded-xl bg-[#e6f7ff] border border-[#91d5ff] flex items-center justify-center">
-                <Plug className="size-3.5 text-[#1890ff]" />
+    <div
+      style={{
+        display: "flex",
+        height: "100%",
+        backgroundColor: "#f7f9fc",
+      }}
+    >
+      <div
+        style={{
+          width: 330,
+          flexShrink: 0,
+          borderRight: "1px solid #eef1f5",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "#ffffff",
+        }}
+      >
+        <div style={{ padding: 12, borderBottom: "1px solid #eef1f5" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <h2
+              style={{
+                fontSize: 16,
+                fontWeight: 700,
+                color: "#1f1f1f",
+                margin: 0,
+              }}
+            >
+              MCP 连接器
+            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div
+                style={{
+                  position: "relative",
+                  minWidth: 120,
+                  maxWidth: 160,
+                }}
+              >
+                <Search
+                  style={{
+                    position: "absolute",
+                    left: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 14,
+                    height: 14,
+                    color: "#b8c0cc",
+                    pointerEvents: "none",
+                  }}
+                />
+                <Input
+                  placeholder="搜索"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  style={{
+                    height: 28,
+                    paddingLeft: 28,
+                    paddingRight: 24,
+                    fontSize: 12,
+                    borderRadius: 8,
+                    borderColor: "#e6eaf0",
+                    boxShadow: "none",
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setDebouncedQuery("");
+                    }}
+                    aria-label="清除搜索"
+                    style={{
+                      position: "absolute",
+                      right: 6,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "#b8c0cc",
+                      border: "none",
+                      background: "none",
+                      padding: 2,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <X style={{ width: 12, height: 12 }} />
+                  </button>
+                )}
               </div>
-              <h2 className="text-base font-bold text-[#262626]">MCP 连接器</h2>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {isManager && selectedForPublish.length > 0 && (
-                <Button
-                  type="primary"
-                  icon={<RocketOutlined />}
-                  size="small"
-                  className="h-7 text-xs"
-                  onClick={() => setPublishModalOpen(true)}
-                >
-                  发布 ({selectedForPublish.length})
-                </Button>
-              )}
               <Button
                 icon={<PlusOutlined />}
                 size="small"
-                className="h-7 w-7"
-                onClick={() => { setEditingClientKey(null); setFormModalOpen(true); }}
+                style={{
+                  height: 28,
+                  width: 28,
+                  borderRadius: 8,
+                  borderColor: "transparent",
+                  boxShadow: "none",
+                }}
+                onClick={openCreateModal}
               />
             </div>
           </div>
-
-          {/* 搜索框 */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[#bfbfbf] pointer-events-none" />
-            <Input
-              placeholder="搜索"
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="h-7 pl-8 pr-7 text-xs bg-white border-[#d9d9d9] text-[#262626] placeholder:text-[#bfbfbf] rounded-md"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#bfbfbf] hover:text-[#595959] p-0.5 rounded cursor-pointer"
-                onClick={clearSearch}
-              >
-                <X className="size-3" />
-              </button>
-            )}
-          </div>
         </div>
 
-        {/* 列表 */}
-        <div className="flex-1 overflow-auto p-2 space-y-2">
+        <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
           {loading ? (
-            <div className="flex items-center justify-center py-8 text-[#595959]">
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 32,
+              }}
+            >
               <Spin />
             </div>
           ) : filteredList.length === 0 ? (
-            <p className="text-xs text-[#595959] px-1 py-2 text-center">
+            <p
+              style={{
+                fontSize: 12,
+                color: "#8b94a3",
+                padding: "4px 8px",
+                margin: 0,
+              }}
+            >
               {mcpList.length === 0 ? "暂无连接器，点击 + 添加" : "没有匹配的连接器"}
             </p>
           ) : (
-            filteredList.map((item) => {
-              const isSelected = selectedMCP?.client_key === item.client_key;
-              const isPubSelected = selectedForPublish.includes(item.client_key);
-              const distributed = isDistributed(item);
-
-              return (
-                <button
-                  key={item.client_key}
-                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md border text-left transition-colors cursor-pointer ${
-                    isSelected
-                      ? "bg-[#e6f7ff] border-[#91d5ff]"
-                      : "border-[#f0f0f0] hover:bg-[#fafafa]"
-                  }`}
-                  onClick={() => handleItemClick(item)}
-                >
-                  <Plug className={`size-3.5 shrink-0 ${item.enabled ? "text-[#1890ff]" : "text-[#8c8c8c]"}`} />
-                  <span className={`text-sm truncate flex-1 ${!item.enabled && "text-[#8c8c8c]"}`}>
-                    {item.name}
-                  </span>
-                  {distributed && (
-                    <Tag color="purple" className="m-0 text-[10px]">分发</Tag>
-                  )}
-                  {!item.enabled && (
-                    <Tag className="m-0 text-[10px] bg-[#fafafa] border-[#d9d9d9] text-[#8c8c8c]">禁用</Tag>
-                  )}
-                  {isManager && !distributed && (
-                    <div
-                      className="size-4 shrink-0 rounded border cursor-pointer flex items-center justify-center transition-colors"
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {filteredList.map((item) => {
+                const selected = selectedMCP?.client_key === item.client_key;
+                return (
+                  <button
+                    key={item.client_key}
+                    onClick={() => handleItemClick(item)}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 8px",
+                      borderRadius: 10,
+                      border: `1px solid ${
+                        selected ? "#d6e4ff" : "rgba(230,234,240,0.9)"
+                      }`,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      backgroundColor: selected ? "#f3f8ff" : "transparent",
+                      transition: "background-color 0.15s, border-color 0.15s",
+                    }}
+                  >
+                    <Plug
                       style={{
-                        borderColor: isPubSelected ? "#1890ff" : "#d9d9d9",
-                        backgroundColor: isPubSelected ? "#1890ff" : "#fff",
+                        width: 14,
+                        height: 14,
+                        flexShrink: 0,
+                        color: item.enabled ? "#1677ff" : "#98a2b3",
                       }}
-                      onClick={(e) => { e.stopPropagation(); togglePublishSelection(item.client_key, !isPubSelected); }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 14,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                        color: item.enabled ? "#262626" : "#8b94a3",
+                      }}
                     >
-                      {isPubSelected && <CheckOutlined className="text-white text-[10px]" />}
-                    </div>
-                  )}
-                </button>
-              );
-            })
+                      {item.name}
+                    </span>
+                    {isDistributed(item) && (
+                      <Tag color="purple" style={{ margin: 0, fontSize: 10 }}>
+                        分发
+                      </Tag>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
 
-      {/* 右侧详情面板 */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#fafafa]">
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          overflow: "hidden",
+          backgroundColor: "#ffffff",
+        }}
+      >
         {detailLoading ? (
-          <div className="flex items-center justify-center h-full">
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+            }}
+          >
             <Spin />
           </div>
-        ) : selectedMCP ? (
-          <>
-            {/* 详情头部 */}
-            <div className="p-4 border-b border-[#f0f0f0] flex items-start justify-between gap-3 bg-white">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold truncate text-[#262626]">{selectedMCP.name}</h2>
-                <p className="text-xs text-[#8c8c8c] mt-0.5 truncate">{getConnectorSummary(selectedMCP)}</p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                {!isDistributed(selectedMCP) && (
-                  <Button
-                    className="h-7 text-xs text-[#595959] border-[#d9d9d9] bg-white"
-                    onClick={() => handleEdit(selectedMCP.client_key)}
-                  >
-                    编辑
-                  </Button>
-                )}
-                <Popconfirm
-                  title={`确定要删除连接器「${selectedMCP.name}」吗？`}
-                  onConfirm={() => handleDelete(selectedMCP)}
-                >
-                  <Button
-                    danger
-                    className="h-7 text-xs"
-                    icon={<DeleteOutlined />}
-                  >
-                    删除
-                  </Button>
-                </Popconfirm>
-                <Button
-                  type={selectedMCP.enabled ? "primary" : "default"}
-                  className="h-7 text-xs"
-                  icon={<Power className="size-3 mr-1" />}
-                  onClick={() => handleToggle(selectedMCP.client_key, !selectedMCP.enabled)}
-                >
-                  {selectedMCP.enabled ? "已启用" : "已禁用"}
-                </Button>
-              </div>
-            </div>
-
-            {/* 测试连接 */}
-            <div className="px-4 py-3 border-b border-[#f0f0f0] bg-white">
-              <Button
-                className="h-7 text-xs border-[#d9d9d9] bg-white"
-                icon={<ThunderboltOutlined />}
-                loading={testing}
-                onClick={handleTest}
-              >
-                {testing ? "测试中..." : "测试连接"}
-              </Button>
-              {testResult && (
-                <div className={`mt-2 text-xs ${testResult.success ? "text-[#52c41a]" : "text-[#ff4d4f]"}`}>
-                  {testResult.success ? (
-                    <div>
-                      <p className="font-medium">连接成功，共 {testResult.tools?.length ?? 0} 个工具：</p>
-                      {testResult.tools && testResult.tools.length > 0 && (
-                        <ul className="mt-1 list-disc list-inside space-y-0.5 text-[#8c8c8c]">
-                          {testResult.tools.slice(0, 10).map((t) => (
-                            <li key={t.name}>{t.name}</li>
-                          ))}
-                          {testResult.tools.length > 10 && (
-                            <li className="text-[#8c8c8c]">... 等 {testResult.tools.length - 10} 个</li>
-                          )}
-                        </ul>
-                      )}
-                    </div>
-                  ) : (
-                    <p>{testResult.error}</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 懒加载开关 */}
-            <div className="px-4 py-3 border-b border-[#f0f0f0] bg-white">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-[#262626]">懒加载</p>
-                  <p className="text-xs text-[#8c8c8c]">
-                    {selectedMCP.lazy_load
-                      ? "工具通过 search_tool 搜索后按需加载"
-                      : "所有工具直接加载到上下文中"}
-                  </p>
-                </div>
-                <Button
-                  type={selectedMCP.lazy_load ? "primary" : "default"}
-                  className="h-7 text-xs"
-                  icon={<DatabaseOutlined />}
-                >
-                  {selectedMCP.lazy_load ? "已开启" : "已关闭"}
-                </Button>
-              </div>
-            </div>
-
-            {/* 安全提示 */}
-            <div className="px-4 py-3 border-b border-[#f0f0f0] bg-white">
-              <p className="text-xs text-[#8c8c8c]">
-                MCP 连接器可访问你配置的数据与工具。请仅添加你信任的服务器。
-              </p>
-            </div>
-
-            {/* 基本信息 */}
-            <div className="px-4 py-3 border-b border-[#f0f0f0] bg-white">
-              <Title level={5} className="text-sm font-medium mb-3 text-[#262626]">基本信息</Title>
-              <Descriptions column={2} size="small" bordered>
-                <Descriptions.Item label="Client Key">{selectedMCP.client_key}</Descriptions.Item>
-                <Descriptions.Item label="描述">{selectedMCP.description || "暂无"}</Descriptions.Item>
-                <Descriptions.Item label="传输类型">
-                  <Tag>{selectedMCP.transport === "stdio" ? "STDIO" : selectedMCP.transport === "streamable_http" ? "HTTP" : "SSE"}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="来源">
-                  {isDistributed(selectedMCP) ? (
-                    <Tag color="purple">市场分发</Tag>
-                  ) : (
-                    <Tag color="green">本地创建</Tag>
-                  )}
-                </Descriptions.Item>
-                <Descriptions.Item label="创建时间">{selectedMCP.created_at || "-"}</Descriptions.Item>
-                <Descriptions.Item label="更新时间">{selectedMCP.updated_at || "-"}</Descriptions.Item>
-              </Descriptions>
-            </div>
-
-            {/* 连接配置 */}
-            <div className="px-4 py-3 bg-white">
-              <Title level={5} className="text-sm font-medium mb-3 text-[#262626]">连接配置</Title>
-              {selectedMCP.transport === "stdio" ? (
-                <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label="命令">{selectedMCP.command || "-"}</Descriptions.Item>
-                  <Descriptions.Item label="参数">
-                    {selectedMCP.args?.length > 0 ? (
-                      <Text code>{selectedMCP.args.join(" ")}</Text>
-                    ) : "-"}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="环境变量">
-                    {selectedMCP.env && Object.keys(selectedMCP.env).length > 0 ? (
-                      <div className="space-y-1">
-                        {Object.entries(selectedMCP.env).map(([key, value]) => (
-                          <div key={key}>
-                            <Text code>{key}</Text>: <Text type="secondary">{value}</Text>
-                          </div>
-                        ))}
-                      </div>
-                    ) : "-"}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="工作目录">{selectedMCP.cwd || "-"}</Descriptions.Item>
-                </Descriptions>
-              ) : (
-                <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label="URL">{selectedMCP.url || "-"}</Descriptions.Item>
-                  <Descriptions.Item label="Headers">
-                    {selectedMCP.headers && Object.keys(selectedMCP.headers).length > 0 ? (
-                      <div className="space-y-1">
-                        {Object.entries(selectedMCP.headers).map(([key, value]) => (
-                          <div key={key}>
-                            <Text code>{key}</Text>: <Text type="secondary">{value}</Text>
-                          </div>
-                        ))}
-                      </div>
-                    ) : "-"}
-                  </Descriptions.Item>
-                </Descriptions>
-              )}
-
-              {isDistributed(selectedMCP) && (
-                <Alert
-                  type="info"
-                  message="此 MCP 由市场分发，连接配置不可修改"
-                  className="mt-3"
-                  showIcon
-                />
-              )}
-            </div>
-          </>
         ) : (
-          // 空状态
-          <div className="flex-1 flex items-center justify-center p-8 bg-white">
-            <div className="max-w-md space-y-6 text-center">
-              <div className="size-14 rounded-2xl bg-[#e6f7ff] border border-[#91d5ff] flex items-center justify-center mx-auto">
-                <Plug className="size-7 text-[#1890ff]" />
-              </div>
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold text-[#262626]">MCP 连接器</h3>
-                <p className="text-sm text-[#8c8c8c] leading-relaxed">
-                  MCP（Model Context Protocol）是一种开放协议，让 AI 能够连接远程工具服务器。
-                  通过 MCP 连接器，AI 可以调用服务器提供的各种工具，大幅扩展能力边界。
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-xl border border-[#f0f0f0] bg-[#fafafa] p-4 space-y-3">
-                  <p className="text-sm font-medium text-[#262626]">什么是 MCP？</p>
-                  <p className="text-[13px] text-[#8c8c8c] leading-relaxed">
-                    MCP 服务器是一个远程服务，它向 AI 暴露一组工具。AI 在对话过程中会根据需要自动调用这些工具来获取信息或执行操作。
-                    当前支持 <span className="font-medium text-[#262626]">STDIO</span>、
-                    <span className="font-medium text-[#262626]">SSE</span> 和
-                    <span className="font-medium text-[#262626]">Streamable HTTP</span> 三种传输协议。
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-[#f0f0f0] bg-[#fafafa] p-4 space-y-3">
-                  <p className="text-sm font-medium text-[#262626]">如何添加？</p>
-                  <ul className="text-[13px] text-[#8c8c8c] space-y-2 leading-relaxed text-left">
-                    <li className="flex gap-2">
-                      <span className="text-[#8c8c8c] shrink-0">1.</span>
-                      点击 <span className="font-medium text-[#262626]">+</span> 按钮，填写连接器名称和配置
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-[#8c8c8c] shrink-0">2.</span>
-                      选择传输类型（STDIO / SSE / HTTP），配置命令或 URL
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-[#8c8c8c] shrink-0">3.</span>
-                      保存后点击「测试连接」验证是否可用
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-[#8c8c8c] shrink-0">4.</span>
-                      管理员可以将本地 MCP 发布到应用市场
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
+          <MCPDetailPanel
+            mcp={selectedMCP}
+            testing={testing}
+            testResult={testResult}
+            isManager={!!canManage}
+            onEdit={openEditModal}
+            onDelete={(mcp) => void handleDelete(mcp.client_key)}
+            onToggle={handleToggle}
+            onTest={() => void handleTest()}
+            onPublish={openPublishModal}
+          />
         )}
       </div>
 
-      {/* 创建/编辑弹窗 */}
       <MCPFormModal
         open={formModalOpen}
         clientKey={editingClientKey}
         initialData={editingClientKey ? selectedMCP : null}
-        onClose={() => { setFormModalOpen(false); setEditingClientKey(null); }}
-        onSuccess={() => {
+        onClose={() => {
           setFormModalOpen(false);
           setEditingClientKey(null);
-          refreshList();
+        }}
+        onSuccess={async () => {
+          const editedClientKey = editingClientKey;
+          setFormModalOpen(false);
+          setEditingClientKey(null);
+          await refreshList();
+          if (editedClientKey) {
+            await fetchDetail(editedClientKey);
+          }
         }}
       />
 
-      {/* 发布到市场弹窗 */}
-      {isManager && (
-        <PublishMCPModal
-          open={publishModalOpen}
-          sourceId={sourceId}
-          userId={userId}
-          userName={userName}
-          selectedKeys={selectedForPublish}
-          onClose={() => { setPublishModalOpen(false); setSelectedForPublish([]); }}
-          onSuccess={() => {
-            setPublishModalOpen(false);
-            setSelectedForPublish([]);
-            refreshList();
-          }}
-        />
-      )}
+      <PublishMCPModal
+        open={publishModalOpen}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        clientKey={publishClientKey}
+        clientName={selectedMCP?.name || ""}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishClientKey("");
+        }}
+        onSuccess={() => {
+          setPublishModalOpen(false);
+          setPublishClientKey("");
+          void refreshList();
+        }}
+      />
     </div>
   );
 }

@@ -66,6 +66,8 @@ export interface MyMCPCreateRequest {
   env?: Record<string, string>;
   /** 工作目录 */
   cwd?: string;
+  /** 是否懒加载 */
+  lazy_load?: boolean;
 }
 
 /** MCP 更新请求 */
@@ -74,6 +76,30 @@ export interface MyMCPUpdateRequest {
   name?: string;
   /** 描述 */
   description?: string;
+  /** MCP 传输类型 */
+  transport?: "stdio" | "streamable_http" | "sse";
+  /** HTTP/SSE URL */
+  url?: string;
+  /** HTTP headers */
+  headers?: Record<string, string>;
+  /** stdio 命令 */
+  command?: string;
+  /** 命令行参数 */
+  args?: string[];
+  /** 环境变量 */
+  env?: Record<string, string>;
+  /** 工作目录 */
+  cwd?: string;
+  /** 是否懒加载 */
+  lazy_load?: boolean;
+}
+
+/** MCP 草稿测试请求 */
+export interface MyMCPDraftTestRequest {
+  /** 编辑场景下的原始 client_key，用于恢复脱敏字段 */
+  baseline_client_key?: string;
+  /** 显示名称 */
+  name?: string;
   /** MCP 传输类型 */
   transport?: "stdio" | "streamable_http" | "sse";
   /** HTTP/SSE URL */
@@ -100,6 +126,14 @@ export interface PublishMCPRequest {
   bbk_ids?: string[];
 }
 
+/** 单个 MCP 发布到市场请求 */
+export interface PublishSingleMCPRequest {
+  /** 分类 ID */
+  category_id?: number;
+  /** 关联 BBK ID 列表 */
+  bbk_ids?: string[];
+}
+
 /** 单个发布结果 */
 export interface PublishMCPResult {
   /** MCP client key */
@@ -116,6 +150,16 @@ export interface PublishMCPResult {
 export interface PublishMCPResponse {
   /** 发布结果列表 */
   results: PublishMCPResult[];
+}
+
+/** 单个发布响应 */
+export interface PublishSingleMCPResponse {
+  /** MCP client key */
+  client_key: string;
+  /** 市场 item ID */
+  item_id: string;
+  /** 是否成功 */
+  success: boolean;
 }
 
 /** MCP 测试连接结果 */

@@ -10,6 +10,7 @@ import type {
   MCPDistributeRequest,
   MCPDistributeResponse,
   MCPTestResult,
+  UpdateMarketMCPMetadataRequest,
 } from "../types";
 
 function mergeHeaders(extra?: Record<string, string>): RequestInit {
@@ -27,6 +28,7 @@ export const marketMcpApi = {
     bbkId: string,
     categoryId?: number
   ): Promise<MarketMCPItem[]> => {
+    const resolvedSourceId = sourceId || "default";
     let url = "/market/mcp";
     const params = new URLSearchParams();
     if (categoryId !== undefined) {
@@ -36,7 +38,7 @@ export const marketMcpApi = {
       url += `?${params.toString()}`;
     }
     const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
+      "X-Source-Id": resolvedSourceId,
       "X-Bbk-Id": bbkId,
     });
     return request<MarketMCPItem[]>(url, opts);
@@ -50,8 +52,9 @@ export const marketMcpApi = {
     itemId: string,
     bbkId: string
   ): Promise<MarketMCPDetail | null> => {
+    const resolvedSourceId = sourceId || "default";
     const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
+      "X-Source-Id": resolvedSourceId,
       "X-Bbk-Id": bbkId,
     });
     return request<MarketMCPDetail | null>(
@@ -69,18 +72,33 @@ export const marketMcpApi = {
     userName: string,
     data: MCPUploadRequest
   ): Promise<MarketMCPItem> => {
+    const resolvedSourceId = sourceId || "default";
+    const formData = new FormData();
+    formData.append("file", data.file);
+    formData.append("name", data.name);
+    if (data.chinese_name) {
+      formData.append("chinese_name", data.chinese_name);
+    }
+    if (data.description) {
+      formData.append("description", data.description);
+    }
+    if (data.guidance) {
+      formData.append("guidance", data.guidance);
+    }
+    if (data.bbk_ids && data.bbk_ids.length > 0) {
+      formData.append("bbk_ids", JSON.stringify(data.bbk_ids));
+    }
     const opts: RequestInit = {
       method: "POST",
       headers: new Headers({
-        "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
+        "X-Source-Id": resolvedSourceId,
         "X-User-Id": userId,
         "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
       }),
-      body: JSON.stringify(data),
+      body: formData,
     };
-    return request<MarketMCPItem>("/market/mcp", opts);
+    return request<MarketMCPItem>("/market/mcp/upload", opts);
   },
 
   /**
@@ -93,11 +111,12 @@ export const marketMcpApi = {
     userName: string,
     data: MCPDistributeRequest
   ): Promise<MCPDistributeResponse> => {
+    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "POST",
       headers: new Headers({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
+        "X-Source-Id": resolvedSourceId,
         "X-User-Id": userId,
         "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
@@ -119,10 +138,11 @@ export const marketMcpApi = {
     userId: string,
     userName: string
   ): Promise<void> => {
+    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "DELETE",
       headers: new Headers({
-        "X-Source-Id": sourceId,
+        "X-Source-Id": resolvedSourceId,
         "X-User-Id": userId,
         "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
@@ -140,15 +160,41 @@ export const marketMcpApi = {
     userId: string,
     userName: string
   ): Promise<MCPTestResult> => {
+    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "POST",
       headers: new Headers({
-        "X-Source-Id": sourceId,
+        "X-Source-Id": resolvedSourceId,
         "X-User-Id": userId,
         "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
       }),
     };
     return request<MCPTestResult>(`/market/mcp/${itemId}/test`, opts);
+  },
+
+  /**
+   * 更新市场 MCP 元数据（管理员）
+   */
+  updateMarketMCPMetadata: async (
+    sourceId: string,
+    itemId: string,
+    userId: string,
+    userName: string,
+    data: UpdateMarketMCPMetadataRequest,
+  ): Promise<MarketMCPDetail> => {
+    const resolvedSourceId = sourceId || "default";
+    const opts: RequestInit = {
+      method: "PUT",
+      headers: new Headers({
+        "Content-Type": "application/json",
+        "X-Source-Id": resolvedSourceId,
+        "X-User-Id": userId,
+        "X-User-Name": encodeURIComponent(userName),
+        "X-Manager": "true",
+      }),
+      body: JSON.stringify(data),
+    };
+    return request<MarketMCPDetail>(`/market/mcp/${itemId}/metadata`, opts);
   },
 };

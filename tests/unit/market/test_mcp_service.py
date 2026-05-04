@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """MCP Service 方法测试."""
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from pathlib import Path
@@ -233,7 +234,11 @@ class TestGetMCPDetail:
         """获取不存在的 MCP 详情返回 None。"""
         source_id = "test-source"
 
-        detail = await service.get_mcp_detail(source_id, "non-existent-id", "100")
+        detail = await service.get_mcp_detail(
+            source_id,
+            "non-existent-id",
+            "100",
+        )
 
         assert detail is None
 
@@ -274,7 +279,12 @@ class TestDeleteMCP:
         item = await service.publish_mcp(source_id, req)
 
         # 删除
-        ok = await service.delete_mcp(source_id, item.item_id, "admin", "管理员")
+        ok = await service.delete_mcp(
+            source_id,
+            item.item_id,
+            "admin",
+            "管理员",
+        )
 
         assert ok is True
 
@@ -345,14 +355,21 @@ class TestDistributeMCP:
         item = await service.publish_mcp(source_id, req)
 
         # 分发（因为没有数据库连接，target_type=user_id 直接使用传入值）
-        dist_req = DistributeRequest(target_type="user_id", target_values=["alice"])
+        dist_req = DistributeRequest(
+            target_type="user_id",
+            target_values=["alice"],
+        )
 
         # 由于数据库未连接，_resolve_target_users 会返回空列表
         # 但我们设置 db.is_connected = True 来测试
         service.db.is_connected = True
         service.db.fetch_all = AsyncMock(
             return_value=[
-                {"tenant_id": "alice", "tenant_name": "Alice", "bbk_id": "100"},
+                {
+                    "tenant_id": "alice",
+                    "tenant_name": "Alice",
+                    "bbk_id": "100",
+                },
             ],
         )
 
@@ -368,7 +385,9 @@ class TestDistributeMCP:
         assert result.distributed_count == 1
 
         # 验证用户配置文件已创建
-        user_config_path = swe_root / "alice" / "workspaces" / "default" / "agent.json"
+        user_config_path = (
+            swe_root / "alice" / "workspaces" / "default" / "agent.json"
+        )
         assert user_config_path.exists()
 
 
@@ -377,7 +396,10 @@ class TestMCPStats:
 
     async def test_get_mcp_stats_no_db(self, service):
         """无数据库连接时返回 0,0。"""
-        call_count, user_count = await service._get_mcp_stats("weather", "test-source")
+        call_count, user_count = await service._get_mcp_stats(
+            "weather",
+            "test-source",
+        )
 
         assert call_count == 0
         assert user_count == 0
@@ -389,7 +411,10 @@ class TestMCPStats:
             return_value={"call_count": 10, "user_count": 3},
         )
 
-        call_count, user_count = await service._get_mcp_stats("weather", "test-source")
+        call_count, user_count = await service._get_mcp_stats(
+            "weather",
+            "test-source",
+        )
 
         assert call_count == 10
         assert user_count == 3
