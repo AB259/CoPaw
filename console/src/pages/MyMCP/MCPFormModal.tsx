@@ -48,6 +48,13 @@ function buildClientKey(name: string): string {
   return normalized || `mcp-${Date.now()}`;
 }
 
+function isDuplicateMcpError(err: unknown): boolean {
+  if (!(err instanceof Error) || !err.message) {
+    return false;
+  }
+  return /MCP client '.*' already exists/i.test(err.message);
+}
+
 function sectionLabelStyle() {
   return {
     fontSize: 13,
@@ -238,7 +245,12 @@ export function MCPFormModal({
       await onSuccess();
     } catch (err) {
       console.error("保存 MCP 失败:", err);
-      setError("操作失败");
+      if (!isEdit && isDuplicateMcpError(err)) {
+        setError(null);
+        message.warning("MCP 连接器已存在，请勿重复添加");
+      } else {
+        setError("操作失败");
+      }
     } finally {
       setLoading(false);
     }

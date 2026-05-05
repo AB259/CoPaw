@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 from ..database.connection import DatabaseConnection
 from .fs import (
@@ -195,6 +196,16 @@ def _bump_patch(version: str) -> str:
     return version + ".1"
 
 
+def _decode_creator_name(value: str) -> str:
+    """解码通过请求头传入的创建人名称，并兼容历史已编码数据。"""
+    if not value:
+        return value
+    try:
+        return unquote(value)
+    except Exception:  # pylint: disable=broad-except
+        return value
+
+
 def _item_visible(item: MarketItem, user_bbk_id: str) -> bool:
     """Return True if item is visible to user with given bbk_id."""
     if item.status != "active":
@@ -301,7 +312,14 @@ class MarketplaceService:
     ) -> bool:
         """下架技能（设为 inactive）。返回 True 表示成功。"""
         items = load_index(self.marketplace_root, source_id)
-        item = next((i for i in items if i.item_id == item_id), None)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "skill"
+            ),
+            None,
+        )
         if item is None:
             return False
         item.status = "inactive"
@@ -338,7 +356,11 @@ class MarketplaceService:
     ) -> list[MarketSkillResponse]:
         """列出市场技能，按 bbk_id 过滤，可选按分类过滤。"""
         items = load_index(self.marketplace_root, source_id)
-        visible = [i for i in items if _item_visible(i, user_bbk_id)]
+        visible = [
+            i
+            for i in items
+            if i.item_type == "skill" and _item_visible(i, user_bbk_id)
+        ]
         if category_id is not None:
             visible = [i for i in visible if i.category_id == category_id]
 
@@ -375,7 +397,14 @@ class MarketplaceService:
     ) -> Optional[MarketSkillDetail]:
         """获取技能详情（含调用客户明细）。"""
         items = load_index(self.marketplace_root, source_id)
-        item = next((i for i in items if i.item_id == item_id), None)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "skill"
+            ),
+            None,
+        )
         if item is None or not _item_visible(item, user_bbk_id):
             return None
 
@@ -409,7 +438,14 @@ class MarketplaceService:
     ) -> DistributeResponse:
         """分发技能到目标用户工作目录，并写操作日志。"""
         items = load_index(self.marketplace_root, source_id)
-        item = next((i for i in items if i.item_id == item_id), None)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "skill"
+            ),
+            None,
+        )
         if item is None:
             raise ValueError(f"Item {item_id} not found in source {source_id}")
 
@@ -619,6 +655,7 @@ class MarketplaceService:
         now = datetime.now(timezone.utc).isoformat()
         if existing is not None:
             # 覆盖：复用 item_id
+            existing.version = _bump_patch(existing.version)
             existing.name = req.name
             existing.chinese_name = req.chinese_name
             existing.description = req.description
@@ -731,7 +768,7 @@ class MarketplaceService:
                     guidance=item.guidance,
                     version=item.version,
                     creator_id=item.creator_id,
-                    creator_name=item.creator_name,
+                    creator_name=_decode_creator_name(item.creator_name),
                     category_id=item.category_id,
                     bbk_ids=item.bbk_ids,
                     created_at=item.created_at,
@@ -801,8 +838,9 @@ class MarketplaceService:
             chinese_name=item.chinese_name,
             description=item.description,
             guidance=item.guidance,
+            version=item.version,
             creator_id=item.creator_id,
-            creator_name=item.creator_name,
+            creator_name=_decode_creator_name(item.creator_name),
             category_id=item.category_id,
             bbk_ids=item.bbk_ids,
             created_at=item.created_at,

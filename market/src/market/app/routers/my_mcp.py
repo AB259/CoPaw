@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
+from urllib.parse import unquote
 
 from fastapi import (
     APIRouter,
@@ -468,7 +469,7 @@ async def publish_single_my_mcp_to_market(
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
     marketplace = request.app.state.marketplace
-    user_name = request.headers.get("X-User-Name", "") or ""
+    user_name = unquote(request.headers.get("X-User-Name", "") or "")
     result = await _publish_client_to_market(
         marketplace,
         source_id=source_id,
@@ -505,7 +506,7 @@ async def publish_my_mcp_to_market(
         raise HTTPException(400, detail="No MCP clients configured")
 
     marketplace = request.app.state.marketplace
-    user_name = request.headers.get("X-User-Name", "") or ""
+    user_name = unquote(request.headers.get("X-User-Name", "") or "")
 
     results: list[PublishMCPResult] = []
     for client_key in body.client_keys:

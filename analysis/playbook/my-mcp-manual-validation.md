@@ -102,6 +102,7 @@ function switchSource(source) {
 
 function switchIframeContext({
   userId,
+  clawName,
   source,
   manager,
   isSuperManager,
@@ -110,6 +111,7 @@ function switchIframeContext({
   store.state = {
     ...store.state,
     ...(userId !== undefined ? { userId } : {}),
+    ...(clawName !== undefined ? { clawName } : {}),
     ...(source !== undefined ? { source } : {}),
     ...(manager !== undefined ? { manager: !!manager } : {}),
     ...(isSuperManager !== undefined
@@ -152,10 +154,21 @@ function switchAgent(agentId) {
   reloadPage();
 }
 
+function switchUserName(clawName) {
+  const store = readStore("swe-iframe-context");
+  store.state = {
+    ...store.state,
+    clawName,
+  };
+  writeStore("swe-iframe-context", store);
+  reloadPage();
+}
+
 function showMyMcpContext() {
   const iframe = readStore("swe-iframe-context");
   const agent = readStore("swe-agent-storage");
   console.log("userId =", iframe.state?.userId);
+  console.log("clawName =", iframe.state?.clawName);
   console.log("source =", iframe.state?.source);
   console.log("manager =", iframe.state?.manager);
   console.log("isSuperManager =", iframe.state?.isSuperManager);
@@ -174,9 +187,11 @@ function resetMyMcpContext() {
 ```js
 showMyMcpContext()
 switchUser("user_a")
+switchUserName("张三")
 switchSource("SRC_A")
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
@@ -207,6 +222,53 @@ resetMyMcpContext()
 
 所以管理员验证仍建议通过 `sessionStorage` 处理。
 
+## 用户名如何传入
+
+`MyMCP` 上架到市场时，创建人名称来自 iframe 上下文中的：
+
+- `clawName`
+
+实际链路是：
+
+```text
+iframeStore.clawName
+-> MyMCP 页面中的 userName
+-> 上架请求头 X-User-Name
+-> 市场 index.json 中的 creator_name
+```
+
+如果本地验证时没有传 `clawName`，前端会回退成：
+
+```text
+"Unknown"
+```
+
+因此，当你需要验证：
+
+- 市场条目 `creator_name`
+- 市场详情页“创建人”
+- 不同用户上架后的创建人名称
+
+请不要只传 `userId`，而要一起传 `clawName`。
+
+推荐做法：
+
+```js
+switchIframeContext({
+  userId: "user_a",
+  clawName: "张三",
+  source: "SRC_A",
+  manager: true,
+  isSuperManager: false,
+})
+```
+
+如果只想单独改用户名：
+
+```js
+switchUserName("张三")
+```
+
 ## 真实使用场景说明
 
 本地手工验证时，建议尽量模拟真实 iframe 注入行为。
@@ -214,6 +276,7 @@ resetMyMcpContext()
 真实场景下切换来源时，前端上下文通常会一起带入：
 
 - `userId`
+- `clawName`
 - `manager`
 - `isSuperManager`
 - `source`
@@ -229,6 +292,7 @@ switchSource("SRC_A")
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
@@ -263,6 +327,7 @@ showMyMcpContext()
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "",
   manager: false,
   isSuperManager: false,
@@ -280,6 +345,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_c",
+  clawName: "李四",
   source: "dqb_source",
   manager: false,
   isSuperManager: false,
@@ -302,6 +368,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "",
   manager: false,
   isSuperManager: false,
@@ -336,18 +403,21 @@ switchAgent("your_other_agent_id")
 ```js
 switchIframeContext({
   userId: "default",
+  clawName: "默认用户",
   source: "",
   manager: false,
   isSuperManager: false,
 })
 switchIframeContext({
   userId: "default",
+  clawName: "默认用户",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
 })
 switchIframeContext({
   userId: "default",
+  clawName: "默认用户",
   source: "SRC_B",
   manager: false,
   isSuperManager: false,
@@ -370,6 +440,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
@@ -385,6 +456,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: true,
   isSuperManager: false,
@@ -402,6 +474,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: false,
   isSuperManager: true,
@@ -539,7 +612,7 @@ resetMyMcpContext()
 
 - iframe 场景下，`userId` 直接作为 `tenant_id` 使用
 - 不同 userId = 不同 tenant_id = 不同目录
-- source_id 仅对 `tenant_id = “default”` 生效，非 default 租户忽略 source_id
+- source_id 仅对 `tenant_id = "default"` 生效，非 default 租户忽略 source_id
 
 步骤：
 
@@ -547,17 +620,19 @@ resetMyMcpContext()
 
 ```js
 switchIframeContext({
-  userId: “user_a”,
-  source: “SRC_A”,
+  userId: "user_a",
+  clawName: "张三",
+  source: "SRC_A",
   manager: false,
   isSuperManager: false,
 })
 ```
 
 实际产生的 headers：
-- `X-User-Id = “user_a”`
-- `X-Tenant-Id = “user_a”`（与 X-User-Id 同值）
-- `X-Source-Id = “SRC_A”`（被后端忽略，因为 tenant_id 不是 default）
+- `X-User-Id = "user_a"`
+- `X-Tenant-Id = "user_a"`（与 X-User-Id 同值）
+- `X-User-Name = "张三"`
+- `X-Source-Id = "SRC_A"`（被后端忽略，因为 tenant_id 不是 default）
 
 后端生效目录：`~/.swe/user_a/`
 
@@ -566,17 +641,19 @@ switchIframeContext({
 
 ```js
 switchIframeContext({
-  userId: “user_b”,
-  source: “SRC_A”,
+  userId: "user_b",
+  clawName: "李四",
+  source: "SRC_A",
   manager: false,
   isSuperManager: false,
 })
 ```
 
 实际产生的 headers：
-- `X-User-Id = “user_b”`
-- `X-Tenant-Id = “user_b”`
-- `X-Source-Id = “SRC_A”`（被后端忽略）
+- `X-User-Id = "user_b"`
+- `X-Tenant-Id = "user_b"`
+- `X-User-Name = "李四"`
+- `X-Source-Id = "SRC_A"`（被后端忽略）
 
 后端生效目录：`~/.swe/user_b/`
 
@@ -609,6 +686,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "default",
+  clawName: "默认用户",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
@@ -618,6 +696,7 @@ switchIframeContext({
 实际产生的 headers：
 - `X-User-Id = "default"`
 - `X-Tenant-Id = "default"`
+- `X-User-Name = "默认用户"`
 - `X-Source-Id = "SRC_A"`
 
 后端生效目录：`~/.swe/default_SRC_A/`（source 生效）
@@ -628,6 +707,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "default",
+  clawName: "默认用户",
   source: "SRC_B",
   manager: false,
   isSuperManager: false,
@@ -666,6 +746,7 @@ switchIframeContext({
 ```js
 switchIframeContext({
   userId: "user_a",
+  clawName: "张三",
   source: "SRC_A",
   manager: false,
   isSuperManager: false,
@@ -675,6 +756,7 @@ switchIframeContext({
 实际产生的 headers：
 - `X-User-Id = "user_a"`
 - `X-Tenant-Id = "user_a"`
+- `X-User-Name = "张三"`
 - `X-Source-Id = "SRC_A"`（被后端忽略）
 - 后端生效目录：`~/.swe/user_a/`
 
@@ -719,16 +801,18 @@ switchAgent("your_other_agent_id")
 
 ```js
 switchIframeContext({
-  userId: “user_a”,
-  source: “SRC_A”,
+  userId: "user_a",
+  clawName: "张三",
+  source: "SRC_A",
   manager: false,
   isSuperManager: false,
 })
 ```
 
 实际产生的 headers：
-- `X-User-Id = “user_a”`
-- `X-Tenant-Id = “user_a”`
+- `X-User-Id = "user_a"`
+- `X-Tenant-Id = "user_a"`
+- `X-User-Name = "张三"`
 - 无 `X-Manager` header（上架按钮隐藏）
 
 3. 记录当前列表与详情
@@ -736,17 +820,19 @@ switchIframeContext({
 
 ```js
 switchIframeContext({
-  userId: “user_a”,
-  source: “SRC_A”,
+  userId: "user_a",
+  clawName: "张三",
+  source: "SRC_A",
   manager: true,
   isSuperManager: false,
 })
 ```
 
 实际产生的 headers：
-- `X-User-Id = “user_a”`
-- `X-Tenant-Id = “user_a”`（**与普通用户状态相同**）
-- 管理员操作时发送 `X-Manager: “true”`
+- `X-User-Id = "user_a"`
+- `X-Tenant-Id = "user_a"`（**与普通用户状态相同**）
+- `X-User-Name = "张三"`
+- 管理员操作时发送 `X-Manager: "true"`
 
 5. 检查：
    - “上架”是否出现

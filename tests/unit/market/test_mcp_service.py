@@ -225,10 +225,29 @@ class TestGetMCPDetail:
         assert detail is not None
         assert detail.client_key == "weather"
         assert detail.name == "Weather"
+        assert detail.version == "1.0.0"
         assert detail.config.command == "npx"
         assert detail.config.args == ["-y", "weather-mcp"]
         # 环境变量应该被脱敏（"secret-12345" -> prefix=2, suffix=4, masked=6）
         assert detail.config.env["API_KEY"] == "se******2345"
+
+    async def test_get_mcp_detail_returns_bumped_version(self, service):
+        """重复上架后，详情页应返回递增后的版本号。"""
+        source_id = "test-source"
+
+        req = PublishMCPRequest(
+            client_key="weather",
+            name="Weather",
+            creator_id="admin",
+            config={"command": "npx"},
+        )
+        item = await service.publish_mcp(source_id, req)
+        await service.publish_mcp(source_id, req)
+
+        detail = await service.get_mcp_detail(source_id, item.item_id, "100")
+
+        assert detail is not None
+        assert detail.version == "1.0.1"
 
     async def test_get_mcp_detail_not_found(self, service):
         """获取不存在的 MCP 详情返回 None。"""

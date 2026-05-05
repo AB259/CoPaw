@@ -172,60 +172,55 @@ export default function MyMCPPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <div
                 style={{
-                  position: "relative",
                   minWidth: 120,
                   maxWidth: 160,
                 }}
               >
-                <Search
-                  style={{
-                    position: "absolute",
-                    left: 8,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    width: 14,
-                    height: 14,
-                    color: "#b8c0cc",
-                    pointerEvents: "none",
-                  }}
-                />
                 <Input
                   placeholder="搜索"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
+                  prefix={
+                    <Search
+                      style={{
+                        width: 14,
+                        height: 14,
+                        color: "#b8c0cc",
+                      }}
+                    />
+                  }
+                  suffix={
+                    searchQuery ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery("");
+                          setDebouncedQuery("");
+                        }}
+                        aria-label="清除搜索"
+                        style={{
+                          color: "#b8c0cc",
+                          border: "none",
+                          background: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <X style={{ width: 12, height: 12 }} />
+                      </button>
+                    ) : null
+                  }
                   style={{
                     height: 28,
-                    paddingLeft: 28,
-                    paddingRight: 24,
                     fontSize: 12,
                     borderRadius: 8,
                     borderColor: "#e6eaf0",
                     boxShadow: "none",
                   }}
                 />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchQuery("");
-                      setDebouncedQuery("");
-                    }}
-                    aria-label="清除搜索"
-                    style={{
-                      position: "absolute",
-                      right: 6,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "#b8c0cc",
-                      border: "none",
-                      background: "none",
-                      padding: 2,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <X style={{ width: 12, height: 12 }} />
-                  </button>
-                )}
               </div>
               <Button
                 icon={<PlusOutlined />}

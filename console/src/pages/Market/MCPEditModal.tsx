@@ -115,8 +115,8 @@ export function MCPEditModal({
       />
 
       <Form form={form} layout="vertical">
-        <Form.Item label="英文名称">
-          <Input value={mcp?.name || ""} readOnly />
+        <Form.Item label="英文名称（只读）">
+          <Input value={mcp?.name || ""} disabled />
         </Form.Item>
         <Form.Item label="中文名称（可选）" name="chinese_name">
           <Input placeholder="请输入中文名称（可选）" />

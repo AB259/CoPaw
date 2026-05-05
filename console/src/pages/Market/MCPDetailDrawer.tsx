@@ -22,7 +22,6 @@ import {
 } from "@ant-design/icons";
 import {
   Calendar,
-  Database,
   GitBranch,
   Info,
   Link as LinkIcon,
@@ -197,33 +196,6 @@ export function MCPDetailDrawer({
                 )}
               </div>
             ) : null}
-          </div>
-
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0ebe1" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <div>
-                <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: "#141413" }}>
-                  懒加载
-                </p>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#87867f" }}>
-                  工具通过 search_tool 搜索后按需加载
-                </p>
-              </div>
-              <Button
-                icon={<Database size={12} />}
-                style={{ borderRadius: 10, height: 28, fontSize: 12 }}
-                disabled
-              >
-                已开启
-              </Button>
-            </div>
           </div>
 
           <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0ebe1" }}>

@@ -4,6 +4,7 @@
 import json
 import re
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import (
     APIRouter,
@@ -205,7 +206,7 @@ async def upload_mcp(
         description=description or config.get("description", ""),
         guidance=guidance or "",
         creator_id=x_user_id or "unknown",
-        creator_name=x_user_name or "",
+        creator_name=unquote(x_user_name or ""),
         category_id=None,
         bbk_ids=json.loads(bbk_ids) if bbk_ids else [],
         config=config,
@@ -254,7 +255,7 @@ async def distribute_mcp(
             source_id,
             item_id,
             operator_id=x_user_id or "",
-            operator_name=x_user_name or "",
+            operator_name=unquote(x_user_name or ""),
             req=req,
         )
     except ValueError as e:
@@ -295,7 +296,7 @@ async def delete_mcp(
         source_id,
         item_id,
         operator_id=x_user_id or "",
-        operator_name=x_user_name or "",
+        operator_name=unquote(x_user_name or ""),
     )
     if not ok:
         raise HTTPException(status_code=404, detail="MCP not found")
