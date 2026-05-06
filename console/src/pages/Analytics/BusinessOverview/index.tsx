@@ -14,6 +14,7 @@ import {
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { tracingApi } from "../../../api/modules/tracing";
+import UserDetailModal from "./components/UserDetailModal";
 import {
   formatNumber,
   formatTokens,
@@ -119,6 +120,10 @@ export default function BusinessOverviewPage() {
     tokens: 0,
     users: 0,
   });
+
+  // 用户详情弹窗状态
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // 计算结束日期
   const calculateEndDate = (start: dayjs.Dayjs, mode: TimeRange): dayjs.Dayjs => {
@@ -844,7 +849,15 @@ export default function BusinessOverviewPage() {
         </span>
       </div>
       {users.map((user, index) => (
-        <div key={user.userId} className={styles.userItem}>
+        <div
+          key={user.userId}
+          className={styles.userItem}
+          onClick={() => {
+            setSelectedUserId(user.userId);
+            setModalOpen(true);
+          }}
+          style={{ cursor: "pointer" }}
+        >
           <span
             className={`${styles.rank} ${
               index === 0
@@ -1194,6 +1207,19 @@ export default function BusinessOverviewPage() {
           </div>
         </Col>
       </Row>
+
+      {/* 用户详情弹窗 */}
+      <UserDetailModal
+        open={modalOpen}
+        userId={selectedUserId}
+        startDate={startDate.format("YYYY-MM-DD")}
+        endDate={calculatedEndDate.format("YYYY-MM-DD")}
+        sourceId={platform !== "all" ? platform : undefined}
+        onClose={() => {
+          setModalOpen(false);
+          setSelectedUserId(null);
+        }}
+      />
     </div>
   );
 }
