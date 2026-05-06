@@ -31,6 +31,7 @@ import VoiceTranscriptionPage from "../../pages/Settings/VoiceTranscription";
 import AgentsPage from "../../pages/Settings/Agents";
 import AnalyticsPage from "../../pages/Analytics";
 import InstancePage from "../../pages/Instance";
+import MonitorPage from "../../pages/Monitor";
 import ContinuousIterationPage from "../../pages/Harness/ContinuousIteration";
 // ==================== 测试页面 (用于验证新功能) ====================
 import TestDownloadCardPage from "../../pages/TestDownloadCard";
@@ -67,6 +68,7 @@ const pathToKey: Record<string, string> = {
   "/analytics/messages": "analytics-messages",
   "/analytics/traces": "analytics-traces",
   "/analytics/business-overview": "analytics-business-overview",
+  "/monitor/cron-overview": "monitor-cron-overview",
   "/instance/overview": "instance-overview",
   "/instance/instances": "instance-instances",
   "/instance/allocations": "instance-allocations",
@@ -135,6 +137,7 @@ export default function MainLayout() {
                 element={<VoiceTranscriptionPage />}
               />
               <Route path="/analytics/*" element={<AnalyticsPage />} />
+              <Route path="/monitor/*" element={<MonitorPage />} />
               <Route path="/instance/*" element={<InstancePage />} />
               <Route path="/continuous-iteration" element={<ContinuousIterationPage />} />
               {/* ==================== 测试路由 ==================== */}

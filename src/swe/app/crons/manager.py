@@ -30,6 +30,7 @@ from .auth_state import prefetch_auth_token
 from .executor import CronExecutor
 from .models import CronJobSpec, CronJobState, CronTaskView, JobsFile
 from .repo.base import BaseJobRepository
+from .monitor_sync_client import get_monitor_sync_client, MonitorSyncClient
 
 HEARTBEAT_JOB_ID = "_heartbeat"
 DREAM_JOB_ID = "_dream"
@@ -111,6 +112,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
 
         self._active_jobs: set[str] = set()  # Track which jobs are scheduled
+
+        # Monitor sync client for dual-write
+        self._monitor_sync_client: Optional[MonitorSyncClient] = None
+        try:
+            self._monitor_sync_client = get_monitor_sync_client()
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Monitor sync client not available")
 
     @property
     def is_started(self) -> bool:
@@ -959,6 +967,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 if changed or self._scheduler.get_job(spec.id) is None:
                     await self._register_or_update(spec)
 
+        # Sync to Monitor (async, non-blocking)
+        if self._monitor_sync_client is not None:
+            await self._monitor_sync_client.sync_job(spec)
+
     async def _ensure_persisted_task_binding(
         self,
         spec: CronJobSpec,
@@ -1002,6 +1014,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         task_chat_id,
                         exc_info=True,
                     )
+
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.delete_job(job_id)
+
             return (
                 deleted_job is not None if changed else deleted_job is not None
             )
@@ -2268,6 +2285,57 @@ class CronManager:  # pylint: disable=too-many-public-methods
             workspace_dir=workspace_dir,
         )
 
+    def _record_failure_timing(
+        self,
+        st: CronJobState,
+        actual_time: datetime,
+        status: str,
+        error_msg: str,
+    ) -> tuple[datetime, int]:
+        """Record failure timing and update state. Returns (end_time, duration_ms)."""
+        end_time = datetime.now(timezone.utc)
+        duration_ms = int((end_time - actual_time).total_seconds() * 1000)
+        st.last_status = status
+        st.last_error = error_msg
+        return end_time, duration_ms
+
+    async def _sync_execution_to_monitor(
+        self,
+        job: CronJobSpec,
+        exec_status: str,
+        actual_time: datetime,
+        end_time: Optional[datetime],
+        duration_ms: int,
+        error_message: str,
+        output_preview: str,
+    ) -> None:
+        """Sync execution record to Monitor service (non-blocking)."""
+        if self._monitor_sync_client is None:
+            return
+
+        trace_id = ""
+        session_id = str((job.meta or {}).get("task_session_id", "") or "")
+        try:
+            from ..tracing import get_current_trace
+
+            trace = get_current_trace()
+            if trace:
+                trace_id = trace.trace_id
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        await self._monitor_sync_client.record_execution(
+            job=job,
+            status=exec_status,
+            actual_time=actual_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            error_message=error_message,
+            trace_id=trace_id,
+            session_id=session_id,
+            output_preview=output_preview,
+        )
+
     async def _execute_once(self, job: CronJobSpec) -> None:
         job = await self._ensure_persisted_task_binding(job)
         rt = self._rt.get(job.id)
@@ -2280,10 +2348,22 @@ class CronManager:  # pylint: disable=too-many-public-methods
             st.last_status = "running"
             self._states[job.id] = st
 
+            # Track execution timing for Monitor sync
+            actual_time = datetime.now(timezone.utc)
+            end_time = None
+            duration_ms = 0
+            exec_status = "success"
+            error_message = ""
+            output_preview = ""
+
             try:
                 await self._executor.execute(job)
                 st.last_status = "success"
                 st.last_error = None
+                end_time = datetime.now(timezone.utc)
+                duration_ms = int(
+                    (end_time - actual_time).total_seconds() * 1000,
+                )
                 # 通知用 shield 保护，避免任务取消时误标记状态
                 try:
                     await asyncio.shield(
@@ -2298,21 +2378,38 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await asyncio.shield(
                     self._record_task_execution_success(job),
                 )
+                # Get output preview from job meta
+                output_preview = str(
+                    (job.meta or {}).get("task_last_scheduled_preview", "")
+                    or "",
+                )[:100]
                 logger.info(
                     "cron _execute_once: job_id=%s status=success",
                     job.id,
                 )
             except asyncio.CancelledError:
-                st.last_status = "cancelled"
-                st.last_error = "Job was cancelled"
+                exec_status = "cancelled"
+                error_message = "Job was cancelled"
+                end_time, duration_ms = self._record_failure_timing(
+                    st,
+                    actual_time,
+                    "cancelled",
+                    error_message,
+                )
                 logger.info(
                     "cron _execute_once: job_id=%s status=cancelled",
                     job.id,
                 )
                 raise
             except Exception as e:  # pylint: disable=broad-except
-                st.last_status = "error"
-                st.last_error = repr(e)
+                exec_status = "error"
+                error_message = str(e)[:200]
+                end_time, duration_ms = self._record_failure_timing(
+                    st,
+                    actual_time,
+                    "error",
+                    repr(e),
+                )
                 logger.warning(
                     "cron _execute_once: job_id=%s status=error error=%s",
                     job.id,
@@ -2322,6 +2419,16 @@ class CronManager:  # pylint: disable=too-many-public-methods
             finally:
                 st.last_run_at = datetime.now(timezone.utc)
                 self._states[job.id] = st
+
+                await self._sync_execution_to_monitor(
+                    job=job,
+                    exec_status=exec_status,
+                    actual_time=actual_time,
+                    end_time=end_time,
+                    duration_ms=duration_ms,
+                    error_message=error_message,
+                    output_preview=output_preview,
+                )
 
     # ----- Legacy API compatibility -----
 

@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..__version__ import __version__
-from ..config.constant import DOCS_ENABLED, CORS_ORIGINS
+from ..config.constant import DOCS_ENABLED, CORS_ORIGINS, DB_HOST
 from .routers import api_router
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,33 @@ async def lifespan(
     """应用生命周期管理."""
     logger.info("Monitor service starting up...")
     logger.info(f"Environment: {os.environ.get('MONITOR_ENV', 'prd')}")
+
+    # Initialize database connection if configured
+    if DB_HOST:
+        try:
+            from .database import init_db_connection, init_database_tables
+
+            await init_db_connection()
+            await init_database_tables()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.warning("Database initialization failed: %s", e)
+            # Continue without database - some features may be unavailable
+    else:
+        logger.info("Database not configured (MONITOR_DB_HOST not set)")
+
     yield
+
+    # Close database connection on shutdown
+    if DB_HOST:
+        try:
+            from .database import close_db_connection
+
+            await close_db_connection()
+            logger.info("Database connection closed")
+        except Exception as e:
+            logger.warning("Failed to close database connection: %s", e)
+
     logger.info("Monitor service shutting down...")
 
 
