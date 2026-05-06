@@ -6,10 +6,14 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import MutableMapping
+from typing import Iterable, MutableMapping
 
 _TENANT_ROOT_ENV = "SWE_TENANT_PATH_GUARD_ROOT"
 _BASE_DIR_ENV = "SWE_TENANT_PATH_GUARD_BASE_DIR"
+_TRUSTED_PATHS_ENV = "SWE_TENANT_PATH_GUARD_TRUSTED_PATHS"
+_TRUSTED_ENTRYPOINT_ROOTS_ENV = (
+    "SWE_TENANT_PATH_GUARD_TRUSTED_ENTRYPOINT_ROOTS"
+)
 
 _SITE_CUSTOMIZE_SOURCE = """\
 from swe_tenant_path_guard import install_from_env
@@ -49,6 +53,8 @@ except ImportError:  # pragma: no cover - always present on CPython
 
 _TENANT_ROOT_ENV = "SWE_TENANT_PATH_GUARD_ROOT"
 _BASE_DIR_ENV = "SWE_TENANT_PATH_GUARD_BASE_DIR"
+_TRUSTED_PATHS_ENV = "SWE_TENANT_PATH_GUARD_TRUSTED_PATHS"
+_TRUSTED_ENTRYPOINT_ROOTS_ENV = "SWE_TENANT_PATH_GUARD_TRUSTED_ENTRYPOINT_ROOTS"
 _MISSING = object()
 
 
@@ -63,6 +69,10 @@ _INSTALLED = False
 _TENANT_ROOT = None
 _BASE_DIR = None
 _RUNTIME_ALLOWED_ROOTS = ()
+_TRUSTED_ALLOWED_PATHS = ()
+_TRUSTED_ENTRYPOINT_ROOTS = ()
+_TRUSTED_ENTRYPOINT_PATH = None
+_TRUSTED_SWE_ENTRYPOINT = False
 _CHECKING_PATH = False
 
 
@@ -110,6 +120,27 @@ def _collect_runtime_allowed_roots():
     return tuple(roots)
 
 
+def _collect_env_paths(name):
+    raw = os.environ.get(name, "")
+    if not raw:
+        return ()
+
+    paths = []
+    for value in raw.split(os.pathsep):
+        if not value:
+            continue
+        try:
+            resolved = _resolve_without_guard(
+                pathlib.Path(os.path.expanduser(value)),
+                strict=False,
+            )
+        except (OSError, RuntimeError):
+            continue
+        if resolved not in paths:
+            paths.append(resolved)
+    return tuple(paths)
+
+
 def _fsdecode_path(path):
     if isinstance(path, int):
         return None
@@ -152,6 +183,49 @@ def _is_runtime_allowed_path(resolved):
     )
 
 
+def _entrypoint_looks_like_swe(argv0):
+    if not argv0 or argv0 in {"-c", "-"}:
+        return False
+
+    path = pathlib.Path(argv0)
+    name = path.name.lower()
+    stem = path.stem.lower()
+    parts = {part.lower() for part in path.parts}
+
+    return (
+        name in {"swe", "swe.exe"}
+        or stem == "swe"
+        or "swe.exe" in parts
+        or (path.name == "__main__.py" and path.parent.name.lower() == "swe")
+    )
+
+
+def _resolve_trusted_swe_entrypoint():
+    if not _TRUSTED_ENTRYPOINT_ROOTS:
+        return None
+
+    argv0 = sys.argv[0] if sys.argv else ""
+    if not _entrypoint_looks_like_swe(argv0):
+        return None
+
+    _decoded, resolved = _resolve_candidate(argv0)
+    if resolved is None:
+        return None
+
+    for root in _TRUSTED_ENTRYPOINT_ROOTS:
+        if resolved == root or _is_relative_to(resolved, root):
+            return resolved
+    return None
+
+
+def _is_trusted_allowed_path(resolved):
+    if not _TRUSTED_SWE_ENTRYPOINT:
+        return False
+    if _TRUSTED_ENTRYPOINT_PATH is not None and resolved == _TRUSTED_ENTRYPOINT_PATH:
+        return True
+    return any(resolved == path for path in _TRUSTED_ALLOWED_PATHS)
+
+
 def _check_path(path, operation):
     global _CHECKING_PATH
 
@@ -169,6 +243,8 @@ def _check_path(path, operation):
         if _is_relative_to(resolved, _TENANT_ROOT):
             return
         if _is_runtime_allowed_path(resolved):
+            return
+        if _is_trusted_allowed_path(resolved):
             return
 
         raise TenantPathGuardError(
@@ -400,6 +476,8 @@ def _audit_hook(event, args):
 
 def install_from_env():
     global _INSTALLED, _TENANT_ROOT, _BASE_DIR, _RUNTIME_ALLOWED_ROOTS
+    global _TRUSTED_ALLOWED_PATHS, _TRUSTED_ENTRYPOINT_ROOTS
+    global _TRUSTED_ENTRYPOINT_PATH, _TRUSTED_SWE_ENTRYPOINT
 
     if _INSTALLED:
         return
@@ -418,6 +496,10 @@ def install_from_env():
         strict=False,
     )
     _RUNTIME_ALLOWED_ROOTS = _collect_runtime_allowed_roots()
+    _TRUSTED_ALLOWED_PATHS = _collect_env_paths(_TRUSTED_PATHS_ENV)
+    _TRUSTED_ENTRYPOINT_ROOTS = _collect_env_paths(_TRUSTED_ENTRYPOINT_ROOTS_ENV)
+    _TRUSTED_ENTRYPOINT_PATH = _resolve_trusted_swe_entrypoint()
+    _TRUSTED_SWE_ENTRYPOINT = _TRUSTED_ENTRYPOINT_PATH is not None
 
     _install_function_wrappers()
     _install_pathlib_wrappers()
@@ -426,11 +508,57 @@ def install_from_env():
 '''
 
 
+def _resolve_env_paths(paths: Iterable[Path]) -> list[str]:
+    resolved: list[str] = []
+    for path in paths:
+        try:
+            value = str(path.expanduser().resolve())
+        except (OSError, RuntimeError):
+            continue
+        if value not in resolved:
+            resolved.append(value)
+    return resolved
+
+
+def _collect_default_trusted_paths() -> list[Path]:
+    """Return SWE metadata files trusted only for SWE's own CLI entrypoints."""
+    from swe.constant import CHATS_FILE, CONFIG_FILE, HEARTBEAT_FILE, JOBS_FILE
+    from swe.constant import WORKING_DIR
+
+    return [
+        WORKING_DIR / CONFIG_FILE,
+        WORKING_DIR / JOBS_FILE,
+        WORKING_DIR / CHATS_FILE,
+        WORKING_DIR / HEARTBEAT_FILE,
+    ]
+
+
+def _collect_default_trusted_entrypoint_roots() -> list[Path]:
+    return [
+        Path(os.path.realpath(os.sys.executable)).parent,
+        Path(__file__).resolve().parents[2],
+    ]
+
+
+def _set_path_list_env(
+    env: MutableMapping[str, str],
+    name: str,
+    paths: Iterable[Path],
+) -> None:
+    values = _resolve_env_paths(paths)
+    if values:
+        env[name] = os.pathsep.join(values)
+    else:
+        env.pop(name, None)
+
+
 def prepare_python_runtime_path_guard_env(
     env: MutableMapping[str, str],
     *,
     tenant_root: Path,
     base_dir: Path,
+    trusted_paths: Iterable[Path] | None = None,
+    trusted_entrypoint_roots: Iterable[Path] | None = None,
 ) -> tempfile.TemporaryDirectory[str]:
     """Create a temporary sitecustomize guard and inject it into env.
 
@@ -452,6 +580,24 @@ def prepare_python_runtime_path_guard_env(
 
     env[_TENANT_ROOT_ENV] = str(tenant_root.resolve())
     env[_BASE_DIR_ENV] = str(base_dir.resolve())
+    _set_path_list_env(
+        env,
+        _TRUSTED_PATHS_ENV,
+        (
+            trusted_paths
+            if trusted_paths is not None
+            else _collect_default_trusted_paths()
+        ),
+    )
+    _set_path_list_env(
+        env,
+        _TRUSTED_ENTRYPOINT_ROOTS_ENV,
+        (
+            trusted_entrypoint_roots
+            if trusted_entrypoint_roots is not None
+            else _collect_default_trusted_entrypoint_roots()
+        ),
+    )
 
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:
