@@ -9,7 +9,6 @@ import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
 import { PublishModal } from "../Market/PublishModal";
 import { useConflictRenameModal } from "../Agent/Skills/components";
-import type { ConflictResolveResult } from "../Agent/Skills/components";
 
 const { Title, Text } = Typography;
 
@@ -102,12 +101,8 @@ export default function MySkillsPage() {
             // 用户取消
             break;
           }
-          if (resolveResult.action === "overwrite") {
-            overwrite = true;
-            continue;  // 重新上传，使用覆盖模式
-          }
           // 重命名
-          renameMap = { ...renameMap, ...resolveResult.renameMap };
+          renameMap = { ...renameMap, ...resolveResult };
           overwrite = false;
           continue;  // 重新上传
         }

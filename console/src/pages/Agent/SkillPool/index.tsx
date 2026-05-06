@@ -535,11 +535,7 @@ function SkillPoolPage() {
             })),
           );
           if (!resolveResult) break;
-          if (resolveResult.action === "overwrite") {
-            overwrite = true;
-            continue;
-          }
-          renameMap = { ...renameMap, ...resolveResult.renameMap };
+          renameMap = { ...renameMap, ...resolveResult };
           overwrite = false;
           continue;
         }
