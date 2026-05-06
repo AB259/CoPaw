@@ -81,6 +81,10 @@ def _is_relative_to(path, root):
 def _collect_runtime_allowed_roots():
     candidates = [pathlib.Path(__file__).parent]
 
+    for value in sys.path:
+        if value:
+            candidates.append(pathlib.Path(value))
+
     for value in (
         getattr(sys, "base_prefix", None),
         getattr(sys, "prefix", None),
