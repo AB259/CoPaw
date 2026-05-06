@@ -18,7 +18,6 @@ from typing import Optional
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
-from ...hooks.observation import emit_current_snapshot_observation
 from ...security.tenant_path_boundary import (
     is_path_within_tenant_with_base,
     get_current_tenant_root,
@@ -699,6 +698,153 @@ def _execute_subprocess_sync(
                     pass
 
 
+def _tool_text_response(text: str) -> ToolResponse:
+    """Build a plain-text tool response."""
+    return ToolResponse(
+        content=[
+            TextBlock(
+                type="text",
+                text=text,
+            ),
+        ],
+    )
+
+
+def _prepare_subprocess_env() -> dict[str, str]:
+    """Prepare subprocess environment with the active Python on PATH."""
+    env = os.environ.copy()
+    python_bin_dir = str(Path(sys.executable).parent)
+    existing_path = env.get("PATH", "")
+    env["PATH"] = (
+        python_bin_dir + os.pathsep + existing_path
+        if existing_path
+        else python_bin_dir
+    )
+    return env
+
+
+def _format_shell_response(
+    returncode: int,
+    stdout_str: str,
+    stderr_str: str,
+) -> str:
+    """Format shell execution output for a tool response."""
+    if returncode == 0:
+        response_text = stdout_str or "Command executed successfully (no output)."
+        if stderr_str:
+            response_text += f"\n[stderr]\n{stderr_str}"
+        return response_text
+
+    response_parts = [f"Command failed with exit code {returncode}."]
+    if stdout_str:
+        response_parts.append(f"\n[stdout]\n{stdout_str}")
+    if stderr_str:
+        response_parts.append(f"\n[stderr]\n{stderr_str}")
+    return "".join(response_parts)
+
+
+async def _terminate_unix_process_group(
+    proc: asyncio.subprocess.Process,
+) -> None:
+    """Terminate a Unix subprocess group, escalating to SIGKILL if needed."""
+    pgid = os.getpgid(proc.pid)
+    os.killpg(pgid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2)
+    except asyncio.TimeoutError:
+        os.killpg(pgid, signal.SIGKILL)
+        await asyncio.wait_for(proc.wait(), timeout=2)
+
+
+async def _drain_unix_subprocess_output(
+    proc: asyncio.subprocess.Process,
+) -> tuple[bytes, bytes]:
+    """Drain any remaining subprocess output after termination."""
+    try:
+        return await asyncio.wait_for(proc.communicate(), timeout=1)
+    except asyncio.TimeoutError:
+        return b"", b""
+
+
+async def _handle_unix_subprocess_timeout(
+    proc: asyncio.subprocess.Process,
+    timeout: int,
+) -> tuple[int, str, str]:
+    """Handle Unix subprocess timeout and collect best-effort output."""
+    stderr_suffix = (
+        f"⚠️ TimeoutError: The command execution exceeded "
+        f"the timeout of {timeout} seconds. "
+        f"Please consider increasing the timeout value if this command "
+        f"requires more time to complete."
+    )
+    try:
+        await _terminate_unix_process_group(proc)
+        stdout, stderr = await _drain_unix_subprocess_output(proc)
+        stdout_str = smart_decode(stdout)
+        stderr_str = smart_decode(stderr)
+        if stderr_str:
+            stderr_str += f"\n{stderr_suffix}"
+        else:
+            stderr_str = stderr_suffix
+        return -1, stdout_str, stderr_str
+    except (ProcessLookupError, OSError):
+        try:
+            proc.kill()
+            await proc.wait()
+        except (ProcessLookupError, OSError):
+            pass
+        return -1, "", stderr_suffix
+
+
+async def _execute_unix_subprocess(
+    cmd: str,
+    working_dir: Path,
+    timeout: int,
+    env: dict[str, str],
+) -> tuple[int, str, str]:
+    """Execute a shell command on Unix-like platforms."""
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        bufsize=0,
+        cwd=str(working_dir),
+        env=env,
+        start_new_session=True,
+    )
+
+    try:
+        # Apply timeout to communicate directly; wait()+communicate()
+        # can hang if descendants keep stdout/stderr pipes open.
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout,
+        )
+        returncode = proc.returncode if proc.returncode is not None else -1
+        return returncode, smart_decode(stdout), smart_decode(stderr)
+    except asyncio.TimeoutError:
+        return await _handle_unix_subprocess_timeout(proc, timeout)
+
+
+async def _execute_platform_subprocess(
+    cmd: str,
+    working_dir: Path,
+    timeout: int,
+    env: dict[str, str],
+) -> tuple[int, str, str]:
+    """Execute a shell command on the active platform."""
+    if sys.platform == "win32":
+        # Windows: use thread pool to avoid asyncio subprocess limitations
+        return await asyncio.to_thread(
+            _execute_subprocess_sync,
+            cmd,
+            str(working_dir),
+            timeout,
+            env,
+        )
+    return await _execute_unix_subprocess(cmd, working_dir, timeout, env)
+
+
 # pylint: disable=too-many-branches, too-many-statements
 async def execute_shell_command(
     command: str,
@@ -740,49 +886,14 @@ async def execute_shell_command(
     try:
         working_dir = _resolve_cwd(cwd)
     except TenantPathBoundaryError as e:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Error: {e}",
-                ),
-            ],
-        )
+        return _tool_text_response(f"Error: {e}")
 
     # Validate explicit path tokens in the command, using working_dir as base for relative paths
     path_error = _validate_shell_paths(cmd, base_dir=working_dir)
     if path_error:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=path_error,
-                ),
-            ],
-        )
+        return _tool_text_response(path_error)
 
-    await emit_current_snapshot_observation(
-        event_name="beforeToolUse",
-        phase="before",
-        hook_ids=("platform.tool_guard",),
-        subject_type="shell_tool",
-        subject_id=cmd[:120] or "shell",
-        payload={
-            "tool_name": "execute_shell_command",
-            "command": cmd,
-            "cwd": str(working_dir),
-            "timeout": timeout,
-        },
-    )
-
-    # Ensure the venv Python is on PATH for subprocesses
-    env = os.environ.copy()
-    python_bin_dir = str(Path(sys.executable).parent)
-    existing_path = env.get("PATH", "")
-    if existing_path:
-        env["PATH"] = python_bin_dir + os.pathsep + existing_path
-    else:
-        env["PATH"] = python_bin_dir
+    env = _prepare_subprocess_env()
     python_runtime_guard = prepare_python_runtime_path_guard_env(
         env,
         tenant_root=get_current_tenant_root(),
@@ -791,129 +902,24 @@ async def execute_shell_command(
 
     try:
         with python_runtime_guard:
-            if sys.platform == "win32":
-                # Windows: use thread pool to avoid asyncio subprocess limitations
-                returncode, stdout_str, stderr_str = await asyncio.to_thread(
-                    _execute_subprocess_sync,
-                    cmd,
-                    str(working_dir),
-                    timeout,
-                    env,
-                )
-            else:
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    bufsize=0,
-                    cwd=str(working_dir),
-                    env=env,
-                    start_new_session=True,
-                )
+            returncode, stdout_str, stderr_str = await _execute_platform_subprocess(
+                cmd,
+                working_dir,
+                timeout,
+                env,
+            )
 
-                try:
-                    # Apply timeout to communicate directly; wait()+communicate()
-                    # can hang if descendants keep stdout/stderr pipes open.
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(),
-                        timeout=timeout,
-                    )
-                    stdout_str = smart_decode(stdout)
-                    stderr_str = smart_decode(stderr)
-                    returncode = proc.returncode
-
-                except asyncio.TimeoutError:
-                    stderr_suffix = (
-                        f"⚠️ TimeoutError: The command execution exceeded "
-                        f"the timeout of {timeout} seconds. "
-                        f"Please consider increasing the timeout value if this command "
-                        f"requires more time to complete."
-                    )
-                    returncode = -1
-                    try:
-                        # Kill the entire process group so that child processes
-                        # spawned by the shell are also terminated.
-                        pgid = os.getpgid(proc.pid)
-                        os.killpg(pgid, signal.SIGTERM)
-                        try:
-                            await asyncio.wait_for(proc.wait(), timeout=2)
-                        except asyncio.TimeoutError:
-                            os.killpg(pgid, signal.SIGKILL)
-                            await asyncio.wait_for(proc.wait(), timeout=2)
-
-                        # Drain remaining output.
-                        try:
-                            stdout, stderr = await asyncio.wait_for(
-                                proc.communicate(),
-                                timeout=1,
-                            )
-                        except asyncio.TimeoutError:
-                            stdout, stderr = b"", b""
-                        stdout_str = smart_decode(stdout)
-                        stderr_str = smart_decode(stderr)
-                        if stderr_str:
-                            stderr_str += f"\n{stderr_suffix}"
-                        else:
-                            stderr_str = stderr_suffix
-                    except (ProcessLookupError, OSError):
-                        # Process already gone or pgid lookup failed — fall back
-                        # to direct kill on the process itself.
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except (ProcessLookupError, OSError):
-                            pass
-                        stdout_str = ""
-                        stderr_str = stderr_suffix
-
-        if returncode == 0:
-            if stdout_str:
-                response_text = stdout_str
-            else:
-                response_text = "Command executed successfully (no output)."
-            if stderr_str:
-                response_text += f"\n[stderr]\n{stderr_str}"
-        else:
-            response_parts = [f"Command failed with exit code {returncode}."]
-            if stdout_str:
-                response_parts.append(f"\n[stdout]\n{stdout_str}")
-            if stderr_str:
-                response_parts.append(f"\n[stderr]\n{stderr_str}")
-            response_text = "".join(response_parts)
-
-        await emit_current_snapshot_observation(
-            event_name="afterToolUse",
-            phase="after",
-            hook_ids=("platform.tool_guard",),
-            subject_type="shell_tool",
-            subject_id=cmd[:120] or "shell",
-            payload={
-                "tool_name": "execute_shell_command",
-                "command": cmd,
-                "cwd": str(working_dir),
-                "timeout": timeout,
-                "returncode": returncode,
-                "stdout_bytes": len(stdout_str.encode("utf-8")),
-                "stderr_bytes": len(stderr_str.encode("utf-8")),
-            },
+        response_text = _format_shell_response(
+            returncode,
+            stdout_str,
+            stderr_str,
         )
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=response_text,
-                ),
-            ],
-        )
+
+        return _tool_text_response(response_text)
 
     except Exception as e:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Error: Shell command execution failed due to \n{e}",
-                ),
-            ],
+        return _tool_text_response(
+            f"Error: Shell command execution failed due to \n{e}",
         )
 
 
