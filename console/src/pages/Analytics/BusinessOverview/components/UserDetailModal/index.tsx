@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Modal, Spin, Empty } from "antd";
+import { Modal, Spin, Empty, message } from "antd";
 import { User } from "lucide-react";
 import {
   tracingApi,
@@ -49,6 +49,7 @@ export default function UserDetailModal({
       setUserStats(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
+      message.error("获取用户统计失败");
     } finally {
       setUserLoading(false);
     }
@@ -73,10 +74,11 @@ export default function UserDetailModal({
       }
     } catch (error) {
       console.error("Failed to fetch sessions:", error);
+      message.error("获取会话列表失败");
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, sessionsPageSize, selectedSessionId]);
+  }, [userId, startDate, endDate, sourceId, sessionsPageSize]);
 
   // 获取对话列表
   const fetchTraces = useCallback(async (sessionId: string, page: number) => {
@@ -93,6 +95,7 @@ export default function UserDetailModal({
       setTracesTotal(data.total || 0);
     } catch (error) {
       console.error("Failed to fetch traces:", error);
+      message.error("获取对话列表失败");
     } finally {
       setTracesLoading(false);
     }
