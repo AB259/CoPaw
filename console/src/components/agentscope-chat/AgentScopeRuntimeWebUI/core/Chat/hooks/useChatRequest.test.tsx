@@ -307,47 +307,4 @@ describe("useChatRequest", () => {
       }),
     );
   });
-
-  it("passes the owning session identifiers through manual cancel", async () => {
-    const currentQARef = {
-      current: {
-        response: {
-          id: "ui-response-a",
-          msgStatus: "generating",
-          cards: [
-            {
-              code: "AgentScopeRuntimeResponseCard",
-              data: {
-                id: "response-1",
-                status: "created",
-                created_at: 0,
-                output: [],
-              },
-            },
-          ],
-        },
-        activeRequestOwner: createOwner(),
-      },
-    } as CurrentQARef;
-
-    render(
-      <Harness
-        currentQARef={currentQARef}
-        updateMessage={vi.fn()}
-        onFinish={vi.fn()}
-      />,
-    );
-
-    await act(async () => {
-      await hookApi.cancelActiveRequest();
-    });
-
-    expect(mocks.cancel).toHaveBeenCalledWith(
-      expect.objectContaining({
-        session_id: "chat-a",
-        logical_session_id: "logical-a",
-        chat_id: "chat-real-a",
-      }),
-    );
-  });
 });

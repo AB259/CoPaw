@@ -249,17 +249,7 @@ async def post_console_chat_stop(
 ) -> dict:
     """Stop the running chat. Only stops when called."""
     workspace = await get_agent_for_request(request)
-    run_key = chat_id
-    chat = await workspace.chat_manager.get_chat(chat_id)
-    if chat is None:
-        run_key = (
-            await workspace.chat_manager.get_chat_id_by_session(
-                chat_id,
-                "console",
-            )
-            or chat_id
-        )
-    stopped = await workspace.task_tracker.request_stop(run_key)
+    stopped = await workspace.task_tracker.request_stop(chat_id)
     return {"stopped": stopped}
 
 
