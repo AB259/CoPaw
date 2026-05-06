@@ -130,7 +130,7 @@ export function MCPDetailPanel({
               }}
             >
               MCP（Model Context Protocol）是一种开放协议，让 AI 能够连接远程工具服务器。通过
-              MCP 连接器，AI 可以调用服务器提供的各种工具，从而获取外部数据、执行远程操作。
+              MCP 连接器，AI 可以调用服务器提供的各种工具（Tools），从而获取外部数据、执行远程操作，大幅扩展能力边界。
             </p>
           </div>
 
@@ -162,8 +162,7 @@ export function MCPDetailPanel({
                   marginBottom: 0,
                 }}
               >
-                MCP 服务器向 AI 暴露工具列表，AI 在对话过程中按需调用。当前页面支持本地
-                stdio 和远程 HTTP/SSE 两类连接方式。
+                MCP 服务器是一个远程服务，它向 AI 暴露一组工具（Tools）。AI 在对话过程中会根据需要自动调用这些工具来获取信息或执行操作。例如，一个搜索类 MCP 可以让 AI 直接查询网络信息并返回结果。当前支持本地 stdio 和远程 HTTP/SSE 两类连接方式。
               </p>
             </div>
 
@@ -229,8 +228,7 @@ export function MCPDetailPanel({
                   marginBottom: 0,
                 }}
               >
-                网络搜索、知识库检索、代码仓库操作、项目管理工具集成、消息通知推送等场景，都可以通过
-                MCP 连接器接入。
+                网络搜索、知识库检索、代码仓库操作、项目管理工具集成、消息通知推送……几乎任何提供 MCP 协议接口的远程服务都可以接入。连接器支持随时启用 / 禁用，不影响其他功能。
               </p>
             </div>
           </div>

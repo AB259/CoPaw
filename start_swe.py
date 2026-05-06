@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """FastAPI 服务启动入口."""
+
 import os
 import sys
 
@@ -17,7 +18,10 @@ try:
 except ImportError:
     print("正在安装项目依赖...")
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"])
+
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+    )
     print("依赖安装完成")
 
 # 直接导入 app 对象
