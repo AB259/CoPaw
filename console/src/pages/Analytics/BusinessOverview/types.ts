@@ -141,3 +141,17 @@ export function truncateName(name: string, maxLength: number = 20): string {
   if (name.length <= maxLength) return name;
   return name.slice(0, maxLength) + "...";
 }
+
+// ============================================================
+// Modal 相关类型
+// ============================================================
+
+// 用户详情 Modal 状态类型
+export interface UserDetailModalProps {
+  open: boolean;
+  userId: string | null;
+  startDate?: string;
+  endDate?: string;
+  sourceId?: string;
+  onClose: () => void;
+}
