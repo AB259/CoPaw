@@ -73,7 +73,7 @@ class QueryService:
 
         # Count total
         count_sql = (
-            f"SELECT COUNT(*) as count FROM cron_jobs WHERE {where_clause}"
+            f"SELECT COUNT(*) as count FROM swe_cron_jobs WHERE {where_clause}"
         )
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
@@ -81,7 +81,7 @@ class QueryService:
         # Query with pagination
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT * FROM cron_jobs
+            SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
@@ -98,7 +98,7 @@ class QueryService:
             placeholders = ",".join("?" * len(job_ids))
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
-                FROM cron_executions
+                FROM swe_cron_executions
                 WHERE job_id IN ({placeholders})
                 GROUP BY job_id
             """
@@ -128,7 +128,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM cron_jobs WHERE id = ? AND deleted_at IS NULL",
+            "SELECT * FROM swe_cron_jobs WHERE id = ? AND deleted_at IS NULL",
             (job_id,),
         )
 
@@ -178,14 +178,14 @@ class QueryService:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         # Count total
-        count_sql = f"SELECT COUNT(*) as count FROM cron_executions WHERE {where_clause}"
+        count_sql = f"SELECT COUNT(*) as count FROM swe_cron_executions WHERE {where_clause}"
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
 
         # Query with pagination
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT * FROM cron_executions
+            SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
             LIMIT ? OFFSET ?
@@ -218,7 +218,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM cron_executions WHERE id = ?",
+            "SELECT * FROM swe_cron_executions WHERE id = ?",
             (execution_id,),
         )
 
@@ -272,7 +272,7 @@ class QueryService:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         query_sql = f"""
-            SELECT * FROM cron_executions
+            SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
             LIMIT ?
@@ -328,7 +328,7 @@ class QueryService:
         where_clause = " AND ".join(conditions)
 
         query_sql = f"""
-            SELECT * FROM cron_jobs
+            SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
             LIMIT ?
@@ -345,7 +345,7 @@ class QueryService:
             placeholders = ",".join("?" * len(job_ids))
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
-                FROM cron_executions
+                FROM swe_cron_executions
                 WHERE job_id IN ({placeholders})
                 GROUP BY job_id
             """

@@ -11,12 +11,11 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
 
-from ..constant import WORKING_DIR
 from .models import CronJobSpec
 
 logger = logging.getLogger(__name__)

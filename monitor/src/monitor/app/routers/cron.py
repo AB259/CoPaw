@@ -194,7 +194,7 @@ async def export_data(
                 status=status,
             )
             excel_bytes = export_service.export_jobs(jobs)
-            filename = "cron_jobs.xlsx"
+            filename = "定时任务.xlsx"
         else:
             executions = await query_service.get_executions_for_export(
                 tenant_id=tenant_id,
@@ -203,7 +203,7 @@ async def export_data(
                 end_time=end_time,
             )
             excel_bytes = export_service.export_executions(executions)
-            filename = "cron_executions.xlsx"
+            filename = "定时任务执行情况.xlsx"
 
         return StreamingResponse(
             BytesIO(excel_bytes),

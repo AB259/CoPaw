@@ -38,7 +38,7 @@ class SyncService:
 
         # Check if job exists and was deleted
         existing = await db.fetch_one(
-            "SELECT id, deleted_at FROM cron_jobs WHERE id = ?",
+            "SELECT id, deleted_at FROM swe_cron_jobs WHERE id = ?",
             (request.id,),
         )
 
@@ -54,7 +54,7 @@ class SyncService:
 
             await db.execute(
                 """
-                UPDATE cron_jobs SET
+                UPDATE swe_cron_jobs SET
                     name = ?,
                     tenant_id = ?,
                     bbk_id = ?,
@@ -118,7 +118,7 @@ class SyncService:
             # Insert new job
             await db.execute(
                 """
-                INSERT INTO cron_jobs (
+                INSERT INTO swe_cron_jobs (
                     id, name, tenant_id, bbk_id, source_id, enabled, task_type,
                     cron_expr, timezone, channel, target_user_id, target_session_id,
                     timeout_seconds, max_concurrency, misfire_grace_seconds,
@@ -181,7 +181,7 @@ class SyncService:
 
         # Check if job exists and is not already deleted
         existing = await db.fetch_one(
-            "SELECT id, deleted_at FROM cron_jobs WHERE id = ?",
+            "SELECT id, deleted_at FROM swe_cron_jobs WHERE id = ?",
             (job_id,),
         )
 
@@ -197,7 +197,7 @@ class SyncService:
         now = datetime.utcnow()
         await db.execute(
             """
-            UPDATE cron_jobs SET
+            UPDATE swe_cron_jobs SET
                 status = 'deleted',
                 enabled = 0,
                 deleted_at = ?,
@@ -228,7 +228,7 @@ class SyncService:
 
         await db.execute(
             """
-            INSERT INTO cron_executions (
+            INSERT INTO swe_cron_executions (
                 job_id, job_name, tenant_id,
                 scheduled_time, actual_time, end_time, duration_ms,
                 status, error_message,
