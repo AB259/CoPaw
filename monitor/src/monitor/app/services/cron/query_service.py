@@ -6,7 +6,7 @@ for the frontend overview page.
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from ...database import get_db_connection
 from ...models.cron import (
@@ -46,27 +46,27 @@ class QueryService:
         sql_params: List = []
 
         if params.tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(params.tenant_id)
 
         if params.bbk_id:
-            conditions.append("bbk_id = ?")
+            conditions.append("bbk_id = %s")
             sql_params.append(params.bbk_id)
 
         if params.source_id:
-            conditions.append("source_id = ?")
+            conditions.append("source_id = %s")
             sql_params.append(params.source_id)
 
         if params.creator_user_id:
-            conditions.append("creator_user_id = ?")
+            conditions.append("creator_user_id = %s")
             sql_params.append(params.creator_user_id)
 
         if params.status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(params.status)
 
         if params.enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             sql_params.append(params.enabled)
 
         where_clause = " AND ".join(conditions)
@@ -84,7 +84,7 @@ class QueryService:
             SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """
         query_params = tuple(sql_params) + (params.page_size, offset)
 
@@ -95,7 +95,7 @@ class QueryService:
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]
-            placeholders = ",".join("?" * len(job_ids))
+            placeholders = ",".join("%s" for _ in job_ids)
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
                 FROM swe_cron_executions
@@ -128,7 +128,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM swe_cron_jobs WHERE id = ? AND deleted_at IS NULL",
+            "SELECT * FROM swe_cron_jobs WHERE id = %s AND deleted_at IS NULL",
             (job_id,),
         )
 
@@ -156,23 +156,23 @@ class QueryService:
         sql_params: List = []
 
         if params.job_id:
-            conditions.append("job_id = ?")
+            conditions.append("job_id = %s")
             sql_params.append(params.job_id)
 
         if params.tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(params.tenant_id)
 
         if params.status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(params.status)
 
         if params.start_time:
-            conditions.append("actual_time >= ?")
+            conditions.append("actual_time >= %s")
             sql_params.append(params.start_time)
 
         if params.end_time:
-            conditions.append("actual_time <= ?")
+            conditions.append("actual_time <= %s")
             sql_params.append(params.end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -188,7 +188,7 @@ class QueryService:
             SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """
         query_params = tuple(sql_params) + (params.page_size, offset)
 
@@ -218,7 +218,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM swe_cron_executions WHERE id = ?",
+            "SELECT * FROM swe_cron_executions WHERE id = %s",
             (execution_id,),
         )
 
@@ -254,19 +254,19 @@ class QueryService:
         sql_params: List = []
 
         if tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(tenant_id)
 
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(status)
 
         if start_time:
-            conditions.append("actual_time >= ?")
+            conditions.append("actual_time >= %s")
             sql_params.append(start_time)
 
         if end_time:
-            conditions.append("actual_time <= ?")
+            conditions.append("actual_time <= %s")
             sql_params.append(end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -275,7 +275,7 @@ class QueryService:
             SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
-            LIMIT ?
+            LIMIT %s
         """
         query_params = tuple(sql_params) + (limit,)
 
@@ -310,19 +310,19 @@ class QueryService:
         sql_params: List = []
 
         if tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(tenant_id)
 
         if bbk_id:
-            conditions.append("bbk_id = ?")
+            conditions.append("bbk_id = %s")
             sql_params.append(bbk_id)
 
         if source_id:
-            conditions.append("source_id = ?")
+            conditions.append("source_id = %s")
             sql_params.append(source_id)
 
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(status)
 
         where_clause = " AND ".join(conditions)
@@ -331,7 +331,7 @@ class QueryService:
             SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
         """
         query_params = tuple(sql_params) + (limit,)
 
@@ -342,7 +342,7 @@ class QueryService:
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]
-            placeholders = ",".join("?" * len(job_ids))
+            placeholders = ",".join("%s" for _ in job_ids)
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
                 FROM swe_cron_executions

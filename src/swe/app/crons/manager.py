@@ -1049,6 +1049,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     self._scheduler.pause_job(job_id)
                 self._remove_prefetch_job(job_id)
 
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
+
             return True
 
     async def resume_job(self, job_id: str) -> bool:
@@ -1077,6 +1081,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     aps_job = self._scheduler.get_job(job_id)
                     next_run_at = aps_job.next_run_time if aps_job else None
                     self._schedule_prefetch_job(job, next_run_at)
+
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
 
             return True
 

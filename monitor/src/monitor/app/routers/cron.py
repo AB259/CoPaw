@@ -23,7 +23,7 @@ from ..services.cron.export_service import ExportService, get_export_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/cron", tags=["cron"])
+router = APIRouter(prefix="/monitor/cron", tags=["cron"])
 
 
 @router.get("/jobs", response_model=PaginatedResponse[CronJobModel])

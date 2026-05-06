@@ -119,18 +119,19 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
     def _resolve_request_identity(
         self,
         request: Request,
-    ) -> tuple[str | None, str | None, str | None, bool]:
-        """Resolve tenant, user, and source IDs from request headers."""
+    ) -> tuple[str | None, str | None, str | None, str | None, bool]:
+        """Resolve tenant, user, source, and bbk IDs from request headers."""
         path = request.url.path
         is_exempt = request.method == "OPTIONS" or is_tenant_exempt(path)
         tenant_id = request.headers.get("X-Tenant-Id")
         user_id = request.headers.get("X-User-Id")
         source_id = request.headers.get("X-Source-Id")
+        bbk_id = request.headers.get("X-Bbk-Id")
 
         if not is_exempt:
             tenant_id = self._validate_tenant_id(path, tenant_id)
 
-        return tenant_id, user_id, source_id, is_exempt
+        return tenant_id, user_id, source_id, bbk_id, is_exempt
 
     def _validate_tenant_id(
         self,
@@ -163,6 +164,7 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         tenant_id: str | None,
         user_id: str | None,
         source_id: str | None,
+        bbk_id: str | None,
     ) -> None:
         """Store identity in request state for downstream use."""
         effective_tenant_id = resolve_runtime_tenant_id(tenant_id, source_id)
@@ -174,6 +176,8 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
         if source_id:
             request.state.source_id = source_id
+        if bbk_id:
+            request.state.bbk_id = bbk_id
 
     def _bind_context(
         self,
@@ -226,15 +230,23 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
                 tenant_id,
                 user_id,
                 source_id,
+                bbk_id,
                 is_exempt,
             ) = self._resolve_request_identity(request)
 
-            self._store_request_state(request, tenant_id, user_id, source_id)
+            self._store_request_state(
+                request,
+                tenant_id,
+                user_id,
+                source_id,
+                bbk_id,
+            )
             tokens = self._bind_context(tenant_id, user_id, source_id)
 
             logger.debug(
                 f"TenantIdentityMiddleware: tenant_id={tenant_id}, "
-                f"user_id={user_id}, path={request.url.path}, exempt={is_exempt}",
+                f"user_id={user_id}, bbk_id={bbk_id}, source_id={source_id}, "
+                f"path={request.url.path}, exempt={is_exempt}",
             )
 
             response = await call_next(request)
@@ -356,6 +368,18 @@ def get_source_id_from_request(request: Request) -> str | None:
     return getattr(request.state, "source_id", None)
 
 
+def get_bbk_id_from_request(request: Request) -> str | None:
+    """Get BBK ID from request state.
+
+    Args:
+        request: The FastAPI request object.
+
+    Returns:
+        The BBK ID if set, None otherwise.
+    """
+    return getattr(request.state, "bbk_id", None)
+
+
 __all__ = [
     "TenantIdentityMiddleware",
     "is_tenant_exempt",
@@ -365,4 +389,5 @@ __all__ = [
     "require_tenant_id",
     "require_user_id",
     "get_source_id_from_request",
+    "get_bbk_id_from_request",
 ]
