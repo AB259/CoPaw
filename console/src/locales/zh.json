@@ -1470,7 +1470,14 @@
     "filterStatus": "筛选状态",
     "exportExcel": "导出 Excel",
     "search": "查询",
-    "totalItems": "共 {{total}} 条"
+    "totalItems": "共 {{total}} 条",
+    "sessionList": "会话列表",
+    "tracesFlow": "对话流",
+    "viewDetail": "查看详情",
+    "collapseDetail": "收起详情",
+    "modelOutput": "模型输出",
+    "noSessionData": "暂无会话数据",
+    "noTraceData": "暂无对话数据"
   },
   "instance": {
     "overview": "概览",

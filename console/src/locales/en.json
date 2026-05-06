@@ -1458,7 +1458,14 @@
     "filterStatus": "Filter status",
     "exportExcel": "Export Excel",
     "search": "Search",
-    "totalItems": "Total {{total}} items"
+    "totalItems": "Total {{total}} items",
+    "sessionList": "Sessions",
+    "tracesFlow": "Conversation Flow",
+    "viewDetail": "View Details",
+    "collapseDetail": "Collapse",
+    "modelOutput": "Model Output",
+    "noSessionData": "No session data",
+    "noTraceData": "No conversation data"
   },
   "instance": {
     "overview": "Overview",
