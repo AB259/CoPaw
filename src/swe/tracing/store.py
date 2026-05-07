@@ -681,7 +681,8 @@ class TraceStore:
                         COALESCE(SUM(total_tokens), 0) as tokens,
                         COUNT(DISTINCT session_id) as sessions,
                         COUNT(DISTINCT user_id) as users,
-                        COUNT(DISTINCT source_id) as platforms
+                        COUNT(DISTINCT source_id) as platforms,
+                        AVG(duration_ms) as avg_duration
                     FROM swe_tracing_traces
                     WHERE start_time >= %s AND start_time <= %s
                 """
@@ -693,7 +694,8 @@ class TraceStore:
                         COALESCE(SUM(total_tokens), 0) as tokens,
                         COUNT(DISTINCT session_id) as sessions,
                         COUNT(DISTINCT user_id) as users,
-                        COUNT(DISTINCT channel) as platforms
+                        COUNT(DISTINCT channel) as platforms,
+                        AVG(duration_ms) as avg_duration
                     FROM swe_tracing_traces
                     WHERE source_id = %s AND start_time >= %s AND start_time <= %s
                 """
@@ -704,6 +706,7 @@ class TraceStore:
                 "sessions": row["sessions"] or 0,
                 "users": row["users"] or 0,
                 "platforms": row["platforms"] or 0,
+                "avg_duration": float(row["avg_duration"] or 0),
             }
 
         curr = await get_stats(start_date, end_date)
@@ -722,6 +725,10 @@ class TraceStore:
             "platformGrowth": calc_growth(
                 curr["platforms"],
                 prev["platforms"],
+            ),
+            "avgDurationGrowth": calc_growth(
+                curr["avg_duration"],
+                prev["avg_duration"],
             ),
         }
 
@@ -801,6 +808,7 @@ class TraceStore:
         user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        sort_by: Optional[str] = None,
     ) -> tuple[list[UserListItem], int]:
         """Get list of users with stats.
 
@@ -811,10 +819,17 @@ class TraceStore:
             user_id: Filter by user ID
             start_date: Filter by start date
             end_date: Filter by end date
+            sort_by: Sort by field (conversations, last_active)
 
         Returns:
             Tuple of (users list, total count)
         """
+        # 确定排序字段
+        order_by = "last_active DESC"
+        if sort_by == "conversations":
+            order_by = "total_conversations DESC"
+        elif sort_by == "last_active":
+            order_by = "last_active DESC"
         # Build where clauses based on source_id
         if source_id == "all":
             # 排除测试平台
@@ -868,7 +883,7 @@ class TraceStore:
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
-                ORDER BY last_active DESC
+                ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
             params.extend([page_size, offset])
@@ -888,7 +903,7 @@ class TraceStore:
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
-                ORDER BY last_active DESC
+                ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
             # 子查询参数在前，然后是 WHERE 子句参数，最后是 LIMIT/OFFSET

@@ -284,6 +284,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      sort_by?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -530,6 +531,7 @@ export const tracingApi = {
     sessionGrowth: number;
     userGrowth: number;
     platformGrowth: number;
+    avgDurationGrowth: number;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);

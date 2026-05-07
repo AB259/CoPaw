@@ -332,6 +332,10 @@ async def get_users(
         description="Start date (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort by field: conversations, last_active",
+    ),
 ) -> dict:
     """Get list of users with their statistics.
 
@@ -342,6 +346,7 @@ async def get_users(
         user_id: Filter by user ID
         start_date: Start date filter
         end_date: End date filter
+        sort_by: Sort by field (conversations, last_active)
 
     Returns:
         Paginated list of users with stats
@@ -364,6 +369,7 @@ async def get_users(
         user_id,
         start,
         end,
+        sort_by,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -1028,7 +1034,7 @@ async def get_growth_stats(
         time_range: Time range type for calculating previous period
 
     Returns:
-        Growth stats: callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth
+        Growth stats: callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth, avgDurationGrowth
     """
     # Use 'all' to get data across all sources when not specified
     actual_source_id = source_id or "all"
@@ -1042,6 +1048,7 @@ async def get_growth_stats(
             "sessionGrowth": 0,
             "userGrowth": 0,
             "platformGrowth": 0,
+            "avgDurationGrowth": 0,
         }
 
     start = _parse_date(start_date, "start_date")

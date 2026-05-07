@@ -3,14 +3,8 @@
  * 用于银行管理层查看平台使用情况和业务覆盖情况
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Row, Col, Tooltip, Select, DatePicker, message } from "antd";
-import {
-  Users,
-  Clock,
-  TrendingUp,
-  TrendingDown,
-} from "lucide-react";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { tracingApi } from "../../../api/modules/tracing";
@@ -65,7 +59,7 @@ const BAR_COLORS = [
 ];
 
 // 指标卡片左边框颜色
-const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14"];
+const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14", "#13c2c2"];
 
 export default function BusinessOverviewPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
@@ -84,6 +78,7 @@ export default function BusinessOverviewPage() {
     sessionGrowth: 0,
     userGrowth: 0,
     platformGrowth: 0,
+    avgDurationGrowth: 0,
   });
   const [channelDistribution, setChannelDistribution] = useState<{
     platformUserDistribution: { name: string; value: number }[];
@@ -100,7 +95,20 @@ export default function BusinessOverviewPage() {
     tokens: number;
     users: number;
   }[]>([]);
-  const [topUsers, setTopUsers] = useState<UserRow[]>([]);
+
+  // 调用数排行榜分页状态
+  const [callsUsers, setCallsUsers] = useState<UserRow[]>([]);
+  const [callsPage, setCallsPage] = useState(1);
+  const [callsHasMore, setCallsHasMore] = useState(true);
+  const [callsLoading, setCallsLoading] = useState(false);
+  const callsLoadingRef = useRef(false);
+
+  // 最近活跃用户分页状态
+  const [activeUsers, setActiveUsers] = useState<UserRow[]>([]);
+  const [activePage, setActivePage] = useState(1);
+  const [activeHasMore, setActiveHasMore] = useState(true);
+  const [activeLoading, setActiveLoading] = useState(false);
+  const activeLoadingRef = useRef(false);
 
   // 折线图悬浮 tooltip 状态
   const [lineChartTooltip, setLineChartTooltip] = useState<{
@@ -174,12 +182,11 @@ export default function BusinessOverviewPage() {
       // 核心运营指标、趋势、模型分布、用户分析等需要根据平台筛选
       // 平台用户分布和平台调用次数分布也受平台筛选影响
       // 趋势图始终使用近30天数据
-      const [overviewRes, growthRes, channelRes, trendRes, usersRes] = await Promise.allSettled([
+      const [overviewRes, growthRes, channelRes, trendRes] = await Promise.allSettled([
         tracingApi.getOverview(startStr, endStr, filterSourceId),
         tracingApi.getGrowthStats(startStr, endStr, timeRange, filterSourceId),
         tracingApi.getChannelDistribution(filterSourceId, startStr, endStr), // 受平台筛选影响
         tracingApi.getDailyTrend(trendStartStr, trendEndStr, filterSourceId), // 始终近30天
-        tracingApi.getUsers(1, 5, { start_date: startStr, end_date: endStr, source_id: filterSourceId }),
       ]);
 
       // 处理 overview stats
@@ -201,22 +208,6 @@ export default function BusinessOverviewPage() {
       if (trendRes.status === "fulfilled") {
         setTrendData(trendRes.value.trendData || []);
       }
-
-      // 处理 top users
-      if (usersRes.status === "fulfilled") {
-        const users = usersRes.value.items.map((u: any) => ({
-          userId: u.user_id,
-          userName: u.user_name,
-          bbkId: u.bbk_id,
-          name: u.user_name || u.user_id, // 优先使用 user_name，否则使用 user_id
-          calls: u.total_conversations,
-          tokens: u.total_tokens,
-          lastActive: u.last_active
-            ? dayjs(u.last_active).format("YYYY-MM-DD HH:mm")
-            : "-",
-        }));
-        setTopUsers(users);
-      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
       message.error("获取数据失败");
@@ -226,7 +217,131 @@ export default function BusinessOverviewPage() {
   // 初始加载和日期变化时获取数据
   useEffect(() => {
     fetchData();
+    // 重置分页状态
+    setCallsUsers([]);
+    setCallsPage(1);
+    setCallsHasMore(true);
+    setActiveUsers([]);
+    setActivePage(1);
+    setActiveHasMore(true);
   }, [fetchData]);
+
+  // 转换用户数据格式
+  const transformUserData = (items: any[]): UserRow[] => {
+    return items.map((u) => ({
+      userId: u.user_id,
+      userName: u.user_name,
+      bbkId: u.bbk_id,
+      name: u.user_name || u.user_id,
+      calls: u.total_conversations,
+      tokens: u.total_tokens,
+      lastActive: u.last_active
+        ? dayjs(u.last_active).format("YYYY-MM-DD HH:mm")
+        : "-",
+    }));
+  };
+
+  // 加载调用数排行榜
+  const fetchCallsUsers = useCallback(async (page: number, append: boolean = false) => {
+    if (callsLoadingRef.current) return;
+    callsLoadingRef.current = true;
+    setCallsLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getUsers(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+        sort_by: "conversations",
+      });
+      const users = transformUserData(res.items);
+      if (append) {
+        setCallsUsers((prev) => [...prev, ...users]);
+      } else {
+        setCallsUsers(users);
+      }
+      setCallsHasMore(users.length === 10);
+    } catch (error) {
+      console.error("Failed to fetch calls users:", error);
+    } finally {
+      callsLoadingRef.current = false;
+      setCallsLoading(false);
+    }
+  }, [startDate, endDate, platform]);
+
+  // 加载最近活跃用户
+  const fetchActiveUsers = useCallback(async (page: number, append: boolean = false) => {
+    if (activeLoadingRef.current) return;
+    activeLoadingRef.current = true;
+    setActiveLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getUsers(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+        sort_by: "last_active",
+      });
+      const users = transformUserData(res.items);
+      if (append) {
+        setActiveUsers((prev) => [...prev, ...users]);
+      } else {
+        setActiveUsers(users);
+      }
+      setActiveHasMore(users.length === 10);
+    } catch (error) {
+      console.error("Failed to fetch active users:", error);
+    } finally {
+      activeLoadingRef.current = false;
+      setActiveLoading(false);
+    }
+  }, [startDate, endDate, platform]);
+
+  // 初始加载用户排行榜
+  useEffect(() => {
+    callsLoadingRef.current = false;
+    activeLoadingRef.current = false;
+    setCallsPage(1);
+    setActivePage(1);
+    setCallsHasMore(true);
+    setActiveHasMore(true);
+    fetchCallsUsers(1, false);
+    fetchActiveUsers(1, false);
+  }, [fetchCallsUsers, fetchActiveUsers]);
+
+  // 滚动加载更多调用数用户
+  const handleCallsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      callsHasMore &&
+      !callsLoadingRef.current
+    ) {
+      const nextPage = callsPage + 1;
+      setCallsPage(nextPage);
+      fetchCallsUsers(nextPage, true);
+    }
+  }, [callsHasMore, callsPage, fetchCallsUsers]);
+
+  // 滚动加载更多活跃用户
+  const handleActiveScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      activeHasMore &&
+      !activeLoadingRef.current
+    ) {
+      const nextPage = activePage + 1;
+      setActivePage(nextPage);
+      fetchActiveUsers(nextPage, true);
+    }
+  }, [activeHasMore, activePage, fetchActiveUsers]);
 
   // 处理开始日期变化
   const handleStartDateChange = (date: dayjs.Dayjs | null) => {
@@ -962,33 +1077,7 @@ export default function BusinessOverviewPage() {
       </div>
       <div className={styles.metricsRow}>
         <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[0] }}>
-          <div className={styles.metricLabel}>总调用次数</div>
-          <div className={styles.metricValue}>
-            {formatNumber(metricData.totalCalls)}
-          </div>
-          <div
-            className={`${styles.metricChange} ${
-              metricData.callsGrowth > 0 ? styles.positive : styles.negative
-            }`}
-          >
-            {formatChange(metricData.callsGrowth)} 环比
-          </div>
-        </div>
-        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[1] }}>
-          <div className={styles.metricLabel}>总Token消耗</div>
-          <div className={styles.metricValue}>
-            {formatTokens(metricData.totalTokens)}
-          </div>
-          <div
-            className={`${styles.metricChange} ${
-              metricData.tokensGrowth > 0 ? styles.positive : styles.negative
-            }`}
-          >
-            {formatChange(metricData.tokensGrowth)} 环比
-          </div>
-        </div>
-        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[2] }}>
-          <div className={styles.metricLabel}>总使用用户</div>
+          <div className={styles.metricLabel}>用户数</div>
           <div className={styles.metricValue}>
             {formatNumber(platformData.totalUsers)}
           </div>
@@ -1000,17 +1089,65 @@ export default function BusinessOverviewPage() {
             {formatChange(platformData.userGrowth)} 环比
           </div>
         </div>
-        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[3] }}>
-          <div className={styles.metricLabel}>接入平台数</div>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[1] }}>
+          <div className={styles.metricLabel}>总Token消耗</div>
           <div className={styles.metricValue}>
-            {formatNumber(platformData.totalPlatforms)}
+            {formatTokens(metricData.totalTokens)}
+          </div>
+          <div className={styles.metricSubRow}>
+            <span className={styles.metricSubItem}>
+              输入 {formatTokens(overviewStats?.input_tokens || 0)}
+            </span>
+            <span className={styles.metricSubItem}>
+              输出 {formatTokens(overviewStats?.output_tokens || 0)}
+            </span>
           </div>
           <div
             className={`${styles.metricChange} ${
-              platformData.platformGrowth > 0 ? styles.positive : styles.negative
+              metricData.tokensGrowth > 0 ? styles.positive : styles.negative
             }`}
           >
-            {formatChange(platformData.platformGrowth)} 环比
+            {formatChange(metricData.tokensGrowth)} 环比
+          </div>
+        </div>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[2] }}>
+          <div className={styles.metricLabel}>总会话数</div>
+          <div className={styles.metricValue}>
+            {formatNumber(metricData.sessionCount)}
+          </div>
+          <div
+            className={`${styles.metricChange} ${
+              metricData.sessionGrowth > 0 ? styles.positive : styles.negative
+            }`}
+          >
+            {formatChange(metricData.sessionGrowth)} 环比
+          </div>
+        </div>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[3] }}>
+          <div className={styles.metricLabel}>总对话数</div>
+          <div className={styles.metricValue}>
+            {formatNumber(metricData.totalCalls)}
+          </div>
+          <div
+            className={`${styles.metricChange} ${
+              metricData.callsGrowth > 0 ? styles.positive : styles.negative
+            }`}
+          >
+            {formatChange(metricData.callsGrowth)} 环比
+          </div>
+        </div>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[4] || METRIC_BORDER_COLORS[0] }}>
+          <div className={styles.metricLabel}>平均对话时长</div>
+          <div className={styles.metricValue}>
+            {Number(metricData.avgDuration).toFixed(1)}
+            <span className={styles.metricUnit}>s</span>
+          </div>
+          <div
+            className={`${styles.metricChange} ${
+              growthStats.avgDurationGrowth > 0 ? styles.positive : styles.negative
+            }`}
+          >
+            {formatChange(growthStats.avgDurationGrowth)} 环比
           </div>
         </div>
       </div>
@@ -1044,6 +1181,44 @@ export default function BusinessOverviewPage() {
         </div>
         {renderLineChart(trendData)}
       </div>
+
+      {/* 用户排行榜 */}
+      <Row gutter={[16, 16]} className={styles.userRow}>
+        <Col xs={24} lg={12}>
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitle}>调用数排行榜</div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleCallsScroll}
+            >
+              {renderUserList(callsUsers, "calls")}
+              {callsLoading && callsHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!callsLoading && !callsHasMore && callsUsers.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
+          </div>
+        </Col>
+        <Col xs={24} lg={12}>
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitle}>最近活跃用户</div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleActiveScroll}
+            >
+              {renderUserList(activeUsers, "lastActive")}
+              {activeLoading && activeHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!activeLoading && !activeHasMore && activeUsers.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
+          </div>
+        </Col>
+      </Row>
 
       {/* 热门技能和工具 */}
       <Row gutter={[16, 16]} className={styles.skillRow}>
@@ -1110,49 +1285,7 @@ export default function BusinessOverviewPage() {
       </Row>
 
       {/* ==================== 第二屏：用户分析 ==================== */}
-      <div className={styles.sectionTitle}>
-        <span>用户分析</span>
-      </div>
-
-      {/* 核心指标卡片 */}
-      <Row gutter={[16, 16]} className={styles.statCardRow}>
-        <Col xs={24} sm={12} lg={12}>
-          <div className={styles.statCard}>
-            <div className={styles.statLabel}>
-              <span className={styles.icon} style={{ background: "#1890ff15", color: "#1890ff" }}>
-                <Users size={18} />
-              </span>
-              <span>总会话数</span>
-            </div>
-            <div className={styles.statValue}>{formatNumber(metricData.sessionCount)}</div>
-            <div
-              className={`${styles.statChange} ${
-                metricData.sessionGrowth > 0 ? styles.positive : styles.negative
-              }`}
-            >
-              {metricData.sessionGrowth > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-              <span>{formatChange(metricData.sessionGrowth)}</span>
-              <span style={{ marginLeft: 4, color: "#999", fontWeight: 400 }}>环比</span>
-            </div>
-          </div>
-        </Col>
-        <Col xs={24} sm={12} lg={12}>
-          <div className={styles.statCard}>
-            <div className={styles.statLabel}>
-              <span className={styles.icon} style={{ background: "#52c41a15", color: "#52c41a" }}>
-                <Clock size={18} />
-              </span>
-              <span>平均会话时长</span>
-            </div>
-            <div className={styles.statValue}>
-              {Number(metricData.avgDuration).toFixed(1)}
-              <span className={styles.suffix}>s</span>
-            </div>
-          </div>
-        </Col>
-      </Row>
-
-      {/* 分布图 + 用户排行榜 */}
+      {/* 分布图 */}
       <Row gutter={[16, 16]} className={styles.distributionRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
@@ -1182,30 +1315,6 @@ export default function BusinessOverviewPage() {
               fullName: getPlatformDisplayName(item.name),
               value: item.value,
             })))}
-          </div>
-        </Col>
-      </Row>
-
-      {/* 用户排行榜 */}
-      <Row gutter={[16, 16]} className={styles.userRow}>
-        <Col xs={24} lg={12}>
-          <div className={styles.userCard}>
-            <div className={styles.cardTitle}>调用数 Top5</div>
-            {renderUserList(
-              [...topUsers].sort((a, b) => b.calls - a.calls).slice(0, 5),
-              "calls",
-            )}
-          </div>
-        </Col>
-        <Col xs={24} lg={12}>
-          <div className={styles.userCard}>
-            <div className={styles.cardTitle}>最近活跃 Top5</div>
-            {renderUserList(
-              [...topUsers]
-                .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())
-                .slice(0, 5),
-              "lastActive",
-            )}
           </div>
         </Col>
       </Row>
