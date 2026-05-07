@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox } from "antd";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal } from "antd";
 import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
@@ -8,15 +8,17 @@ import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
 import { PublishModal } from "../Market/PublishModal";
+import { useConflictRenameModal } from "../Agent/Skills/components";
 
 const { Title, Text } = Typography;
 
 export default function MySkillsPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const bbkId = useIframeStore((state) => state.bbk) || "100";
-  const isManager = useIframeStore((state) => state.manager) || false;
+  const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
   const userName = useIframeStore((state) => state.clawName) || userId;
+  const isManager = manager || userId === "default";
   const { createdSkills, receivedSkills, loading, refresh } = useMySkills(sourceId, userId);
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -46,6 +48,10 @@ export default function MySkillsPage() {
     skillMd: string;
   } | null>(null);
 
+  // Conflict rename modal for upload
+  // 冲突处理：显示覆盖选项（我的技能支持覆盖现有技能）
+  const { showConflictRenameModal, conflictRenameModal } = useConflictRenameModal({ showOverwriteOption: true });
+
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const handleSearchChange = (value: string) => {
@@ -53,6 +59,17 @@ export default function MySkillsPage() {
     clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => setDebouncedQuery(value), 200);
   };
+
+  // 同步 selectedSkill 与技能列表的状态（启用/禁用状态实时更新）
+  useEffect(() => {
+    if (selectedSkill) {
+      const allSkills = [...createdSkills, ...receivedSkills];
+      const updated = allSkills.find(s => s.skill_name === selectedSkill.skill_name);
+      if (updated && updated.enabled !== selectedSkill.enabled) {
+        setSelectedSkill(updated);
+      }
+    }
+  }, [createdSkills, receivedSkills, selectedSkill]);
 
   useEffect(() => {
     refresh();
@@ -68,21 +85,60 @@ export default function MySkillsPage() {
     if (!file) return;
     e.target.value = "";
 
-    try {
-      message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
-      const result = await marketApi.uploadSkillToWorkspace(
-        sourceId,
-        userId,
-        userName,
-        bbkId,
-        file,
-        { enable: true, overwrite: false }
-      );
-      message.success({ content: `上传成功，导入 ${result.count} 个技能`, key: "upload" });
-      refresh();
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "上传失败";
-      message.error({ content: errorMsg, key: "upload" });
+    let renameMap: Record<string, string> | undefined;
+    let overwrite = false;
+    while (true) {
+      try {
+        message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
+        const result = await marketApi.uploadSkillToWorkspace(
+          sourceId,
+          userId,
+          userName,
+          bbkId,
+          file,
+          { enable: true, overwrite, rename_map: renameMap }
+        );
+
+        // 检查冲突
+        const conflicts = Array.isArray(result.conflicts) ? result.conflicts : [];
+        if (conflicts.length > 0) {
+          message.destroy("upload");
+          const resolveResult = await showConflictRenameModal(
+            conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
+              key: c.skill_name || "",
+              label: c.skill_name || "",
+              suggested_name: c.suggested_name || "",
+            }))
+          );
+          if (!resolveResult) {
+            // 用户取消
+            break;
+          }
+          if (resolveResult.mode === "overwrite") {
+            // 用户选择覆盖
+            overwrite = true;
+            renameMap = undefined;
+          } else {
+            // 用户选择重命名
+            renameMap = { ...renameMap, ...resolveResult.renameMap };
+            overwrite = false;
+          }
+          continue;  // 重新上传
+        }
+
+        // 成功或无新技能
+        if (result.count > 0) {
+          message.success({ content: `上传成功，导入 ${result.count} 个技能`, key: "upload" });
+        } else {
+          message.info({ content: "未导入新技能，可能已存在", key: "upload" });
+        }
+        refresh();
+        break;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "上传失败";
+        message.error({ content: errorMsg, key: "upload" });
+        break;
+      }
     }
   };
 
@@ -669,7 +725,7 @@ export default function MySkillsPage() {
               icon={isDisabled ? <CheckCircleOutlined /> : <StopOutlined />}
               onClick={() => handleToggleEnabled(skill)}
             >
-              {isDisabled ? "启用" : "禁用"}
+              {isDisabled ? "已禁用" : "已启用"}
             </Button>
             <Button
               size="small"
@@ -875,6 +931,9 @@ export default function MySkillsPage() {
         }}
         initialData={publishInitialData}
       />
+
+      {/* Conflict rename modal */}
+      {conflictRenameModal}
     </div>
   );
 }

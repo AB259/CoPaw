@@ -28,8 +28,8 @@ from ...marketplace.schemas import (
 )
 from ...marketplace.fs import load_mcp_config, load_index
 from ...marketplace.service import _normalize_market_mcp_config_data
-from swe.config.config import MCPClientConfig
-from swe.config.context import tenant_context
+from ...runtime.config_store import MCPClientConfig
+from ...runtime.context import tenant_context
 from ..deps import require_source_id
 from .my_mcp import _test_mcp_connection
 

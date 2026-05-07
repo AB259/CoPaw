@@ -17,6 +17,7 @@ export interface IOperateCardProps {
     icon: React.ReactNode;
     title: React.ReactNode | string;
     description?: React.ReactNode | string;
+    extra?: React.ReactNode;
   };
   /**
    * @description 内容配置
@@ -75,7 +76,11 @@ function OperateCard(props: IOperateCardProps) {
               {props.header.description}
             </div>
           )}
-
+          {props.header.extra && (
+            <div className={`${prefixCls}-header-extra`}>
+              {props.header.extra}
+            </div>
+          )}
           {props.body && (
             <IconButton
               size="small"
