@@ -485,6 +485,7 @@ export default function BusinessOverviewPage() {
       value: number;
       color: string;
       index: number;
+      isFullCircle: boolean;
     }> = [];
 
     let currentAngle = -90;
@@ -496,25 +497,37 @@ export default function BusinessOverviewPage() {
       const endAngle = currentAngle + angle;
       currentAngle = endAngle;
 
-      const startRad = (startAngle * Math.PI) / 180;
-      const endRad = (endAngle * Math.PI) / 180;
+      // 当只有一个数据点时（360度），需要特殊处理，否则 SVG arc 无法正确渲染
+      const isFullCircle = Math.abs(angle - 360) < 0.01;
 
-      // 正常路径
-      const x1 = cx + radius * Math.cos(startRad);
-      const y1 = cy + radius * Math.sin(startRad);
-      const x2 = cx + radius * Math.cos(endRad);
-      const y2 = cy + radius * Math.sin(endRad);
+      let pathD: string;
+      let hoverPathD: string;
 
-      // 悬浮时放大的路径
-      const hx1 = cx + hoverRadius * Math.cos(startRad);
-      const hy1 = cy + hoverRadius * Math.sin(startRad);
-      const hx2 = cx + hoverRadius * Math.cos(endRad);
-      const hy2 = cy + hoverRadius * Math.sin(endRad);
+      if (isFullCircle) {
+        // 完整圆：直接用 circle 元素渲染
+        pathD = `M ${cx} ${cy} m -${radius}, 0 a ${radius},${radius} 0 1,0 ${radius * 2},0 a ${radius},${radius} 0 1,0 -${radius * 2},0 Z`;
+        hoverPathD = `M ${cx} ${cy} m -${hoverRadius}, 0 a ${hoverRadius},${hoverRadius} 0 1,0 ${hoverRadius * 2},0 a ${hoverRadius},${hoverRadius} 0 1,0 -${hoverRadius * 2},0 Z`;
+      } else {
+        const startRad = (startAngle * Math.PI) / 180;
+        const endRad = (endAngle * Math.PI) / 180;
 
-      const largeArc = angle > 180 ? 1 : 0;
+        // 正常路径
+        const x1 = cx + radius * Math.cos(startRad);
+        const y1 = cy + radius * Math.sin(startRad);
+        const x2 = cx + radius * Math.cos(endRad);
+        const y2 = cy + radius * Math.sin(endRad);
 
-      const pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
-      const hoverPathD = `M ${cx} ${cy} L ${hx1} ${hy1} A ${hoverRadius} ${hoverRadius} 0 ${largeArc} 1 ${hx2} ${hy2} Z`;
+        // 悬浮时放大的路径
+        const hx1 = cx + hoverRadius * Math.cos(startRad);
+        const hy1 = cy + hoverRadius * Math.sin(startRad);
+        const hx2 = cx + hoverRadius * Math.cos(endRad);
+        const hy2 = cy + hoverRadius * Math.sin(endRad);
+
+        const largeArc = angle > 180 ? 1 : 0;
+
+        pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+        hoverPathD = `M ${cx} ${cy} L ${hx1} ${hy1} A ${hoverRadius} ${hoverRadius} 0 ${largeArc} 1 ${hx2} ${hy2} Z`;
+      }
 
       slices.push({
         path: pathD,
@@ -525,6 +538,7 @@ export default function BusinessOverviewPage() {
         value: item.value,
         color: CHART_COLORS[index % CHART_COLORS.length],
         index,
+        isFullCircle,
       });
     });
 
