@@ -7,6 +7,7 @@ and execution records to the Monitor service database.
 The sync is asynchronous and non-blocking - failures are logged but do not
 affect the main SWE service operation.
 """
+
 import asyncio
 import json
 import logging
@@ -116,10 +117,22 @@ class MonitorSyncClient:
         if not self._enabled:
             return
 
-        # Convert CronJobSpec to sync request format
+        sync_data = self._build_job_sync_data(job)
+
+        # Fire and forget
+        self._sync_fire_and_forget(self._do_sync_job(sync_data))
+
+    def _build_job_sync_data(self, job: CronJobSpec) -> Dict[str, Any]:
+        """Build sync data dict from CronJobSpec.
+
+        Args:
+            job: CronJobSpec to convert
+
+        Returns:
+            Dict with sync request fields
+        """
         spec_dict = job.model_dump(mode="json")
 
-        # Extract and transform fields
         schedule = spec_dict.get("schedule", {})
         dispatch = spec_dict.get("dispatch", {})
         target = dispatch.get("target", {})
@@ -127,7 +140,7 @@ class MonitorSyncClient:
         meta = spec_dict.get("meta", {})
         request = spec_dict.get("request", {})
 
-        sync_data = {
+        return {
             "id": spec_dict.get("id") or "",
             "name": spec_dict.get("name") or "",
             "tenant_id": spec_dict.get("tenant_id") or "",
@@ -144,9 +157,9 @@ class MonitorSyncClient:
             "max_concurrency": runtime.get("max_concurrency", 1),
             "misfire_grace_seconds": runtime.get("misfire_grace_seconds", 300),
             "text_content": spec_dict.get("text") or "",
-            "request_input": json.dumps(request, ensure_ascii=False)
-            if request
-            else "",
+            "request_input": (
+                json.dumps(request, ensure_ascii=False) if request else ""
+            ),
             "creator_user_id": meta.get("creator_user_id") or "",
             "task_chat_id": meta.get("task_chat_id") or "",
             "task_session_id": meta.get("task_session_id") or "",
@@ -154,9 +167,6 @@ class MonitorSyncClient:
             "status": "paused" if meta.get("pause_reason") else "active",
             "pause_reason": meta.get("pause_reason") or "",
         }
-
-        # Fire and forget
-        self._sync_fire_and_forget(self._do_sync_job(sync_data))
 
     async def _do_sync_job(self, sync_data: Dict[str, Any]) -> None:
         """Actually perform the sync job HTTP call.
@@ -254,9 +264,9 @@ class MonitorSyncClient:
             "job_id": job.id,
             "job_name": job.name,
             "tenant_id": job.tenant_id or "",
-            "scheduled_time": scheduled_time.isoformat()
-            if scheduled_time
-            else None,
+            "scheduled_time": (
+                scheduled_time.isoformat() if scheduled_time else None
+            ),
             "actual_time": actual_time.isoformat(),
             "end_time": end_time.isoformat() if end_time else None,
             "duration_ms": duration_ms,
@@ -267,9 +277,11 @@ class MonitorSyncClient:
             "is_manual": is_manual,
             "trace_id": trace_id,
             "session_id": session_id,
-            "input_snapshot": json.dumps(input_snapshot, ensure_ascii=False)
-            if input_snapshot
-            else "",
+            "input_snapshot": (
+                json.dumps(input_snapshot, ensure_ascii=False)
+                if input_snapshot
+                else ""
+            ),
             "output_preview": output_preview[:100] if output_preview else "",
             "meta": "",
         }
