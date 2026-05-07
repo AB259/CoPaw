@@ -22,7 +22,7 @@ export default createGlobalStyle`
 
     &-fill {
       height: 100%;
-      background: linear-gradient(90deg, #1677ff, #69b1ff);
+      background: linear-gradient(90deg, ${(p) => p.theme.colorPrimary}, ${(p) => p.theme.colorPrimary}99);
       border-radius: 0 1.5px 1.5px 0;
       transition: width 0.4s ease;
     }
@@ -54,8 +54,8 @@ export default createGlobalStyle`
   &-header-badge {
     margin-left: auto;
     font-size: 11px;
-    color: #1677ff;
-    background: rgba(22, 119, 255, 0.1);
+    color: ${(p) => p.theme.colorPrimary};
+    background: ${(p) => p.theme.colorPrimaryBg};
     padding: 1px 8px;
     border-radius: 10px;
     font-weight: 500;
@@ -90,7 +90,7 @@ export default createGlobalStyle`
     transition: background-color 0.2s ease;
 
     &--running {
-      background: rgba(22, 119, 255, 0.04);
+      background: ${(p) => p.theme.colorPrimaryBg};
     }
   }
 
@@ -114,11 +114,11 @@ export default createGlobalStyle`
     }
 
     &--running, &--spin {
-      color: #1677ff;
+      color: ${(p) => p.theme.colorPrimary};
     }
 
     &--done {
-      color: #52c41a;
+      color: ${(p) => p.theme.colorSuccess};
     }
   }
 
@@ -133,7 +133,7 @@ export default createGlobalStyle`
     }
 
     &--running {
-      color: #1677ff;
+      color: ${(p) => p.theme.colorPrimary};
       font-weight: 500;
     }
 

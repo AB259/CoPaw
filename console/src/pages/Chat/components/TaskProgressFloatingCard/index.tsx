@@ -35,7 +35,7 @@ export default function TaskProgressFloatingCard(props: {
       <>
         <Style />
         <div className="task-progress-floating--completed">
-          <SparkCheckCircleLine style={{ fontSize: 16, color: "#52c41a" }} />
+          <SparkCheckCircleLine style={{ fontSize: 16 }} />
           所有步骤已完成
         </div>
       </>
@@ -56,9 +56,9 @@ export default function TaskProgressFloatingCard(props: {
   }
 
   // active 态
-  const doneCount = progress.items.filter((item) => item.status === "done").length;
+  const currentIndex = progress.current_step_index ?? 0;
   const progressPct = progress.total_steps > 0
-    ? `${(doneCount / progress.total_steps) * 100}%`
+    ? `${(currentIndex / progress.total_steps) * 100}%`
     : "0%";
 
   return (
@@ -76,7 +76,15 @@ export default function TaskProgressFloatingCard(props: {
         {/* 标题栏 */}
         <div
           className="task-progress-floating-header"
+          role="button"
+          tabIndex={0}
           onClick={() => setCollapsed(!collapsed)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setCollapsed((prev) => !prev);
+            }
+          }}
         >
           <SparkProjectNoLine className="task-progress-floating-header-icon" />
           <span className="task-progress-floating-header-title">
