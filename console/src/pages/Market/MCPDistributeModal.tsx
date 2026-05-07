@@ -79,42 +79,45 @@ export function MCPDistributeModal({
       const failed = items.filter((item) => !item.success);
 
       if (succeeded.length > 0) {
-        const lines = succeeded.map((item) => {
+        if (failed.length === 0) {
+          message.success(`分发成功，共 ${succeeded.length} 个租户`);
+        }
+      }
+
+      if (failed.length > 0) {
+        const successLines = succeeded.map((item) => {
           const suffix = item.bootstrapped ? " (已初始化)" : "";
           return `• ${item.tenant_id}${suffix}`;
         });
-        message.success(`分发成功，共 ${succeeded.length} 个租户`);
+        const failureLines = failed.map(
+          (item) => `• ${item.tenant_id}: ${item.error || "分发失败"}`,
+        );
         Modal.confirm({
-          title: "分发结果",
+          title: succeeded.length > 0 ? "部分租户分发失败" : "分发失败",
           content: (
             <div style={{ display: "grid", gap: 8 }}>
-              <div>以下租户分发成功：</div>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{lines.join("\n")}</pre>
-              {failed.length > 0 ? <div>部分租户分发失败，请查看下方失败列表。</div> : null}
+              {succeeded.length > 0 ? (
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div>以下租户分发成功：</div>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {successLines.join("\n")}
+                  </pre>
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gap: 4 }}>
+                <div>以下租户分发失败：</div>
+                <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                  {failureLines.join("\n")}
+                </pre>
+              </div>
             </div>
           ),
           okText: "关闭",
           cancelButtonProps: { style: { display: "none" } },
         });
-      }
-
-      if (failed.length > 0) {
-        const failureLines = failed.map(
-          (item) => `• ${item.tenant_id}: ${item.error || "分发失败"}`,
-        );
         if (succeeded.length === 0) {
           message.error("分发失败");
         }
-        Modal.confirm({
-          title: "部分租户分发失败",
-          content: (
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-              {failureLines.join("\n")}
-            </pre>
-          ),
-          okText: "关闭",
-          cancelButtonProps: { style: { display: "none" } },
-        });
       }
 
       onSuccess();

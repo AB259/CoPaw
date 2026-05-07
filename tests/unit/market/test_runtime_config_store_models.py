@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-# tests/unit/config/test_mcp_config.py
-"""测试 MCPClientConfig 新增字段。"""
-import pytest
+"""market 侧 MCP 配置模型测试。"""
 
-from swe.config.config import MCPClientConfig
+from market.runtime.config_store import MCPClientConfig
 
 
 def test_mcp_client_config_new_fields_defaults():

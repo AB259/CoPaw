@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Input, Modal, message } from "antd";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMyMCP } from "./useMyMCP";
+import { buildClientKey } from "./clientKey";
 import { myMcpApi } from "../../api/modules/myMcp";
 import type {
   MyMCPCreateRequest,
@@ -34,18 +35,6 @@ function pairsToObject(pairs: Array<[string, string]>): Record<string, string> {
     }
   });
   return result;
-}
-
-function buildClientKey(name: string): string {
-  const normalized = name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "");
-
-  return normalized || `mcp-${Date.now()}`;
 }
 
 function isDuplicateMcpError(err: unknown): boolean {

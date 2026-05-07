@@ -17,10 +17,10 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from swe.app.mcp.stateful_client import HttpStatefulClient, StdIOStatefulClient
-from swe.config.config import MCPClientConfig, MCPConfig
-from swe.config.context import tenant_context
-from swe.app.routers.mcp import _mask_env_value, _restore_original_values
+from ...runtime.config_store import MCPClientConfig, MCPConfig
+from ...runtime.context import tenant_context
+from ...runtime.mcp_masking import mask_env_value, restore_original_values
+from ...runtime.stateful_client import HttpStatefulClient, StdIOStatefulClient
 
 from ...marketplace.schemas import PublishMCPRequest as MarketPublishMCPRequest
 from ..my_mcp_helpers import (
@@ -197,12 +197,12 @@ def _mask_sensitive_values(client: MCPClientConfig) -> MyMCPDetail:
     """构建详情响应，脱敏 env 和 headers。"""
 
     masked_env = (
-        {k: _mask_env_value(v) for k, v in client.env.items()}
+        {k: mask_env_value(v) for k, v in client.env.items()}
         if client.env
         else {}
     )
     masked_headers = (
-        {k: _mask_env_value(v) for k, v in client.headers.items()}
+        {k: mask_env_value(v) for k, v in client.headers.items()}
         if client.headers
         else {}
     )
@@ -315,7 +315,7 @@ async def create_my_mcp(
     )
 
     agent_config.mcp.clients[body.client_key] = new_client
-    save_agent_config_for_request(context, agent_config)
+    save_agent_config_for_request(context, agent_config, request)
 
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
@@ -349,12 +349,12 @@ async def update_my_mcp(
     merged_data = existing.model_dump(mode="json")
 
     if "env" in update_data and update_data["env"] is not None:
-        update_data["env"] = _restore_original_values(
+        update_data["env"] = restore_original_values(
             update_data["env"],
             existing.env or {},
         )
     if "headers" in update_data and update_data["headers"] is not None:
-        update_data["headers"] = _restore_original_values(
+        update_data["headers"] = restore_original_values(
             update_data["headers"],
             existing.headers or {},
         )
@@ -364,7 +364,7 @@ async def update_my_mcp(
 
     updated_client = MCPClientConfig.model_validate(merged_data)
     agent_config.mcp.clients[client_key] = updated_client
-    save_agent_config_for_request(context, agent_config)
+    save_agent_config_for_request(context, agent_config, request)
 
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
@@ -384,7 +384,7 @@ async def delete_my_mcp(
         raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
 
     del agent_config.mcp.clients[client_key]
-    save_agent_config_for_request(context, agent_config)
+    save_agent_config_for_request(context, agent_config, request)
     return {"message": f"MCP client '{client_key}' deleted"}
 
 
@@ -403,7 +403,7 @@ async def toggle_my_mcp(
     client = agent_config.mcp.clients[client_key]
     client.enabled = not client.enabled
     client.updated_at = datetime.now(timezone.utc).isoformat()
-    save_agent_config_for_request(context, agent_config)
+    save_agent_config_for_request(context, agent_config, request)
 
     detail = _mask_sensitive_values(client)
     detail.client_key = client_key
@@ -614,8 +614,8 @@ def _build_draft_test_client(
     draft_env = body.env
     draft_headers = body.headers
     if existing is not None:
-        draft_env = _restore_original_values(draft_env, existing.env or {})
-        draft_headers = _restore_original_values(
+        draft_env = restore_original_values(draft_env, existing.env or {})
+        draft_headers = restore_original_values(
             draft_headers,
             existing.headers or {},
         )
