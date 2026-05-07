@@ -93,7 +93,7 @@ export function buildAuthHeaders(): Record<string, string> {
   // 7. Username
   const userName = iframeContext.userName || DEFAULT_USER_NAME;
   if (userName) {
-    headers["X-Username"] = encodeURIComponent(userName);
+    headers["X-User-Name"] = encodeURIComponent(userName);
   }
 
   // 8. Space（来自 iframe context）
