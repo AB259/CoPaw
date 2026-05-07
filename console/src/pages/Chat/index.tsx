@@ -426,7 +426,7 @@ export default function ChatPage() {
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
-      if (!detail || detail.phase_status !== "active") {
+      if (!detail) {
         setTaskProgress(null);
         return;
       }
