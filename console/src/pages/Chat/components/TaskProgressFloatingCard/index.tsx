@@ -1,30 +1,138 @@
-import TodoList from "@/components/agentscope-chat/OperateCard/preset/TodoList";
+import { useState, useEffect } from "react";
+import {
+  SparkLoadingLine,
+  SparkCheckCircleLine,
+  SparkProjectNoLine,
+  SparkDownLine,
+} from "@agentscope-ai/icons";
 import type { ChatTaskProgressData } from "../../taskProgressEvents";
+import { emitTaskProgressUpdate } from "../../taskProgressEvents";
+import Style from "./style";
 
 export default function TaskProgressFloatingCard(props: {
   progress: ChatTaskProgressData | null;
 }) {
   const { progress } = props;
-  if (!progress || progress.phase_status !== "active") {
-    return null;
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (!progress) return;
+    if (progress.phase_status === "completed") {
+      const timer = setTimeout(() => emitTaskProgressUpdate(null), 1500);
+      return () => clearTimeout(timer);
+    }
+    if (progress.phase_status === "cancelled") {
+      const timer = setTimeout(() => emitTaskProgressUpdate(null), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [progress?.turn_id, progress?.phase_status]);
+
+  if (!progress) return null;
+
+  // 完成态
+  if (progress.phase_status === "completed") {
+    return (
+      <>
+        <Style />
+        <div className="task-progress-floating--completed">
+          <SparkCheckCircleLine style={{ fontSize: 16, color: "#52c41a" }} />
+          所有步骤已完成
+        </div>
+      </>
+    );
   }
 
-  const description =
-    progress.current_step_index !== null
-      ? `${progress.current_step_index}/${progress.total_steps}`
-      : `${progress.total_steps}`;
+  // 取消态
+  if (progress.phase_status === "cancelled") {
+    return (
+      <>
+        <Style />
+        <div className="task-progress-floating--cancelled">
+          <SparkProjectNoLine style={{ fontSize: 16 }} />
+          任务已取消
+        </div>
+      </>
+    );
+  }
+
+  // active 态
+  const doneCount = progress.items.filter((item) => item.status === "done").length;
+  const progressPct = progress.total_steps > 0
+    ? `${(doneCount / progress.total_steps) * 100}%`
+    : "0%";
 
   return (
-    <div style={{ marginBottom: 12 }}>
-      <TodoList
-        title={progress.title || "Task Plan"}
-        description={description}
-        defaultOpen={true}
-        list={progress.items.map((item) => ({
-          title: item.label,
-          status: item.status,
-        }))}
-      />
-    </div>
+    <>
+      <Style />
+      <div className="task-progress-floating">
+        {/* 进度条 */}
+        <div className="task-progress-floating-progress-bar">
+          <div
+            className="task-progress-floating-progress-bar-fill"
+            style={{ width: progressPct }}
+          />
+        </div>
+
+        {/* 标题栏 */}
+        <div
+          className="task-progress-floating-header"
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <SparkProjectNoLine className="task-progress-floating-header-icon" />
+          <span className="task-progress-floating-header-title">
+            {progress.title || "任务计划"}
+          </span>
+          <span className="task-progress-floating-header-badge">
+            {progress.current_step_index != null
+              ? `${progress.current_step_index}/${progress.total_steps}`
+              : progress.total_steps}
+          </span>
+          <span
+            className={`task-progress-floating-header-arrow${
+              collapsed ? " task-progress-floating-header-arrow--collapsed" : ""
+            }`}
+          >
+            <SparkDownLine />
+          </span>
+        </div>
+
+        {/* 步骤列表 */}
+        {!collapsed && (
+          <>
+            <div className="task-progress-floating-divider" />
+            <div className="task-progress-floating-list">
+              {progress.items.map((item) => (
+                <div
+                  key={item.id || item.label}
+                  className={`task-progress-floating-item${
+                    item.status === "running"
+                      ? " task-progress-floating-item--running"
+                      : ""
+                  }`}
+                >
+                  <span className="task-progress-floating-item-icon">
+                    {item.status === "running" ? (
+                      <SparkLoadingLine
+                        className="task-progress-floating-item-icon--spin"
+                        spin
+                      />
+                    ) : item.status === "done" ? (
+                      <SparkCheckCircleLine className="task-progress-floating-item-icon--done" />
+                    ) : (
+                      <span className="task-progress-floating-item-icon--todo" />
+                    )}
+                  </span>
+                  <span
+                    className={`task-progress-floating-item-label task-progress-floating-item-label--${item.status}`}
+                  >
+                    {item.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }
