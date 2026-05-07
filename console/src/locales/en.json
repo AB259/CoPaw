@@ -419,7 +419,10 @@
     "statusConflict": "Conflict",
     "renameEntry": "New name for \"{{name}}\":",
     "builtin": "Built-in",
-    "custom": "Custom"
+    "custom": "Custom",
+    "resolveModeRename": "Rename to new name",
+    "resolveModeOverwrite": "Overwrite existing skills",
+    "overwriteWarning": "Will overwrite {{count}} existing skill(s). This action cannot be undone."
   },
   "mcp": {
     "title": "MCP Clients",
@@ -1474,7 +1477,14 @@
     "filterStatus": "Filter status",
     "exportExcel": "Export Excel",
     "search": "Search",
-    "totalItems": "Total {{total}} items"
+    "totalItems": "Total {{total}} items",
+    "sessionList": "Sessions",
+    "tracesFlow": "Conversation Flow",
+    "viewDetail": "View Details",
+    "collapseDetail": "Collapse",
+    "modelOutput": "Model Output",
+    "noSessionData": "No session data",
+    "noTraceData": "No conversation data"
   },
   "instance": {
     "overview": "Overview",
