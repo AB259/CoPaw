@@ -44,7 +44,9 @@ import {
   SparkDevicesLine,
   SparkAdvancedMonitoringLine,
   SparkAuditLogLine,
+  SparkRefreshLine,
 } from "@agentscope-ai/icons";
+import { Store, Wrench, Puzzle } from "lucide-react";
 import { clearAuthToken } from "../api/config";
 import { authApi } from "../api/modules/auth";
 import styles from "./index.module.less";
@@ -315,6 +317,30 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/instance/operation-logs",
       label: t("nav.instanceOperationLogs", "Operation Logs"),
     },
+    {
+      key: "continuous-iteration",
+      icon: <SparkRefreshLine size={18} />,
+      path: "/continuous-iteration",
+      label: t("nav.continuousIteration", "持续迭代"),
+    },
+    {
+      key: "market",
+      icon: <Store size={18} />,
+      path: "/market",
+      label: t("nav.market"),
+    },
+    {
+      key: "my-skills",
+      icon: <Wrench size={18} />,
+      path: "/my-skills",
+      label: t("nav.mySkills"),
+    },
+    {
+      key: "my-mcp",
+      icon: <Puzzle size={18} />,
+      path: "/my-mcp",
+      label: t("nav.myMcp"),
+    },
   ];
 
   // ── Menu items ────────────────────────────────────────────────────────────
@@ -468,6 +494,38 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
+        },
+      ],
+    },
+    {
+      key: "harness-group",
+      label: collapsed ? null : t("nav.harness", "Harness"),
+      children: [
+        {
+          key: "continuous-iteration",
+          label: collapsed ? null : t("nav.continuousIteration", "持续迭代"),
+          icon: <SparkRefreshLine size={16} />,
+        },
+      ],
+    },
+    {
+      key: "market-group",
+      label: collapsed ? null : t("nav.marketGroup"),
+      children: [
+        {
+          key: "market",
+          label: collapsed ? null : t("nav.market"),
+          icon: <Store size={16} />,
+        },
+        {
+          key: "my-skills",
+          label: collapsed ? null : t("nav.mySkills"),
+          icon: <Wrench size={16} />,
+        },
+        {
+          key: "my-mcp",
+          label: collapsed ? null : t("nav.myMcp"),
+          icon: <Puzzle size={16} />,
         },
       ],
     },

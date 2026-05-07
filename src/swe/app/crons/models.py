@@ -142,6 +142,16 @@ class CronJobSpec(BaseModel):
         ),
     )
 
+    # Identity headers from request
+    bbk_id: Optional[str] = Field(
+        default=None,
+        description="分行号 (from X-Bbk-Id header)",
+    )
+    source_id: Optional[str] = Field(
+        default=None,
+        description="来源标识 (from X-Source-Id header)",
+    )
+
     schedule: ScheduleSpec
     task_type: TaskType = "agent"
     text: Optional[str] = None
