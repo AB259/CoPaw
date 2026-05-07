@@ -291,11 +291,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const chunkData = responseParser(chunk.data);
           const streamedTaskProgress = extractTaskProgress(chunkData);
           if (streamedTaskProgress !== undefined) {
-            emitTaskProgressUpdate(
-              streamedTaskProgress?.phase_status === "active"
-                ? streamedTaskProgress
-                : null,
-            );
+            emitTaskProgressUpdate(streamedTaskProgress);
           }
           const res = agentScopeRuntimeResponseBuilder.handle(chunkData);
 

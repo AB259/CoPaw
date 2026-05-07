@@ -3,6 +3,7 @@ import { createGlobalStyle } from "antd-style";
 export default createGlobalStyle`
 .task-progress-floating {
   position: absolute;
+  z-index: 2;
   left: 8px;
   right: 8px;
   bottom: 100%;
