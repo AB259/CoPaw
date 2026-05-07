@@ -20,13 +20,14 @@ orchestrator.
 
 Quick start::
 
-    from swe.security.skill_scanner import SkillScanner
+    from market.security.skill_scanner import SkillScanner
 
     scanner = SkillScanner()
     result = scanner.scan_skill("/path/to/skill_directory")
     if not result.is_safe:
         print(f"Blocked: {result.max_severity.value} findings detected")
 """
+
 from __future__ import annotations
 
 from concurrent import futures
