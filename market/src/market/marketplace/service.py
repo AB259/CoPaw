@@ -132,6 +132,64 @@ def _sort_items_by_updated_at_desc(
     return sorted(items, key=sort_key, reverse=True)
 
 
+def _normalize_transport_value(raw_transport: str) -> str | None:
+    """Normalize transport string to standard values."""
+    lowered = raw_transport.strip().lower()
+    if lowered == "streamable-http":
+        return "streamable_http"
+    if lowered in {"stdio", "sse", "streamable_http"}:
+        return lowered
+    return None
+
+
+def _extract_first_mcp_server(config_data: dict) -> dict:
+    """Extract first MCP server config from nested mcpServers structure."""
+    mcp_servers = config_data.get("mcpServers")
+    if not isinstance(mcp_servers, dict) or not mcp_servers:
+        return dict(config_data)
+
+    _, first_value = next(iter(mcp_servers.items()))
+    if isinstance(first_value, dict):
+        return dict(first_value)
+    return dict(config_data)
+
+
+def _apply_advanced_fields(normalized: dict) -> None:
+    """Apply fields from nested 'advanced' dict to normalized config."""
+    advanced = normalized.get("advanced")
+    if not isinstance(advanced, dict):
+        return
+
+    if "headers" not in normalized and isinstance(
+        advanced.get("headers"),
+        dict,
+    ):
+        normalized["headers"] = advanced.get("headers", {})
+
+    if "transport" not in normalized and isinstance(
+        advanced.get("transport"),
+        str,
+    ):
+        transport = _normalize_transport_value(advanced["transport"])
+        if transport:
+            normalized["transport"] = transport
+
+
+def _infer_transport_from_config(normalized: dict) -> None:
+    """Infer transport type from command or url if not set."""
+    if "transport" in normalized:
+        return
+
+    command = normalized.get("command")
+    if isinstance(command, str) and command.strip():
+        normalized["transport"] = "stdio"
+        return
+
+    url = normalized.get("url")
+    if isinstance(url, str) and url.strip():
+        normalized["transport"] = "streamable_http"
+
+
 def _normalize_market_mcp_config_data(config_data: dict) -> dict:
     """兼容旧市场条目中的原始 MCP 上传结构。
 
@@ -142,51 +200,17 @@ def _normalize_market_mcp_config_data(config_data: dict) -> dict:
     if not isinstance(config_data, dict):
         return {}
 
-    normalized = dict(config_data)
+    normalized = _extract_first_mcp_server(config_data)
+    _apply_advanced_fields(normalized)
 
-    mcp_servers = normalized.get("mcpServers")
-    if isinstance(mcp_servers, dict) and mcp_servers:
-        _, first_value = next(iter(mcp_servers.items()))
-        if isinstance(first_value, dict):
-            normalized = dict(first_value)
-
-    advanced = normalized.get("advanced")
-    if isinstance(advanced, dict):
-        if "headers" not in normalized and isinstance(
-            advanced.get("headers"),
-            dict,
-        ):
-            normalized["headers"] = advanced.get("headers", {})
-        if "transport" not in normalized and isinstance(
-            advanced.get("transport"),
-            str,
-        ):
-            raw_transport = advanced["transport"].strip().lower()
-            if raw_transport == "streamable-http":
-                normalized["transport"] = "streamable_http"
-            elif raw_transport in {"stdio", "sse", "streamable_http"}:
-                normalized["transport"] = raw_transport
-
+    # Normalize top-level transport/type field
     raw_transport = normalized.get("transport") or normalized.get("type")
     if isinstance(raw_transport, str):
-        lowered = raw_transport.strip().lower()
-        if lowered == "streamable-http":
-            normalized["transport"] = "streamable_http"
-        elif lowered in {"stdio", "sse", "streamable_http"}:
-            normalized["transport"] = lowered
+        transport = _normalize_transport_value(raw_transport)
+        if transport:
+            normalized["transport"] = transport
 
-    if "transport" not in normalized:
-        if (
-            isinstance(normalized.get("command"), str)
-            and normalized.get("command", "").strip()
-        ):
-            normalized["transport"] = "stdio"
-        elif (
-            isinstance(normalized.get("url"), str)
-            and normalized.get("url", "").strip()
-        ):
-            normalized["transport"] = "streamable_http"
-
+    _infer_transport_from_config(normalized)
     return normalized
 
 
