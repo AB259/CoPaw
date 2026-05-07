@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Console APIs: push messages, chat, and file upload for chat."""
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,6 @@ from starlette.responses import StreamingResponse
 
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
-
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +205,16 @@ async def post_console_chat(
     source_id = request.headers.get("X-Source-Id", "default")
     native_payload["meta"]["source_id"] = source_id
 
+    # 从 request.state 获取 user_name 和 bbk_id（由 TenantIdentityMiddleware 设置）
+    request_state = getattr(request, "state", None)
+    if request_state:
+        user_name = getattr(request_state, "user_name", None)
+        bbk_id = getattr(request_state, "bbk_id", None)
+        if user_name:
+            native_payload["meta"]["user_name"] = user_name
+        if bbk_id:
+            native_payload["meta"]["bbk_id"] = bbk_id
+
     # Debug: log the session_id from frontend
     logger.debug(
         "Console chat: native_payload.meta.session_id=%s",
@@ -242,11 +252,13 @@ async def post_console_chat(
             native_payload["sender_id"],
             native_payload["channel_id"],
             name=_derive_chat_name(native_payload),
-            meta={
-                "agent_id": workspace.agent_id,
-            }
-            if getattr(workspace, "agent_id", None)
-            else None,
+            meta=(
+                {
+                    "agent_id": workspace.agent_id,
+                }
+                if getattr(workspace, "agent_id", None)
+                else None
+            ),
         )
         queue, _ = await tracker.attach_or_start(
             chat.id,
@@ -413,7 +425,6 @@ async def get_suggestions_qa_content(
 
     entry = await get_qa_content(
         chat_id=body.chat_id,
-        user_message=body.user_message,
         tenant_id=tenant_id,
     )
 

@@ -92,7 +92,8 @@ export function buildAuthHeaders(): Record<string, string> {
 
   // 7. Username
   if (iframeContext.userName) {
-    headers["X-Username"] = iframeContext.userName;
+    // 对用户名进行 URI 编码，防止中文字符在传输过程中出现问题
+    headers["X-User-Name"] = encodeURIComponent(iframeContext.userName);
   }
 
   // 8. Space（来自 iframe context）
