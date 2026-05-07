@@ -14,6 +14,7 @@ import {
   formatTokens,
   formatChange,
   truncateName,
+  getBbkDisplayName,
   type UserRow,
   type TimeRange,
 } from "./types";
@@ -979,40 +980,56 @@ export default function BusinessOverviewPage() {
           {metric === "calls" ? "调用次数" : "最后活跃"}
         </span>
       </div>
-      {users.map((user, index) => (
-        <div
-          key={user.userId}
-          className={styles.userItem}
-          onClick={() => {
-            setSelectedUserId(user.userId);
-            setModalOpen(true);
-          }}
-          style={{ cursor: "pointer" }}
-        >
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
+      {users.map((user, index) => {
+        // 格式化显示：机构名称/用户姓名(用户ID)
+        const displayParts: string[] = [];
+        if (user.bbkId) {
+          const bbkName = getBbkDisplayName(user.bbkId);
+          if (bbkName && bbkName !== "-") {
+            displayParts.push(bbkName);
+          }
+        }
+        if (user.userName) {
+          displayParts.push(user.userName);
+        }
+        const displayName = displayParts.length > 0
+          ? `${displayParts.join("/")}(${user.userId})`
+          : user.userId;
+
+        return (
+          <div
+            key={user.userId}
+            className={styles.userItem}
+            onClick={() => {
+              setSelectedUserId(user.userId);
+              setModalOpen(true);
+            }}
+            style={{ cursor: "pointer" }}
           >
-            {index + 1}
-          </span>
-          <span className={styles.userName}>
-            {user.name}
-            {user.bbkId && <span className={styles.bbkId}> ({user.bbkId})</span>}
-          </span>
-          <span className={styles.userValue}>
-            {metric === "calls"
-              ? formatNumber(user.calls)
-              : user.lastActive}
-          </span>
-        </div>
-      ))}
+            <span
+              className={`${styles.rank} ${
+                index === 0
+                  ? styles.top1
+                  : index === 1
+                  ? styles.top2
+                  : index === 2
+                  ? styles.top3
+                  : styles.normal
+              }`}
+            >
+              {index + 1}
+            </span>
+            <span className={styles.userName}>
+              {displayName}
+            </span>
+            <span className={styles.userValue}>
+              {metric === "calls"
+                ? formatNumber(user.calls)
+                : user.lastActive}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 

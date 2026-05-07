@@ -422,6 +422,8 @@ class SessionListItem(BaseModel):
 
     session_id: str
     user_id: str
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     channel: str
     total_traces: int = 0
     total_tokens: int = 0
