@@ -213,7 +213,10 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
   // 过滤 MCP 列表
   const filteredMCP = mcpList.filter((mcp) => {
     const query = searchQuery.toLowerCase();
-    return mcp.name.toLowerCase().includes(query);
+    return (
+      mcp.name.toLowerCase().includes(query) ||
+      (mcp.chinese_name?.toLowerCase().includes(query) ?? false)
+    );
   });
 
   // 按分类过滤

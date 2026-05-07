@@ -7,7 +7,7 @@ types, which credentials are test-only, and so on.
 
 Usage
 -----
-    from swe.security.skill_scanner.scan_policy import ScanPolicy
+    from market.security.skill_scanner.scan_policy import ScanPolicy
 
     # Load built-in defaults
     policy = ScanPolicy.default()
@@ -21,6 +21,7 @@ Usage
 Analysers receive the policy at construction time and use it in place of their
 previously-hardcoded sets/lists.
 """
+
 from __future__ import annotations
 
 import logging

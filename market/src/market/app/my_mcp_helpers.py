@@ -7,13 +7,13 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-from swe.config.config import (
+from ..runtime.config_store import (
     AgentProfileConfig,
     load_agent_config,
+    load_root_config,
     save_agent_config,
 )
-from swe.config.context import resolve_effective_tenant_id, tenant_context
-from swe.config.utils import get_tenant_config_path, load_config
+from ..runtime.context import resolve_effective_tenant_id, tenant_context
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class MyMCPRequestContext:
 
 def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
     """从请求头解析 MyMCP 所需上下文。"""
+    swe_root = request.app.state.marketplace.swe_root
 
     user_id = request.headers.get("X-User-Id", "").strip()
     tenant_id = request.headers.get("X-Tenant-Id", "").strip() or user_id
@@ -46,7 +47,7 @@ def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
             detail="X-Tenant-Id header is required",
         )
     effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
-    root_config = load_config(get_tenant_config_path(effective_tenant_id))
+    root_config = load_root_config(swe_root, effective_tenant_id)
     resolved_agent_id = (
         agent_id or root_config.agents.active_agent or "default"
     )
@@ -72,14 +73,16 @@ def load_agent_config_for_request(
     """按请求上下文加载目标 agent 配置。"""
 
     context = resolve_my_mcp_request_context(request)
+    swe_root = request.app.state.marketplace.swe_root
     with tenant_context(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
         source_id=context.source_id,
     ):
         agent_config = load_agent_config(
+            swe_root,
+            context.effective_tenant_id,
             context.agent_id,
-            tenant_id=context.effective_tenant_id,
         )
     return context, agent_config
 
@@ -87,8 +90,10 @@ def load_agent_config_for_request(
 def save_agent_config_for_request(
     context: MyMCPRequestContext,
     agent_config: AgentProfileConfig,
+    request: Request,
 ) -> None:
     """按请求上下文保存目标 agent 配置。"""
+    swe_root = request.app.state.marketplace.swe_root
 
     with tenant_context(
         tenant_id=context.tenant_id,
@@ -96,9 +101,10 @@ def save_agent_config_for_request(
         source_id=context.source_id,
     ):
         save_agent_config(
+            swe_root,
+            context.effective_tenant_id,
             context.agent_id,
             agent_config,
-            tenant_id=context.effective_tenant_id,
         )
 
 
