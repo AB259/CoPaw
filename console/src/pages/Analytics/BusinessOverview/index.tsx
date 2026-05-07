@@ -206,7 +206,9 @@ export default function BusinessOverviewPage() {
       if (usersRes.status === "fulfilled") {
         const users = usersRes.value.items.map((u: any) => ({
           userId: u.user_id,
-          name: u.user_id, // 后端没返回name，用user_id代替
+          userName: u.user_name,
+          bbkId: u.bbk_id,
+          name: u.user_name || u.user_id, // 优先使用 user_name，否则使用 user_id
           calls: u.total_conversations,
           tokens: u.total_tokens,
           lastActive: u.last_active
@@ -873,7 +875,7 @@ export default function BusinessOverviewPage() {
           </span>
           <span className={styles.userName}>
             {user.name}
-            <span className={styles.userId}>({user.userId})</span>
+            {user.bbkId && <span className={styles.bbkId}> ({user.bbkId})</span>}
           </span>
           <span className={styles.userValue}>
             {metric === "calls"

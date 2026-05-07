@@ -31,6 +31,8 @@ export interface BarChartData {
 
 export interface UserRow {
   userId: string;
+  userName?: string;
+  bbkId?: string;
   name: string;
   calls: number;
   tokens: number;

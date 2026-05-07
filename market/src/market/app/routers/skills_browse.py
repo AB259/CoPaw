@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """用户市场浏览 API 和我的技能 API."""
+
 import asyncio
 import io
 import json
@@ -111,44 +112,48 @@ def _decode_zip_filename(filename: str, info: zipfile.ZipInfo) -> str:
     return filename
 
 
-def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
-    """Extract and validate a skill zip.
+_MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024  # 200MB
 
-    Returns ``(tmp_dir, found_skills)`` where each skill is ``(skill_dir, skill_name)``.
-    """
+
+def _validate_zip_archive(data: bytes) -> zipfile.ZipFile:
+    """Validate zip data and return ZipFile object."""
     if not zipfile.is_zipfile(io.BytesIO(data)):
         raise ValueError("Uploaded file is not a valid zip archive")
+    return zipfile.ZipFile(io.BytesIO(data))
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="copaw_myskill_upload_"))
+
+def _check_zip_size(zf: zipfile.ZipFile) -> None:
+    """Check uncompressed zip size limit."""
+    total = sum(info.file_size for info in zf.infolist())
+    if total > _MAX_UNCOMPRESSED_SIZE:
+        raise ValueError("Uncompressed zip exceeds 200MB limit")
+
+
+def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
+    """Security check for path traversal in zip entries."""
     root_path = tmp_dir.resolve()
+    for info in zf.infolist():
+        decoded_name = _decode_zip_filename(info.filename, info)
+        target = (tmp_dir / decoded_name).resolve()
+        if not target.is_relative_to(root_path):
+            raise ValueError(f"Unsafe path in zip: {info.filename}")
 
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        # Check total size
-        total = sum(info.file_size for info in zf.infolist())
-        if total > 200 * 1024 * 1024:  # 200MB limit
-            raise ValueError("Uncompressed zip exceeds 200MB limit")
 
-        # Security check for path traversal (use decoded filename)
-        for info in zf.infolist():
-            decoded_name = _decode_zip_filename(info.filename, info)
-            target = (tmp_dir / decoded_name).resolve()
-            if not target.is_relative_to(root_path):
-                raise ValueError(f"Unsafe path in zip: {info.filename}")
+def _extract_zip_entries(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
+    """Extract zip entries with corrected encoding."""
+    for info in zf.infolist():
+        decoded_name = _decode_zip_filename(info.filename, info)
+        target = tmp_dir / decoded_name
 
-        # Extract files with corrected encoding for Chinese filenames
-        for info in zf.infolist():
-            # Decode filename correctly
-            decoded_name = _decode_zip_filename(info.filename, info)
-            target = tmp_dir / decoded_name
+        if info.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(zf.read(info))
 
-            if info.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # Use ZipInfo object to read data, avoiding encoding issues with filename
-                target.write_bytes(zf.read(info))
 
-    # Find skill directories
+def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
+    """Find valid skill directories in extracted path."""
     real_entries = [
         path
         for path in tmp_dir.iterdir()
@@ -164,24 +169,41 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
 
     if (extract_root / "SKILL.md").exists():
         skill_name = _resolve_skill_name(extract_root)
-        found = [(extract_root, skill_name)]
-    else:
-        found = [
-            (path, _resolve_skill_name(path))
-            for path in sorted(extract_root.iterdir())
-            if not path.name.startswith(".")
-            and not path.name.startswith("_")
-            and path.is_dir()
-            and (path / "SKILL.md").exists()
-        ]
+        return [(extract_root, skill_name)]
 
-    if not found:
+    return [
+        (path, _resolve_skill_name(path))
+        for path in sorted(extract_root.iterdir())
+        if not path.name.startswith(".")
+        and not path.name.startswith("_")
+        and path.is_dir()
+        and (path / "SKILL.md").exists()
+    ]
+
+
+def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
+    """Extract and validate a skill zip.
+
+    Returns ``(tmp_dir, found_skills)`` where each skill is ``(skill_dir, skill_name)``.
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="copaw_myskill_upload_"))
+
+    try:
+        zf = _validate_zip_archive(data)
+        with zf:
+            _check_zip_size(zf)
+            _validate_zip_paths(zf, tmp_dir)
+            _extract_zip_entries(zf, tmp_dir)
+
+        found = _find_skill_directories(tmp_dir)
+        if not found:
+            raise ValueError(
+                "No valid skills found in uploaded zip (missing SKILL.md)",
+            )
+        return tmp_dir, found
+    except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise ValueError(
-            "No valid skills found in uploaded zip (missing SKILL.md)",
-        )
-
-    return tmp_dir, found
+        raise
 
 
 def _resolve_skill_name(skill_dir: Path) -> str:
@@ -228,6 +250,81 @@ def _import_skill_dir(
     return True
 
 
+def _get_existing_skill_names(skills_dir: Path) -> set[str]:
+    """Get set of existing skill directory names."""
+    if not skills_dir.exists():
+        return set()
+    return {p.name for p in skills_dir.iterdir() if p.is_dir()}
+
+
+def _update_skill_json(
+    skill_json_path: Path,
+    skill_name: str,
+    user_id: str,
+    user_name: str,
+    bbk_id: str,
+    category_id: int | None,
+) -> dict[str, Any]:
+    """Update skill.json with metadata, return parsed data."""
+    skill_data: dict[str, Any] = {}
+    if skill_json_path.exists():
+        try:
+            skill_data = json.loads(
+                skill_json_path.read_text(encoding="utf-8"),
+            )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    skill_data["name"] = skill_data.get("name") or skill_name
+    skill_data.setdefault("description", "")
+    skill_data["source"] = "customized"
+    skill_data["creator_id"] = user_id
+    skill_data["creator_name"] = user_name
+    skill_data["bbk_id"] = bbk_id
+    if category_id is not None:
+        skill_data["category_id"] = category_id
+
+    skill_json_path.write_text(
+        json.dumps(skill_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return skill_data
+
+
+def _process_single_skill(
+    skill_dir: Path,
+    skills_dir: Path,
+    skill_name: str,
+    existing_names: set[str],
+    user_id: str,
+    user_name: str,
+    bbk_id: str,
+    overwrite: bool,
+    category_id: int | None,
+) -> tuple[bool, dict[str, str] | None]:
+    """Process single skill import. Returns (imported, conflict_or_none)."""
+    if skill_name in existing_names and not overwrite:
+        return False, {
+            "reason": "already_exists",
+            "skill_name": skill_name,
+            "suggested_name": f"{skill_name}_1",
+        }
+
+    if not _import_skill_dir(skill_dir, skills_dir, skill_name, overwrite):
+        return False, None
+
+    skill_json_path = skills_dir / skill_name / "skill.json"
+    _update_skill_json(
+        skill_json_path,
+        skill_name,
+        user_id,
+        user_name,
+        bbk_id,
+        category_id,
+    )
+    return True, None
+
+
 def _import_skill_from_zip(
     skills_dir: Path,
     data: bytes,
@@ -247,58 +344,35 @@ def _import_skill_from_zip(
 
     try:
         tmp_dir, found_skills = _extract_zip_skills(data)
-
-        existing_names = (
-            {p.name for p in skills_dir.iterdir() if p.is_dir()}
-            if skills_dir.exists()
-            else set()
-        )
+        existing_names = _get_existing_skill_names(skills_dir)
 
         for skill_dir, skill_name in found_skills:
-            # Apply target_name if single skill
             if target_name and len(found_skills) == 1:
                 skill_name = target_name.strip()
 
-            if skill_name in existing_names and not overwrite:
-                conflicts.append(
-                    {
-                        "reason": "already_exists",
-                        "skill_name": skill_name,
-                        "suggested_name": f"{skill_name}_1",
-                    },
-                )
+            success, conflict = _process_single_skill(
+                skill_dir,
+                skills_dir,
+                skill_name,
+                existing_names,
+                user_id,
+                user_name,
+                bbk_id,
+                overwrite,
+                category_id,
+            )
+
+            if conflict:
+                conflicts.append(conflict)
                 continue
 
-            if _import_skill_dir(skill_dir, skills_dir, skill_name, overwrite):
-                # Update skill.json with metadata
-                skill_json_path = skills_dir / skill_name / "skill.json"
-                skill_data: dict[str, Any] = {}
-                if skill_json_path.exists():
-                    try:
-                        skill_data = json.loads(
-                            skill_json_path.read_text(encoding="utf-8"),
-                        )
-                    except (json.JSONDecodeError, OSError):
-                        pass
-
-                # Ensure name and description are set
-                skill_data["name"] = skill_data.get("name") or skill_name
-                skill_data.setdefault("description", "")
-                skill_data["source"] = "customized"
-                skill_data["creator_id"] = user_id
-                skill_data["creator_name"] = user_name
-                skill_data["bbk_id"] = bbk_id
-                if category_id is not None:
-                    skill_data["category_id"] = category_id
-
-                skill_json_path.write_text(
-                    json.dumps(skill_data, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
+            if success:
                 imported.append(skill_name)
-
-                # Capture parsed name and description from first skill
                 if parsed_name is None:
+                    skill_json_path = skills_dir / skill_name / "skill.json"
+                    skill_data = json.loads(
+                        skill_json_path.read_text(encoding="utf-8"),
+                    )
                     parsed_name = skill_data.get("name")
                     parsed_description = skill_data.get("description")
 
@@ -308,12 +382,8 @@ def _import_skill_from_zip(
             detail=f"Invalid zip file: {e}",
         ) from e
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        ) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
     finally:
-        # Clean up temp directory
         if tmp_dir and tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

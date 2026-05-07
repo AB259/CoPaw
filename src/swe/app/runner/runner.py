@@ -528,9 +528,9 @@ class AgentRunner(Runner):
                         approved_tool_call["_remaining_queue"] = remaining
                     thinking_blocks = record.extra.get("thinking_blocks")
                     if isinstance(thinking_blocks, list):
-                        approved_tool_call[
-                            "_thinking_blocks"
-                        ] = thinking_blocks
+                        approved_tool_call["_thinking_blocks"] = (
+                            thinking_blocks
+                        )
             return None, True, approved_tool_call
 
         explicit_deny = _is_denial(normalized)
@@ -641,12 +641,35 @@ class AgentRunner(Runner):
                     )
                     user_message = _get_last_user_text(msgs)
 
+                    # 提取用户名称：先尝试 request 属性，再尝试 request.state
+                    user_name_for_trace = getattr(
+                        request,
+                        "user_name",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "user_name",
+                        None,
+                    )
+                    # 提取 BBK 标识符：先尝试 request 属性，再尝试 request.state
+                    bbk_id_for_trace = getattr(
+                        request,
+                        "bbk_id",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "bbk_id",
+                        None,
+                    )
+
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
                         channel=channel_for_trace,
                         source_id=source_id_for_trace,
                         user_message=user_message,
+                        user_name=user_name_for_trace,
+                        bbk_id=bbk_id_for_trace,
                     )
             except Exception as e:
                 logger.warning("Failed to start trace: %s", e)
