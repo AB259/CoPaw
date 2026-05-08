@@ -1,5 +1,5 @@
 import { useProviderContext } from "@/components/agentscope-chat";
-import DownloadFileCard from "../../DownloadFileCard";
+import DownloadFileCard from "../../../DownloadFileCard";
 
 // 判断是否为文件链接
 function isFileLink(href: string): boolean {
