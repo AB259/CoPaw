@@ -146,6 +146,8 @@ DB_ACCESS = EnvVarLoader.get_str("MONITOR_DB_ACCESS", "")
 DB_NAME = EnvVarLoader.get_str("MONITOR_DB_NAME", "monitor")
 DB_MIN_CONN = EnvVarLoader.get_int("MONITOR_DB_MIN_CONN", 2, min_value=1)
 DB_MAX_CONN = EnvVarLoader.get_int("MONITOR_DB_MAX_CONN", 10, min_value=1)
+# 生产库通常已经由 DBA 建好表，Monitor 启动时不应默认执行 CREATE。
+DB_INIT_TABLES = EnvVarLoader.get_bool("MONITOR_DB_INIT_TABLES", False)
 
 # ============================================================
 # 监控配置
@@ -196,3 +198,57 @@ ES_PORT = EnvVarLoader.get_int("ES_PORT", 9200, min_value=1)
 ES_USER = EnvVarLoader.get_str("ES_USER", "")
 ES_PASSWORD = EnvVarLoader.get_str("ES_PASSWORD", "")
 ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_messages")
+# SWE 定时任务恢复预热配置
+# ============================================================
+
+# SWE API 根地址。生产/调试环境建议通过环境变量配置为网关地址，不写死到代码。
+SWE_API_BASE_URL = EnvVarLoader.get_str(
+    "MONITOR_SWE_API_BASE_URL",
+    "http://proxy-gateway.passuat.cmbchina.cn/gateway/swe/api",
+).rstrip("/")
+
+# 选择 /cron/jobs 是因为它会触发 SWE 侧 agent runtime 和 CronManager 加载。
+SWE_WARMUP_ENDPOINT = EnvVarLoader.get_str(
+    "MONITOR_SWE_WARMUP_ENDPOINT",
+    "/cron/jobs",
+)
+
+# 固定请求头，例如 Authorization。动态身份头会在每个用户请求中覆盖补齐。
+SWE_WARMUP_HEADERS_JSON = EnvVarLoader.get_str(
+    "MONITOR_SWE_WARMUP_HEADERS_JSON",
+    "",
+)
+
+# 定时任务定义表名。生产库使用 swe_cron_jobs，允许环境变量覆盖 schema 前缀。
+SWE_WARMUP_CRON_TABLE = EnvVarLoader.get_str(
+    "MONITOR_SWE_WARMUP_CRON_TABLE",
+    "swe_cron_jobs",
+)
+
+# 用户量级约百级，限并发可以降低 SWE 刚启动时的瞬时压力。
+SWE_WARMUP_CONCURRENCY = EnvVarLoader.get_int(
+    "MONITOR_SWE_WARMUP_CONCURRENCY",
+    5,
+    min_value=1,
+)
+
+# SWE 和 Monitor 可能同时启动，短重试用于覆盖网关或 SWE 尚未就绪的窗口。
+SWE_WARMUP_RETRIES = EnvVarLoader.get_int(
+    "MONITOR_SWE_WARMUP_RETRIES",
+    3,
+    min_value=0,
+)
+
+# 重试间隔保持较短，目标是尽快恢复定时任务而不是长时间阻塞后台任务。
+SWE_WARMUP_RETRY_DELAY_SECONDS = EnvVarLoader.get_float(
+    "MONITOR_SWE_WARMUP_RETRY_DELAY_SECONDS",
+    2.0,
+    min_value=0.0,
+)
+
+# 单个用户预热只需要触发加载，不消费响应体内容，因此超时不宜设置过长。
+SWE_WARMUP_TIMEOUT_SECONDS = EnvVarLoader.get_float(
+    "MONITOR_SWE_WARMUP_TIMEOUT_SECONDS",
+    10.0,
+    min_value=1.0,
+)

@@ -12,6 +12,7 @@ from ..config.constant import (
     CORS_ORIGINS,
     DB_HOST,
     ES_HOST,
+    DB_INIT_TABLES,
 )
 from .routers import api_router
 
