@@ -48,12 +48,14 @@ export default createGlobalStyle`
   min-height: 24px;
   max-height: 120px;
   font-family: inherit;
+  padding: 4px 0;
 }
 
 .welcome-input-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-left: -6px;
 }
 
 .welcome-input-actions-left {

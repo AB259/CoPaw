@@ -8,6 +8,9 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -27,13 +30,16 @@ from .auth_state import prefetch_auth_token
 from .executor import CronExecutor
 from .models import CronJobSpec, CronJobState, CronTaskView, JobsFile
 from .repo.base import BaseJobRepository
+from .monitor_sync_client import get_monitor_sync_client, MonitorSyncClient
 
 HEARTBEAT_JOB_ID = "_heartbeat"
+DREAM_JOB_ID = "_dream"
 AUTO_PAUSE_UNREAD_THRESHOLD = 3
 AUTO_PAUSE_REASON = "auto_unread_threshold"
 MANUAL_PAUSE_REASON = "manual"
 PREFETCH_JOB_PREFIX = "_prefetch:"
 PREFETCH_WINDOW = timedelta(hours=1)
+TASK_MESSAGES_STATE_KEY = "task_messages"
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -106,6 +112,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
 
         self._active_jobs: set[str] = set()  # Track which jobs are scheduled
+
+        # Monitor sync client for dual-write
+        self._monitor_sync_client: Optional[MonitorSyncClient] = None
+        try:
+            self._monitor_sync_client = get_monitor_sync_client()
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Monitor sync client not available")
 
     @property
     def is_started(self) -> bool:
@@ -282,6 +295,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
             # Reload heartbeat
             await self._update_heartbeat()
+
+            # Reload dream job
+            await self._update_dream()
+
             await self._refresh_definition_version_locked(jobs_file=jobs_file)
 
             logger.info(
@@ -325,6 +342,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
             # Heartbeat: scheduled job when enabled in config
             await self._update_heartbeat()
+
+            # Dream-based memory optimization: scheduled from config
+            await self._update_dream()
+
             await self._refresh_definition_version_locked(jobs_file=jobs_file)
 
             self._started = True
@@ -566,6 +587,83 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 "Heartbeat job scheduled for agent %s: every=%s",
                 self._agent_id,
                 hb.every,
+            )
+
+    async def _update_dream(self) -> None:
+        """Update dream-based memory optimization job based on config."""
+        if self._scheduler is None:
+            return
+
+        # Remove existing dream job if present
+        if self._scheduler.get_job(DREAM_JOB_ID):
+            self._scheduler.remove_job(DREAM_JOB_ID)
+            self._active_jobs.discard(DREAM_JOB_ID)
+
+        # Lazy import to avoid heavy config loading at module import time
+        from ...config.utils import get_dream_cron
+
+        # Get dream cron expression from agent config
+        dream_cron = get_dream_cron(
+            self._agent_id,
+            tenant_id=self._tenant_id,
+        )
+
+        if dream_cron:
+            try:
+                trigger = CronTrigger.from_crontab(
+                    dream_cron,
+                    timezone=self._scheduler.timezone,
+                )
+                self._scheduler.add_job(
+                    self._dream_callback,
+                    trigger=trigger,
+                    id=DREAM_JOB_ID,
+                    replace_existing=True,
+                )
+                self._active_jobs.add(DREAM_JOB_ID)
+                logger.info(
+                    "Dream job scheduled for agent %s: cron=%s, timezone=%s",
+                    self._agent_id,
+                    dream_cron,
+                    self._scheduler.timezone,
+                )
+            except Exception as e:  # pylint: disable=broad-except
+                logger.error(
+                    "Failed to schedule dream job for agent %s: error=%s",
+                    self._agent_id,
+                    repr(e),
+                )
+
+    async def reschedule_dream(self) -> None:
+        """Reschedule dream job based on current config."""
+        await self._update_dream()
+
+    async def _dream_callback(self) -> None:
+        """Run one dream-based memory optimization task."""
+        try:
+            # Bind tenant context for dream execution
+            workspace_dir = (
+                Path(self._runner.workspace_dir)
+                if self._runner.workspace_dir
+                else None
+            )
+            with bind_tenant_context(
+                tenant_id=self._tenant_id,
+                workspace_dir=workspace_dir,
+            ):
+                await self._runner.memory_manager.dream_memory(
+                    tenant_id=self._tenant_id,
+                    trigger="cron",
+                )
+            logger.debug("Dream task executed successfully")
+        except asyncio.CancelledError:
+            logger.info("Dream task was cancelled")
+            raise
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Failed to execute dream task: %s",
+                repr(e),
+                exc_info=True,
             )
 
     # ----- read/state -----
@@ -869,6 +967,21 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 if changed or self._scheduler.get_job(spec.id) is None:
                     await self._register_or_update(spec)
 
+        # Sync to Monitor (async, non-blocking)
+        if self._monitor_sync_client is not None:
+            await self._monitor_sync_client.sync_job(spec)
+
+    async def _ensure_persisted_task_binding(
+        self,
+        spec: CronJobSpec,
+    ) -> CronJobSpec:
+        bound = await self._ensure_task_binding(spec)
+        if bound == spec:
+            return spec
+        await self.create_or_replace_job(bound)
+        saved = await self.get_job(spec.id)
+        return saved or bound
+
     async def delete_job(self, job_id: str) -> bool:
         async with self._lock:
             changed, deleted_job, _ = await self._mutate_jobs_file_locked(
@@ -901,6 +1014,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         task_chat_id,
                         exc_info=True,
                     )
+
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.delete_job(job_id)
+
             return (
                 deleted_job is not None if changed else deleted_job is not None
             )
@@ -931,6 +1049,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     self._scheduler.pause_job(job_id)
                 self._remove_prefetch_job(job_id)
 
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
+
             return True
 
     async def resume_job(self, job_id: str) -> bool:
@@ -959,6 +1081,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     aps_job = self._scheduler.get_job(job_id)
                     next_run_at = aps_job.next_run_time if aps_job else None
                     self._schedule_prefetch_job(job, next_run_at)
+
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
 
             return True
 
@@ -994,6 +1120,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         job = await self._repo.get_job(job_id)
         if not job:
             raise KeyError(f"Job not found: {job_id}")
+        job = await self._ensure_persisted_task_binding(job)
         logger.info(
             "cron run_job (manual, outside scheduler ownership semantics): "
             "job_id=%s channel=%s task_type=%s "
@@ -1010,7 +1137,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._states[job_id] = st
         with bind_llm_workload(LLM_WORKLOAD_CRON):
             task = asyncio.create_task(
-                self._execute_once(job),
+                self._execute_once(job, is_manual=True),
                 name=f"cron-run-{job_id}",
             )
         task.add_done_callback(lambda t: self._task_done_cb(t, job))
@@ -1036,7 +1163,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         creator_user_id = meta.get("creator_user_id")
         return CronTaskView(
             visible_in_my_tasks=bool(
-                spec.task_type == "agent"
+                spec.task_type in {"agent", "text"}
                 and creator_user_id
                 and creator_user_id == user_id,
             ),
@@ -1475,7 +1602,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def _ensure_task_binding(self, spec: CronJobSpec) -> CronJobSpec:
         creator_user_id = (spec.meta or {}).get("creator_user_id")
         if (
-            spec.task_type != "agent"
+            spec.task_type not in {"agent", "text"}
             or not creator_user_id
             or self._chat_manager is None
         ):
@@ -1541,17 +1668,26 @@ class CronManager:  # pylint: disable=too-many-public-methods
         creator_user_id = (job.meta or {}).get("creator_user_id")
         task_session_id = (job.meta or {}).get("task_session_id")
         if (
-            job.task_type != "agent"
+            job.task_type not in {"agent", "text"}
             or not creator_user_id
             or not task_session_id
-            or not getattr(self._runner, "session", None)
         ):
             return
 
-        preview = await self._load_task_preview_text(
-            task_session_id,
-            creator_user_id,
-        )
+        if job.task_type == "text":
+            preview = (job.text or "").strip()
+            await self._append_text_task_message(
+                task_session_id,
+                creator_user_id,
+                preview,
+            )
+        else:
+            if not getattr(self._runner, "session", None):
+                return
+            preview = await self._load_task_preview_text(
+                task_session_id,
+                creator_user_id,
+            )
         async with self._lock:
             _, auto_paused, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._apply_task_execution_success(
@@ -1567,6 +1703,54 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 and self._scheduler.get_job(job.id)
             ):
                 self._scheduler.pause_job(job.id)
+
+    async def _append_text_task_message(
+        self,
+        session_id: str,
+        user_id: str,
+        text: str,
+    ) -> None:
+        if not text or not getattr(self._runner, "session", None):
+            return
+
+        existing_state = await self._runner.session.get_session_state_dict(
+            session_id,
+            user_id,
+            allow_not_exist=True,
+        )
+        task_messages = list(existing_state.get(TASK_MESSAGES_STATE_KEY, []))
+        timestamp = (
+            datetime.now(timezone.utc)
+            .isoformat()
+            .replace(
+                "+00:00",
+                "Z",
+            )
+        )
+        task_messages.append(
+            {
+                "id": f"cron-text-{uuid4()}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    },
+                ],
+                "metadata": {
+                    "cron_task": True,
+                },
+                "timestamp": timestamp,
+            },
+        )
+        merged_state = dict(existing_state)
+        merged_state[TASK_MESSAGES_STATE_KEY] = task_messages
+        await self._runner.session.save_merged_state(
+            session_id=session_id,
+            user_id=user_id,
+            state=merged_state,
+        )
 
     async def _load_task_preview_text(
         self,
@@ -2109,7 +2293,65 @@ class CronManager:  # pylint: disable=too-many-public-methods
             workspace_dir=workspace_dir,
         )
 
-    async def _execute_once(self, job: CronJobSpec) -> None:
+    def _record_failure_timing(
+        self,
+        st: CronJobState,
+        actual_time: datetime,
+        status: str,
+        error_msg: str,
+    ) -> tuple[datetime, int]:
+        """Record failure timing and update state. Returns (end_time, duration_ms)."""
+        end_time = datetime.now(timezone.utc)
+        duration_ms = int((end_time - actual_time).total_seconds() * 1000)
+        st.last_status = status
+        st.last_error = error_msg
+        return end_time, duration_ms
+
+    async def _sync_execution_to_monitor(
+        self,
+        job: CronJobSpec,
+        exec_status: str,
+        actual_time: datetime,
+        end_time: Optional[datetime],
+        duration_ms: int,
+        error_message: str,
+        output_preview: str,
+        is_manual: bool = False,
+    ) -> None:
+        """Sync execution record to Monitor service (non-blocking)."""
+        if self._monitor_sync_client is None:
+            return
+
+        trace_id = ""
+        session_id = str((job.meta or {}).get("task_session_id", "") or "")
+        try:
+            from ..tracing import get_current_trace
+
+            trace = get_current_trace()
+            if trace:
+                trace_id = trace.trace_id
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        await self._monitor_sync_client.record_execution(
+            job=job,
+            status=exec_status,
+            actual_time=actual_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            error_message=error_message,
+            is_manual=is_manual,
+            trace_id=trace_id,
+            session_id=session_id,
+            output_preview=output_preview,
+        )
+
+    async def _execute_once(
+        self,
+        job: CronJobSpec,
+        is_manual: bool = False,
+    ) -> None:
+        job = await self._ensure_persisted_task_binding(job)
         rt = self._rt.get(job.id)
         if not rt:
             rt = _Runtime(sem=asyncio.Semaphore(job.runtime.max_concurrency))
@@ -2120,10 +2362,22 @@ class CronManager:  # pylint: disable=too-many-public-methods
             st.last_status = "running"
             self._states[job.id] = st
 
+            # Track execution timing for Monitor sync
+            actual_time = datetime.now(timezone.utc)
+            end_time = None
+            duration_ms = 0
+            exec_status = "success"
+            error_message = ""
+            output_preview = ""
+
             try:
                 await self._executor.execute(job)
                 st.last_status = "success"
                 st.last_error = None
+                end_time = datetime.now(timezone.utc)
+                duration_ms = int(
+                    (end_time - actual_time).total_seconds() * 1000,
+                )
                 # 通知用 shield 保护，避免任务取消时误标记状态
                 try:
                     await asyncio.shield(
@@ -2135,22 +2389,41 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         "job_id=%s",
                         job.id,
                     )
-                await self._record_task_execution_success(job)
+                await asyncio.shield(
+                    self._record_task_execution_success(job),
+                )
+                # Get output preview from job meta
+                output_preview = str(
+                    (job.meta or {}).get("task_last_scheduled_preview", "")
+                    or "",
+                )[:100]
                 logger.info(
                     "cron _execute_once: job_id=%s status=success",
                     job.id,
                 )
             except asyncio.CancelledError:
-                st.last_status = "cancelled"
-                st.last_error = "Job was cancelled"
+                exec_status = "cancelled"
+                error_message = "Job was cancelled"
+                end_time, duration_ms = self._record_failure_timing(
+                    st,
+                    actual_time,
+                    "cancelled",
+                    error_message,
+                )
                 logger.info(
                     "cron _execute_once: job_id=%s status=cancelled",
                     job.id,
                 )
                 raise
             except Exception as e:  # pylint: disable=broad-except
-                st.last_status = "error"
-                st.last_error = repr(e)
+                exec_status = "error"
+                error_message = str(e)[:200]
+                end_time, duration_ms = self._record_failure_timing(
+                    st,
+                    actual_time,
+                    "error",
+                    repr(e),
+                )
                 logger.warning(
                     "cron _execute_once: job_id=%s status=error error=%s",
                     job.id,
@@ -2160,6 +2433,17 @@ class CronManager:  # pylint: disable=too-many-public-methods
             finally:
                 st.last_run_at = datetime.now(timezone.utc)
                 self._states[job.id] = st
+
+                await self._sync_execution_to_monitor(
+                    job=job,
+                    exec_status=exec_status,
+                    actual_time=actual_time,
+                    end_time=end_time,
+                    duration_ms=duration_ms,
+                    error_message=error_message,
+                    output_preview=output_preview,
+                    is_manual=is_manual,
+                )
 
     # ----- Legacy API compatibility -----
 

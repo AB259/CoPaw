@@ -5,7 +5,7 @@ import { getExternalToken, isExternalTokenEnabled } from "./externalToken";
 // 使用统一的 getUserId helper，遵循优先级：iframe > window > session > default
 import { getUserId } from "../utils/identity";
 import { getIframeContext } from "../stores/iframeStore";
-import { DEFAULT_SOURCE_ID, DEFAULT_BBK_ID } from "../constants/identity";
+import { DEFAULT_SOURCE_ID, DEFAULT_BBK_ID, DEFAULT_USER_NAME } from "../constants/identity";
 // ==================== userId 统一整改结束 ====================
 
 /**
@@ -90,12 +90,18 @@ export function buildAuthHeaders(): Record<string, string> {
     headers["X-Bbk-Id"] = bbkId;
   }
 
-  // 7. Space（来自 iframe context）
+  // 7. Username
+  const userName = iframeContext.userName || DEFAULT_USER_NAME;
+  if (userName) {
+    headers["X-Username"] = encodeURIComponent(userName);
+  }
+
+  // 8. Space（来自 iframe context）
   if (iframeContext.space) {
     headers["space"] = iframeContext.space;
   }
 
-  // 8. Cookie（仅在用户变更时添加）
+  // 9. Cookie（仅在用户变更时添加）
   if (iframeContext.userChange) {
     headers["x-header-cookie"] = document.cookie;
   }

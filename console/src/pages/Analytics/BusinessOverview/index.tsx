@@ -14,6 +14,7 @@ import {
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { tracingApi } from "../../../api/modules/tracing";
+import UserDetailModal from "./components/UserDetailModal";
 import {
   formatNumber,
   formatTokens,
@@ -120,6 +121,10 @@ export default function BusinessOverviewPage() {
     users: 0,
   });
 
+  // 用户详情弹窗状态
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
   // 计算结束日期
   const calculateEndDate = (start: dayjs.Dayjs, mode: TimeRange): dayjs.Dayjs => {
     switch (mode) {
@@ -201,7 +206,9 @@ export default function BusinessOverviewPage() {
       if (usersRes.status === "fulfilled") {
         const users = usersRes.value.items.map((u: any) => ({
           userId: u.user_id,
-          name: u.user_id, // 后端没返回name，用user_id代替
+          userName: u.user_name,
+          bbkId: u.bbk_id,
+          name: u.user_name || u.user_id, // 优先使用 user_name，否则使用 user_id
           calls: u.total_conversations,
           tokens: u.total_tokens,
           lastActive: u.last_active
@@ -844,7 +851,15 @@ export default function BusinessOverviewPage() {
         </span>
       </div>
       {users.map((user, index) => (
-        <div key={user.userId} className={styles.userItem}>
+        <div
+          key={user.userId}
+          className={styles.userItem}
+          onClick={() => {
+            setSelectedUserId(user.userId);
+            setModalOpen(true);
+          }}
+          style={{ cursor: "pointer" }}
+        >
           <span
             className={`${styles.rank} ${
               index === 0
@@ -860,7 +875,7 @@ export default function BusinessOverviewPage() {
           </span>
           <span className={styles.userName}>
             {user.name}
-            <span className={styles.userId}>({user.userId})</span>
+            {user.bbkId && <span className={styles.bbkId}> ({user.bbkId})</span>}
           </span>
           <span className={styles.userValue}>
             {metric === "calls"
@@ -1194,6 +1209,19 @@ export default function BusinessOverviewPage() {
           </div>
         </Col>
       </Row>
+
+      {/* 用户详情弹窗 */}
+      <UserDetailModal
+        open={modalOpen}
+        userId={selectedUserId}
+        startDate={startDate.format("YYYY-MM-DD")}
+        endDate={calculatedEndDate.format("YYYY-MM-DD")}
+        sourceId={platform !== "all" ? platform : undefined}
+        onClose={() => {
+          setModalOpen(false);
+          setSelectedUserId(null);
+        }}
+      />
     </div>
   );
 }

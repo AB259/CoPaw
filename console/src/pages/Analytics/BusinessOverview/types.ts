@@ -31,6 +31,8 @@ export interface BarChartData {
 
 export interface UserRow {
   userId: string;
+  userName?: string;
+  bbkId?: string;
   name: string;
   calls: number;
   tokens: number;
@@ -72,9 +74,12 @@ export type TimeRange = "day" | "week" | "month" | "custom";
 /**
  * 格式化数字（大数字用K/M表示）
  */
-export function formatNumber(value: number | undefined | null, decimals: number = 1): string {
-  // 确保是数字，非数字类型转为 0
-  const numValue = typeof value === "number" && !isNaN(value) ? value : 0;
+export function formatNumber(value: number | string | undefined | null, decimals: number = 1): string {
+  // 统一转换为数字
+  const numValue = Number(value);
+  if (isNaN(numValue)) {
+    return "0";
+  }
   if (numValue >= 1000000) {
     return `${(numValue / 1000000).toFixed(decimals)}M`;
   }
@@ -87,9 +92,12 @@ export function formatNumber(value: number | undefined | null, decimals: number 
 /**
  * 格式化Token数量
  */
-export function formatTokens(value: number | undefined | null): string {
-  // 确保是数字，非数字类型转为 0
-  const numValue = typeof value === "number" && !isNaN(value) ? value : 0;
+export function formatTokens(value: number | string | undefined | null): string {
+  // 统一转换为数字
+  const numValue = Number(value);
+  if (isNaN(numValue)) {
+    return "0";
+  }
   if (numValue >= 1000000000) {
     return `${(numValue / 1000000000).toFixed(2)}B`;
   }
@@ -134,4 +142,18 @@ export function truncateName(name: string, maxLength: number = 20): string {
   if (!name) return "";
   if (name.length <= maxLength) return name;
   return name.slice(0, maxLength) + "...";
+}
+
+// ============================================================
+// Modal 相关类型
+// ============================================================
+
+// 用户详情 Modal 状态类型
+export interface UserDetailModalProps {
+  open: boolean;
+  userId: string | null;
+  startDate?: string;
+  endDate?: string;
+  sourceId?: string;
+  onClose: () => void;
 }

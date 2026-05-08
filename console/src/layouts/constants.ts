@@ -17,6 +17,8 @@ export const DEFAULT_OPEN_KEYS = [
   "settings-group",
   "analytics-group",
   "instance-group",
+  "harness-group",
+  "market-group",
 ];
 
 export const KEY_TO_PATH: Record<string, string> = {
@@ -46,10 +48,15 @@ export const KEY_TO_PATH: Record<string, string> = {
   "analytics-messages": "/analytics/messages",
   "analytics-traces": "/analytics/traces",
   "analytics-business-overview": "/analytics/business-overview",
+  "monitor-cron-overview": "/monitor/cron-overview",
   "instance-overview": "/instance/overview",
   "instance-instances": "/instance/instances",
   "instance-allocations": "/instance/allocations",
   "instance-operation-logs": "/instance/operation-logs",
+  "continuous-iteration": "/continuous-iteration",
+  market: "/market",
+  "my-skills": "/my-skills",
+  "my-mcp": "/my-mcp",
 };
 
 export const KEY_TO_LABEL: Record<string, string> = {
@@ -79,6 +86,10 @@ export const KEY_TO_LABEL: Record<string, string> = {
   "instance-instances": "nav.instanceInstances",
   "instance-allocations": "nav.instanceAllocations",
   "instance-operation-logs": "nav.instanceOperationLogs",
+  "continuous-iteration": "nav.continuousIteration",
+  market: "nav.market",
+  "my-skills": "nav.mySkills",
+  "my-mcp": "nav.myMcp",
 };
 
 // ── URL helpers ───────────────────────────────────────────────────────────
