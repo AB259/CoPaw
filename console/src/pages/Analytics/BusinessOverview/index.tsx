@@ -111,6 +111,10 @@ export default function BusinessOverviewPage() {
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
 
+  // 用户过滤类型：filtered(已过滤) / all(全部) - 分别控制
+  const [callsFilterType, setCallsFilterType] = useState<"filtered" | "all">("filtered");
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
+
   // 折线图悬浮 tooltip 状态
   const [lineChartTooltip, setLineChartTooltip] = useState<{
     visible: boolean;
@@ -257,6 +261,7 @@ export default function BusinessOverviewPage() {
         end_date: endStr,
         source_id: filterSourceId,
         sort_by: "conversations",
+        filter_user_type: callsFilterType,
       });
       const users = transformUserData(res.items);
       if (append) {
@@ -271,7 +276,7 @@ export default function BusinessOverviewPage() {
       callsLoadingRef.current = false;
       setCallsLoading(false);
     }
-  }, [startDate, endDate, platform]);
+  }, [startDate, endDate, platform, callsFilterType]);
 
   // 加载最近活跃用户
   const fetchActiveUsers = useCallback(async (page: number, append: boolean = false) => {
@@ -288,6 +293,7 @@ export default function BusinessOverviewPage() {
         end_date: endStr,
         source_id: filterSourceId,
         sort_by: "last_active",
+        filter_user_type: activeFilterType,
       });
       const users = transformUserData(res.items);
       if (append) {
@@ -302,7 +308,7 @@ export default function BusinessOverviewPage() {
       activeLoadingRef.current = false;
       setActiveLoading(false);
     }
-  }, [startDate, endDate, platform]);
+  }, [startDate, endDate, platform, activeFilterType]);
 
   // 初始加载用户排行榜
   useEffect(() => {
@@ -1217,7 +1223,37 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.userRow}>
         <Col xs={24} lg={12}>
           <div className={styles.userCardScroll}>
-            <div className={styles.cardTitle}>调用数排行榜</div>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>调用数排行榜</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={callsFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "filtered") {
+                      setCallsFilterType("filtered");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={callsFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "all") {
+                      setCallsFilterType("all");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
             <div
               className={styles.userListScroll}
               onScroll={handleCallsScroll}
@@ -1234,7 +1270,37 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.userCardScroll}>
-            <div className={styles.cardTitle}>最近活跃用户</div>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>最近活跃用户</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "filtered") {
+                      setActiveFilterType("filtered");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "all") {
+                      setActiveFilterType("all");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
             <div
               className={styles.userListScroll}
               onScroll={handleActiveScroll}

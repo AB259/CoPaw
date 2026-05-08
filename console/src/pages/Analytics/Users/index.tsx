@@ -65,6 +65,7 @@ export default function UsersPage() {
         user_id: searchQuery || undefined,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
+        filter_user_type: "all", // 用户分析页面不过滤用户类型
       });
       setUsers(data.items || []);
       setTotal(data.total || 0);

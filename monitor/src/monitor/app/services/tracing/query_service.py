@@ -388,8 +388,13 @@ class TracingQueryService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         sort_by: Optional[str] = None,
+        filter_user_type: Optional[str] = "filtered",
     ) -> tuple[list[UserListItem], int]:
-        """获取用户列表."""
+        """获取用户列表.
+
+        Args:
+            filter_user_type: 'filtered' 过滤80/IT开头用户，'all' 仅过滤default用户
+        """
         order_by = "last_active DESC"
         if sort_by == "conversations":
             order_by = "total_conversations DESC"
@@ -404,7 +409,16 @@ class TracingQueryService:
             where_clauses = ["source_id = %s"]
             params = [source_id]
 
-        where_clauses.append("user_id != 'default'")
+        # 用户过滤逻辑
+        where_clauses.append("user_id != %s")
+        params.append("default")
+        if filter_user_type == "filtered":
+            # 过滤掉以 80 开头或以 IT 开头的用户
+            where_clauses.append(
+                "(user_id NOT LIKE %s AND user_id NOT LIKE %s)",
+            )
+            params.append("80%")
+            params.append("IT%")
 
         if user_id:
             where_clauses.append("user_id LIKE %s")
@@ -1563,6 +1577,13 @@ class TracingQueryService:
 
         spans = await self.get_spans(trace_id)
 
+        # 从 ES 获取 model_output
+        from ...database.elasticsearch import get_es_client
+
+        es_client = get_es_client()
+        if es_client and es_client.is_connected:
+            trace.model_output = await es_client.get_message(trace_id)
+
         llm_duration = sum(
             s.duration_ms or 0
             for s in spans
@@ -1609,6 +1630,14 @@ class TracingQueryService:
             return None
 
         spans = await self.get_spans(trace_id)
+
+        # 从 ES 获取 model_output
+        from ...database.elasticsearch import get_es_client
+
+        es_client = get_es_client()
+        if es_client and es_client.is_connected:
+            trace.model_output = await es_client.get_message(trace_id)
+
         timeline = self._build_timeline(spans)
         skill_invocations = self._build_skill_invocations(spans)
 
@@ -1663,7 +1692,10 @@ class TracingQueryService:
             end_date = datetime.now()
 
         if source_id == "all":
-            where_clauses = ["start_time >= %s", "start_time <= %s"]
+            where_clauses = [
+                "start_time >= %s",
+                "start_time <= %s",
+            ]
             params: list[Any] = [start_date, end_date]
         else:
             where_clauses = [
@@ -1756,7 +1788,7 @@ class TracingQueryService:
     # ===== 辅助方法 =====
 
     def _build_timeline(self, spans: list[Span]) -> list[TimelineEvent]:
-        """构建时间线."""
+        """构建时间线（只展示技能调用和LLM调用）."""
         spans = sorted(spans, key=lambda s: s.start_time)
 
         timeline: list[TimelineEvent] = []
@@ -1783,23 +1815,10 @@ class TracingQueryService:
 
                 skill_stack.append(event)
 
-            elif span.event_type == EventType.TOOL_CALL_END:
-                event = TimelineEvent(
-                    event_type="tool_call",
-                    span_id=span.span_id,
-                    start_time=span.start_time,
-                    end_time=span.end_time,
-                    duration_ms=span.duration_ms or 0,
-                    tool_name=span.tool_name,
-                    mcp_server=span.mcp_server,
-                    skill_weight=None,
-                    children=[],
-                )
-
+            elif span.event_type == EventType.SKILL_END:
+                # 技能结束时弹出栈
                 if skill_stack:
-                    skill_stack[-1].children.append(event)
-                else:
-                    timeline.append(event)
+                    skill_stack.pop()
 
             elif span.event_type == EventType.LLM_INPUT:
                 event = TimelineEvent(
@@ -1813,7 +1832,11 @@ class TracingQueryService:
                     output_tokens=span.output_tokens,
                     children=[],
                 )
-                timeline.append(event)
+
+                if skill_stack:
+                    skill_stack[-1].children.append(event)
+                else:
+                    timeline.append(event)
 
         return timeline
 

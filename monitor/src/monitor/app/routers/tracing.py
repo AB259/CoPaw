@@ -151,6 +151,10 @@ async def get_users(
         None,
         description="排序字段: conversations, last_active",
     ),
+    filter_user_type: Optional[str] = Query(
+        "filtered",
+        description="用户过滤类型: filtered(过滤80/IT开头用户), all(仅过滤default用户)",
+    ),
 ) -> dict:
     """获取用户列表及其统计信息.
 
@@ -162,6 +166,7 @@ async def get_users(
         start_date: 开始日期筛选
         end_date: 结束日期筛选
         sort_by: 排序字段（conversations, last_active）
+        filter_user_type: 用户过滤类型（filtered/all）
 
     Returns:
         分页的用户列表及统计信息
@@ -180,6 +185,7 @@ async def get_users(
         start,
         end,
         sort_by,
+        filter_user_type,
     )
     return {
         "items": [u.model_dump() for u in users],

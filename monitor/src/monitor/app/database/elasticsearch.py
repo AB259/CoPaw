@@ -6,7 +6,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ES 6.x server requires doc_type for index/get operations
+# ES 服务端 6.x 必须使用 doc_type，客户端 7.x 兼容传该参数
 _DOC_TYPE = "_doc"
 
 # Global client singleton
@@ -16,7 +16,7 @@ _es_client: Optional["ESClient"] = None
 class ESClient:
     """Async Elasticsearch client for model output queries.
 
-    Supports ES 6.x and 7.x versions.
+    ES 7.x 客户端兼容 ES 6.x 服务端（通过 doc_type 参数）。
     """
 
     def __init__(
@@ -57,12 +57,22 @@ class ESClient:
         hosts = [f"{scheme}://{self._host}:{self._port}"]
         kwargs: dict = {"hosts": hosts}
 
+        # ES 7.x 使用 http_auth，ES 8.x 使用 basic_auth
         if self._user and self._password:
-            kwargs["basic_auth"] = (self._user, self._password)
+            kwargs["http_auth"] = (self._user, self._password)
 
         try:
             self._es = AsyncElasticsearch(**kwargs)
-            await self._es.ping()
+            # ping() 在 401 时只警告不抛异常，需检查返回值
+            if not await self._es.ping():
+                logger.warning(
+                    "Elasticsearch ping failed: %s:%s",
+                    self._host,
+                    self._port,
+                )
+                self._connected = False
+                return
+
             self._connected = True
             logger.info(
                 "Elasticsearch connected: %s:%s, index=%s",
@@ -87,7 +97,7 @@ class ESClient:
             return None
 
         try:
-            # ES 6.x requires doc_type, ES 7.x accepts it as optional
+            # ES 7.x 客户端传 doc_type 兼容 ES 6.x 服务端
             result = await self._es.get(
                 index=self._index,
                 doc_type=_DOC_TYPE,
@@ -115,13 +125,20 @@ class ESClient:
 
         from datetime import datetime
 
+        # ES date 类型需要毫秒精度，截断微秒部分
+        now = datetime.utcnow()
+        created_at = (
+            now.strftime("%Y-%m-%dT%H:%M:%S")
+            + f".{now.microsecond // 1000:03d}Z"
+        )
+
         doc = {
             "trace_id": trace_id,
             "model_output": model_output,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": created_at,
         }
         try:
-            # ES 6.x requires doc_type, ES 7.x accepts it as optional
+            # ES 7.x 客户端传 doc_type 和 body 兼容 ES 6.x 服务端
             result = await self._es.index(
                 index=self._index,
                 doc_type=_DOC_TYPE,

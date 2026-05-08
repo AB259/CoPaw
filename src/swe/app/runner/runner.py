@@ -394,7 +394,7 @@ async def _index_model_output_to_monitor(
         "SWE_MONITOR_API_URL",
         "http://127.0.0.1:9090",
     )
-    url = f"{monitor_url}/api/monitor/tracing/model-output"
+    url = f"{monitor_url}/monitor/tracing/model-output"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -404,6 +404,11 @@ async def _index_model_output_to_monitor(
                     "trace_id": trace_id,
                     "model_output": model_output,
                 },
+            )
+            logger.debug(
+                "Monitor API response: status=%s, body=%s",
+                response.status_code,
+                response.text[:200] if response.text else "",
             )
             if response.status_code == 200:
                 result = response.json()
@@ -882,11 +887,26 @@ class AgentRunner(Runner):
 
             # 通过 Monitor API 写入 model_output 到 ES
             if trace_id and agent is not None:
+                logger.debug(
+                    "Preparing to index model output: trace_id=%s, agent=%s",
+                    trace_id,
+                    type(agent).__name__,
+                )
                 assistant_response = _extract_assistant_response(agent)
+                logger.debug(
+                    "Extracted assistant response: trace_id=%s, response_len=%d",
+                    trace_id,
+                    len(assistant_response) if assistant_response else 0,
+                )
                 if assistant_response:
                     await _index_model_output_to_monitor(
                         trace_id,
                         assistant_response,
+                    )
+                else:
+                    logger.warning(
+                        "No assistant response to index: trace_id=%s",
+                        trace_id,
                     )
 
             # End trace with success status

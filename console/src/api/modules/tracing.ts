@@ -287,6 +287,7 @@ export const tracingApi = {
       end_date?: string;
       source_id?: string;
       sort_by?: string;
+      filter_user_type?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -299,7 +300,13 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== "all") params.append(key, value);
+        // filter_user_type 需要传递 "all" 或 "filtered"
+        // source_id 使用 "all" 表示查询全部
+        if (key === "filter_user_type") {
+          if (value) params.append(key, value);
+        } else if (value && value !== "all") {
+          params.append(key, value);
+        }
       });
     }
     return request(`/monitor/tracing/users?${params.toString()}`);
