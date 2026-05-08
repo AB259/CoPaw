@@ -62,7 +62,6 @@ const pathToKey: Record<string, string> = {
   "/security": "security",
   "/token-usage": "token-usage",
   "/voice-transcription": "voice-transcription",
-  "/analytics/overview": "analytics-overview",
   "/analytics/users": "analytics-users",
   "/analytics/sessions": "analytics-sessions",
   "/analytics/messages": "analytics-messages",

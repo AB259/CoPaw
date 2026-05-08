@@ -7,7 +7,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..__version__ import __version__
-from ..config.constant import DOCS_ENABLED, CORS_ORIGINS, DB_HOST
+from ..config.constant import (
+    DOCS_ENABLED,
+    CORS_ORIGINS,
+    DB_HOST,
+    ES_HOST,
+    DB_INIT_TABLES,
+)
 from .routers import api_router
 
 logger = logging.getLogger(__name__)
@@ -34,7 +40,29 @@ async def lifespan(
     else:
         logger.info("Database not configured (MONITOR_DB_HOST not set)")
 
+    # Initialize Elasticsearch client if configured (用于查询 model_output)
+    if ES_HOST:
+        try:
+            from .database import init_es_client
+
+            await init_es_client()
+            logger.info("Elasticsearch client initialized successfully")
+        except Exception as e:
+            logger.warning("Elasticsearch initialization failed: %s", e)
+    else:
+        logger.info("Elasticsearch not configured (ES_HOST not set)")
+
     yield
+
+    # Close Elasticsearch client on shutdown
+    if ES_HOST:
+        try:
+            from .database import close_es_client
+
+            await close_es_client()
+            logger.info("Elasticsearch client closed")
+        except Exception as e:
+            logger.warning("Failed to close Elasticsearch client: %s", e)
 
     # Close database connection on shutdown
     if DB_HOST:

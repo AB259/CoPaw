@@ -33,6 +33,7 @@ import {
   TraceListItem,
   TraceDetail,
 } from "../../../api/modules/tracing";
+import { getBbkDisplayName } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -210,6 +211,20 @@ export default function SessionsPage() {
       key: "user_id",
       width: 120,
       ellipsis: true,
+    },
+    {
+      title: t("analytics.userName", "用户姓名"),
+      dataIndex: "user_name",
+      key: "user_name",
+      width: 100,
+      render: (v) => v || "-",
+    },
+    {
+      title: t("analytics.bbkId", "所属机构"),
+      dataIndex: "bbk_id",
+      key: "bbk_id",
+      width: 100,
+      render: (v) => getBbkDisplayName(v),
     },
     {
       title: t("analytics.channel", "Channel"),

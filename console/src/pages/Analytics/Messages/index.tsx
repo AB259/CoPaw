@@ -13,6 +13,7 @@ import { Download } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, UserMessageItem } from "../../../api/modules/tracing";
+import { getBbkDisplayName } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -161,6 +162,20 @@ export default function MessagesPage() {
       ellipsis: true,
     },
     {
+      title: t("analytics.userName", "用户姓名"),
+      dataIndex: "user_name",
+      key: "user_name",
+      width: 80,
+      render: (v) => v || "-",
+    },
+    {
+      title: t("analytics.bbkId", "所属机构"),
+      dataIndex: "bbk_id",
+      key: "bbk_id",
+      width: 80,
+      render: (v) => getBbkDisplayName(v),
+    },
+    {
       title: t("analytics.sessionId", "Session ID"),
       dataIndex: "session_id",
       key: "session_id",
@@ -171,11 +186,11 @@ export default function MessagesPage() {
       title: t("analytics.userMessage", "User Message"),
       dataIndex: "user_message",
       key: "user_message",
-      width: 380,
+      width: 320,
       render: (msg) => {
         if (!msg) return <span style={{ color: "#999" }}>-</span>;
-        const truncated = truncateMessage(msg, 150);
-        if (msg.length <= 150) {
+        const truncated = truncateMessage(msg, 120);
+        if (msg.length <= 120) {
           return <span className={styles.userMessage}>{msg}</span>;
         }
         return (
@@ -192,14 +207,14 @@ export default function MessagesPage() {
       title: t("analytics.inputTokens", "Input"),
       dataIndex: "input_tokens",
       key: "input_tokens",
-      width: 80,
+      width: 70,
       render: (v) => formatTokens(v),
     },
     {
       title: t("analytics.outputTokens", "Output"),
       dataIndex: "output_tokens",
       key: "output_tokens",
-      width: 80,
+      width: 70,
       render: (v) => formatTokens(v),
     },
     {

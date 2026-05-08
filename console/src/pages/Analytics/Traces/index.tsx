@@ -5,6 +5,7 @@ import { FileText, Clock, Zap, Bot, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
+import { getBbkDisplayName } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -12,6 +13,8 @@ const { RangePicker } = DatePicker;
 interface TraceListItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -128,7 +131,7 @@ export default function TracesPage() {
       title: t("analytics.traceId", "Trace ID"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 280,
+      width: 260,
       ellipsis: true,
       render: (v) => (
         <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
@@ -140,21 +143,35 @@ export default function TracesPage() {
       title: t("analytics.userId", "User ID"),
       dataIndex: "user_id",
       key: "user_id",
-      width: 120,
+      width: 100,
       ellipsis: true,
+    },
+    {
+      title: t("analytics.userName", "用户姓名"),
+      dataIndex: "user_name",
+      key: "user_name",
+      width: 80,
+      render: (v) => v || "-",
+    },
+    {
+      title: t("analytics.bbkId", "所属机构"),
+      dataIndex: "bbk_id",
+      key: "bbk_id",
+      width: 80,
+      render: (v) => getBbkDisplayName(v),
     },
     {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 160,
+      width: 150,
       render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
       dataIndex: "duration_ms",
       key: "duration_ms",
-      width: 100,
+      width: 90,
       render: (v) => formatDuration(v),
     },
     {
