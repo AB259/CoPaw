@@ -116,8 +116,8 @@ export default function CronOverviewPage() {
         job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
-        start_time: execsTimeRange[0]?.toISOString() || undefined,
-        end_time: execsTimeRange[1]?.toISOString() || undefined,
+        start_time: execsTimeRange[0]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
+        end_time: execsTimeRange[1]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
       });
       setExecutions(result.items);
       setExecsTotal(result.total);
@@ -190,8 +190,8 @@ export default function CronOverviewPage() {
         job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
-        start_time: execsTimeRange[0]?.toISOString() || undefined,
-        end_time: execsTimeRange[1]?.toISOString() || undefined,
+        start_time: execsTimeRange[0]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
+        end_time: execsTimeRange[1]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
