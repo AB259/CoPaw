@@ -114,6 +114,7 @@ export default function StatsCards({ stats }: StatsCardsProps) {
               value={item.value}
               suffix={item.suffix}
               valueStyle={item.valueStyle}
+              className={styles.statValue}
             />
           </div>
         </Card>

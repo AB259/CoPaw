@@ -193,6 +193,7 @@ export default function OrphanFilesPage() {
                   <FileOutlined />
                 </div>
                 <Statistic
+                  className={styles.statValue}
                   title={t("dreamLogs.orphanFiles.totalFiles")}
                   value={orphanFiles.total_files}
                 />
@@ -209,6 +210,7 @@ export default function OrphanFilesPage() {
                   <FolderOutlined />
                 </div>
                 <Statistic
+                  className={styles.statValue}
                   title={t("dreamLogs.orphanFiles.totalSize")}
                   value={formatSize(orphanFiles.total_size)}
                 />
