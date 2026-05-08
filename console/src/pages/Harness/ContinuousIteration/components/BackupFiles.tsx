@@ -188,50 +188,62 @@ export default function BackupFilesPage() {
     <div className={styles.container}>
       {backups && (
         <Row gutter={16} className={styles.statsRow}>
-          <Col span={8}>
-            <Card className={styles.statsCard}>
-              <Statistic
-                title={t("dreamLogs.backup.totalFiles")}
-                value={backups.total_files}
-                prefix={<FileOutlined />}
-              />
+          <Col span={12}>
+            <Card className={styles.subStatsCard}>
+              <div className={styles.statContent}>
+                <div
+                  className={styles.statIconCircle}
+                  style={{ background: "#f0f5ff", color: "#4f46e5" }}
+                >
+                  <FileOutlined />
+                </div>
+                <Statistic
+                  title={t("dreamLogs.backup.totalFiles")}
+                  value={backups.total_files}
+                />
+              </div>
             </Card>
           </Col>
-          <Col span={8}>
-            <Card className={styles.statsCard}>
-              <Statistic
-                title={t("dreamLogs.backup.totalSize")}
-                value={formatSize(backups.total_size)}
-                prefix={<DatabaseOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={8}>
-            <Card className={styles.statsCard}>
-              <Button
-                type="primary"
-                danger
-                icon={<DeleteFilled />}
-                onClick={handleDeleteAll}
-                disabled={backups.total_files === 0}
-                block
-              >
-                {t("dreamLogs.backup.deleteAll")}
-              </Button>
+          <Col span={12}>
+            <Card className={styles.subStatsCard}>
+              <div className={styles.statContent}>
+                <div
+                  className={styles.statIconCircle}
+                  style={{ background: "#eef2ff", color: "#4f46e5" }}
+                >
+                  <DatabaseOutlined />
+                </div>
+                <Statistic
+                  title={t("dreamLogs.backup.totalSize")}
+                  value={formatSize(backups.total_size)}
+                />
+              </div>
             </Card>
           </Col>
         </Row>
       )}
 
       <Card
+        className={styles.recordsCard}
         title={t("dreamLogs.backup.title")}
         extra={
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={fetchBackups}
-          >
-            {t("common.refresh")}
-          </Button>
+          <Space>
+            <Button
+              type="primary"
+              danger
+              icon={<DeleteFilled />}
+              onClick={handleDeleteAll}
+              disabled={!backups || backups.total_files === 0}
+            >
+              {t("dreamLogs.backup.deleteAll")}
+            </Button>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={fetchBackups}
+            >
+              {t("common.refresh")}
+            </Button>
+          </Space>
         }
       >
         <Spin spinning={loading}>
@@ -242,6 +254,7 @@ export default function BackupFilesPage() {
             />
           ) : (
             <Table
+              className={styles.customTable}
               columns={columns}
               dataSource={backups.files}
               rowKey="filename"
@@ -278,7 +291,7 @@ export default function BackupFilesPage() {
                   {t("dreamLogs.backup.size")}: {formatSize(previewContent.size)}
                 </Text>
               </Space>
-              <div className={styles.markdownContent} style={{ marginTop: 12, padding: 12, background: "#f5f5f5", borderRadius: 4 }}>
+              <div className={styles.markdownContent} style={{ marginTop: 12, padding: 12, background: "#f5f5f5", borderRadius: 8 }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {previewContent.content}
                 </ReactMarkdown>

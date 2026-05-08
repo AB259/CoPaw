@@ -1074,6 +1074,12 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             enabled=True,
             description="copy file to static",
         ),
+        "update_task_progress": BuiltinToolConfig(
+            name="update_task_progress",
+            enabled=True,
+            description="update task progress state",
+            display_to_user=False,
+        ),
     }
 
 

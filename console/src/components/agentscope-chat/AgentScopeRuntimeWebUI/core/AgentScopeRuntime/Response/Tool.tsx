@@ -26,6 +26,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   send_file_to_user: "发送文件",
 };
 
+const HIDDEN_TOOL_NAMES = new Set(["update_task_progress"]);
+
 function getToolDisplayName(toolName?: string, serverLabel?: string) {
   const label = toolName
     ? TOOL_DISPLAY_NAMES[toolName] || "工具操作"
@@ -54,9 +56,10 @@ const Tool = React.memo(function ({
   }>[];
   const loading = data.status === AgentScopeRuntimeRunStatus.InProgress;
   const toolName = content[0].data.name;
+  if (HIDDEN_TOOL_NAMES.has(toolName)) return null;
+
   const serverLabel = content[0].data.server_label;
   const defaultTitle = getToolDisplayName(toolName, serverLabel);
-
   const title = content[0].data.summary || defaultTitle;
   const input = content[0]?.data?.arguments;
   const output = content[1]?.data?.output;

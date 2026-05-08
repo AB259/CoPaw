@@ -12,7 +12,6 @@ import {
   Statistic,
   Row,
   Col,
-  Tag,
   Popconfirm,
   Typography,
   Alert,
@@ -85,7 +84,6 @@ export default function OrphanFilesPage() {
       const content = await dreamLogsApi.getOrphanFileContent(filepath);
       setPreviewContent(content);
     } catch (error) {
-      // Keep modal open and show error
       setPreviewContent({
         filename: filepath,
         content: "",
@@ -174,7 +172,7 @@ export default function OrphanFilesPage() {
           type="info"
           showIcon
           icon={<FolderOutlined />}
-          style={{ marginBottom: 16 }}
+          className={styles.workspaceAlert}
           message={
             <Space>
               <Text strong>{t("dreamLogs.orphanFiles.workspaceDir")}:</Text>
@@ -186,27 +184,42 @@ export default function OrphanFilesPage() {
       {orphanFiles && (
         <Row gutter={16} className={styles.statsRow}>
           <Col span={12}>
-            <Card className={styles.statsCard}>
-              <Statistic
-                title={t("dreamLogs.orphanFiles.totalFiles")}
-                value={orphanFiles.total_files}
-                prefix={<FileOutlined />}
-              />
+            <Card className={styles.subStatsCard}>
+              <div className={styles.statContent}>
+                <div
+                  className={styles.statIconCircle}
+                  style={{ background: "#f0f5ff", color: "#4f46e5" }}
+                >
+                  <FileOutlined />
+                </div>
+                <Statistic
+                  title={t("dreamLogs.orphanFiles.totalFiles")}
+                  value={orphanFiles.total_files}
+                />
+              </div>
             </Card>
           </Col>
           <Col span={12}>
-            <Card className={styles.statsCard}>
-              <Statistic
-                title={t("dreamLogs.orphanFiles.totalSize")}
-                value={formatSize(orphanFiles.total_size)}
-                prefix={<FolderOutlined />}
-              />
+            <Card className={styles.subStatsCard}>
+              <div className={styles.statContent}>
+                <div
+                  className={styles.statIconCircle}
+                  style={{ background: "#eef2ff", color: "#4f46e5" }}
+                >
+                  <FolderOutlined />
+                </div>
+                <Statistic
+                  title={t("dreamLogs.orphanFiles.totalSize")}
+                  value={formatSize(orphanFiles.total_size)}
+                />
+              </div>
             </Card>
           </Col>
         </Row>
       )}
 
       <Card
+        className={styles.recordsCard}
         title={t("dreamLogs.orphanFiles.title")}
         extra={
           <Button
@@ -225,6 +238,7 @@ export default function OrphanFilesPage() {
             />
           ) : (
             <Table
+              className={styles.customTable}
               columns={columns}
               dataSource={orphanFiles.files}
               rowKey="path"
@@ -262,24 +276,22 @@ export default function OrphanFilesPage() {
                 </Text>
               </Space>
 
-              {/* Error message display */}
               {!previewContent.is_loadable && (
                 <Alert
                   type="warning"
                   showIcon
-                  style={{ marginTop: 12 }}
+                  style={{ marginTop: 12, borderRadius: 8 }}
                   message={previewContent.error_message || t("dreamLogs.orphanFiles.previewFailed")}
                 />
               )}
 
-              {/* Image preview */}
               {previewContent.is_loadable && previewContent.file_type === "image" && (
                 <div
                   style={{
                     marginTop: 12,
                     padding: 12,
                     background: "#f5f5f5",
-                    borderRadius: 4,
+                    borderRadius: 8,
                     textAlign: "center",
                   }}
                 >
@@ -291,7 +303,6 @@ export default function OrphanFilesPage() {
                 </div>
               )}
 
-              {/* Text/Markdown preview */}
               {previewContent.is_loadable && previewContent.file_type === "text" && (
                 <div
                   className={styles.markdownContent}
@@ -299,7 +310,7 @@ export default function OrphanFilesPage() {
                     marginTop: 12,
                     padding: 12,
                     background: "#f5f5f5",
-                    borderRadius: 4,
+                    borderRadius: 8,
                   }}
                 >
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
