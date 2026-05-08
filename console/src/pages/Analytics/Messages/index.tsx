@@ -38,7 +38,7 @@ export default function MessagesPage() {
     searchQuery: "",
     userIdFilter: "",
     sessionIdFilter: "",
-    dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null,
+    dateRange: [dayjs().subtract(7, "day"), dayjs()] as [dayjs.Dayjs, dayjs.Dayjs] | null,
   });
 
   useEffect(() => {

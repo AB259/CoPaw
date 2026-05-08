@@ -42,7 +42,7 @@ export default function TracesPage() {
   const [userIdFilter, setUserIdFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
-    null,
+    [dayjs().subtract(30, "day"), dayjs()],
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);

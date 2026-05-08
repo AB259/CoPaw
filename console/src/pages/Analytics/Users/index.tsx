@@ -23,7 +23,7 @@ export default function UsersPage() {
   const [pageSize, setPageSize] = useState(20);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
-    null,
+    [dayjs().subtract(30, "day"), dayjs()],
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserStats | null>(null);
@@ -32,7 +32,7 @@ export default function UsersPage() {
   // 用于追踪筛选条件变化，避免 useEffect 重复触发
   const filtersRef = useRef({
     searchQuery: "",
-    dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null,
+    dateRange: [dayjs().subtract(30, "day"), dayjs()] as [dayjs.Dayjs, dayjs.Dayjs] | null,
   });
 
   useEffect(() => {
@@ -79,7 +79,12 @@ export default function UsersPage() {
   const fetchUserStats = async (userId: string) => {
     setUserLoading(true);
     try {
-      const data = await tracingApi.getUserStats(userId);
+      const data = await tracingApi.getUserStats(
+        userId,
+        undefined,
+        undefined,
+        "all", // 用户分析页面查询所有平台数据
+      );
       setSelectedUser(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
