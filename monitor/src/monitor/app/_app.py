@@ -7,7 +7,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..__version__ import __version__
-from ..config.constant import DOCS_ENABLED, CORS_ORIGINS, DB_HOST
+from ..config.constant import (
+    DOCS_ENABLED,
+    CORS_ORIGINS,
+    DB_HOST,
+    DB_INIT_TABLES,
+)
 from .routers import api_router
 
 logger = logging.getLogger(__name__)
@@ -36,7 +41,6 @@ async def lifespan(
 
     yield
 
-    # Close database connection on shutdown
     if DB_HOST:
         try:
             from .database import close_db_connection
