@@ -109,6 +109,8 @@ export interface TraceListItem {
 export interface SessionListItem {
   session_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   channel: string;
   total_traces: number;
   total_tokens: number;
@@ -284,6 +286,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      sort_by?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -382,7 +385,7 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
-      sourceId?: string;
+      source_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -530,6 +533,7 @@ export const tracingApi = {
     sessionGrowth: number;
     userGrowth: number;
     platformGrowth: number;
+    avgDurationGrowth: number;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);

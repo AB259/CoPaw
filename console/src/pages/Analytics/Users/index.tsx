@@ -9,6 +9,7 @@ import {
   UserStats,
   UserListItem,
 } from "../../../api/modules/tracing";
+import { getBbkDisplayName } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -111,6 +112,18 @@ export default function UsersPage() {
       render: (v) => (
         <span style={{ cursor: "pointer", color: "#1890ff" }}>{v}</span>
       ),
+    },
+    {
+      title: t("analytics.userName", "用户姓名"),
+      dataIndex: "user_name",
+      key: "user_name",
+      render: (v) => v || "-",
+    },
+    {
+      title: t("analytics.bbkId", "所属机构"),
+      dataIndex: "bbk_id",
+      key: "bbk_id",
+      render: (v) => getBbkDisplayName(v),
     },
     {
       title: t("analytics.sessions", "Sessions"),

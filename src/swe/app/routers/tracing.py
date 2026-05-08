@@ -4,6 +4,7 @@
 
 Provides REST API endpoints for tracing analytics.
 """
+
 from datetime import datetime, timedelta
 from typing import Optional
 import io
@@ -27,12 +28,16 @@ def _get_source_id(
     request: Request,
     query_source_id: Optional[str] = None,
 ) -> str:
-    """Get source_id from header or query parameter.
+    """Get source_id from query parameter or header.
 
     Priority:
-    1. X-Source-Id header
-    2. Query parameter source_id
+    1. Query parameter source_id
+    2. X-Source-Id header
     3. Default value "default"
+
+    Query parameter takes priority because it represents explicit user selection
+    in the UI (e.g., platform filter in analytics dashboard), while header comes
+    from iframe context and should only be used as fallback.
 
     Args:
         request: FastAPI request object
@@ -41,11 +46,11 @@ def _get_source_id(
     Returns:
         Source identifier string
     """
+    if query_source_id:
+        return query_source_id
     header_source_id = request.headers.get("X-Source-Id")
     if header_source_id:
         return header_source_id
-    if query_source_id:
-        return query_source_id
     return "default"
 
 
@@ -327,6 +332,10 @@ async def get_users(
         description="Start date (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort by field: conversations, last_active",
+    ),
 ) -> dict:
     """Get list of users with their statistics.
 
@@ -337,6 +346,7 @@ async def get_users(
         user_id: Filter by user ID
         start_date: Start date filter
         end_date: End date filter
+        sort_by: Sort by field (conversations, last_active)
 
     Returns:
         Paginated list of users with stats
@@ -359,6 +369,7 @@ async def get_users(
         user_id,
         start,
         end,
+        sort_by,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -474,7 +485,9 @@ async def get_trace_detail(
 
     Args:
         trace_id: Trace identifier
-        source_id: Source identifier (optional, defaults from header)
+        source_id: Source identifier (optional). If not provided, trace is
+            looked up by trace_id only without source filtering, since
+            trace_id is globally unique.
 
     Returns:
         Trace detail with all spans
@@ -482,7 +495,8 @@ async def get_trace_detail(
     Raises:
         HTTPException: If trace not found
     """
-    actual_source_id = _get_source_id(request, source_id)
+    # trace_id is globally unique, only use source_id if explicitly provided
+    actual_source_id = source_id if source_id else None
     try:
         manager = get_trace_manager()
         store = manager.store
@@ -894,7 +908,9 @@ async def get_trace_timeline(
 
     Args:
         trace_id: Trace identifier
-        source_id: Source identifier (optional, defaults from header)
+        source_id: Source identifier (optional). If not provided, trace is
+            looked up by trace_id only without source filtering, since
+            trace_id is globally unique.
 
     Returns:
         Trace detail with hierarchical timeline
@@ -902,7 +918,8 @@ async def get_trace_timeline(
     Raises:
         HTTPException: If trace not found
     """
-    actual_source_id = _get_source_id(request, source_id)
+    # trace_id is globally unique, only use source_id if explicitly provided
+    actual_source_id = source_id if source_id else None
     try:
         manager = get_trace_manager()
         store = manager.store
@@ -1017,7 +1034,7 @@ async def get_growth_stats(
         time_range: Time range type for calculating previous period
 
     Returns:
-        Growth stats: callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth
+        Growth stats: callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth, avgDurationGrowth
     """
     # Use 'all' to get data across all sources when not specified
     actual_source_id = source_id or "all"
@@ -1031,6 +1048,7 @@ async def get_growth_stats(
             "sessionGrowth": 0,
             "userGrowth": 0,
             "platformGrowth": 0,
+            "avgDurationGrowth": 0,
         }
 
     start = _parse_date(start_date, "start_date")
