@@ -1114,7 +1114,7 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              platformData.userGrowth > 0 ? styles.positive : styles.negative
+              platformData.userGrowth > 0 ? styles.negative : styles.positive
             }`}
           >
             {formatChange(platformData.userGrowth)} 环比
@@ -1135,7 +1135,7 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.tokensGrowth > 0 ? styles.positive : styles.negative
+              metricData.tokensGrowth > 0 ? styles.negative : styles.positive
             }`}
           >
             {formatChange(metricData.tokensGrowth)} 环比
@@ -1148,7 +1148,7 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.sessionGrowth > 0 ? styles.positive : styles.negative
+              metricData.sessionGrowth > 0 ? styles.negative : styles.positive
             }`}
           >
             {formatChange(metricData.sessionGrowth)} 环比
@@ -1161,7 +1161,7 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.callsGrowth > 0 ? styles.positive : styles.negative
+              metricData.callsGrowth > 0 ? styles.negative : styles.positive
             }`}
           >
             {formatChange(metricData.callsGrowth)} 环比
@@ -1175,7 +1175,7 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              growthStats.avgDurationGrowth > 0 ? styles.positive : styles.negative
+              growthStats.avgDurationGrowth > 0 ? styles.negative : styles.positive
             }`}
           >
             {formatChange(growthStats.avgDurationGrowth)} 环比
