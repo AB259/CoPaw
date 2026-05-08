@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Monitor 常量与环境变量加载工具."""
+
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-
 
 _ENV_VAR_OVERRIDES: ContextVar[dict[str, str]] = ContextVar(
     "monitor_env_var_overrides",
@@ -186,3 +186,33 @@ HEALTH_CHECK_TIMEOUT = EnvVarLoader.get_float(
     10.0,
     min_value=1.0,
 )
+
+# ============================================================
+# Tracing 数据库配置（复用 SWE 数据库）
+# ============================================================
+
+TRACING_DB_HOST = EnvVarLoader.get_str("TRACING_DB_HOST", "")
+TRACING_DB_PORT = EnvVarLoader.get_int("TRACING_DB_PORT", 3306, min_value=1)
+TRACING_DB_USER = EnvVarLoader.get_str("TRACING_DB_USER", "root")
+TRACING_DB_ACCESS = EnvVarLoader.get_str("TRACING_DB_ACCESS", "")
+TRACING_DB_NAME = EnvVarLoader.get_str("TRACING_DB_NAME", "swe")
+TRACING_DB_MIN_CONN = EnvVarLoader.get_int(
+    "TRACING_DB_MIN_CONN",
+    2,
+    min_value=1,
+)
+TRACING_DB_MAX_CONN = EnvVarLoader.get_int(
+    "TRACING_DB_MAX_CONN",
+    10,
+    min_value=1,
+)
+
+# ============================================================
+# Elasticsearch 配置
+# ============================================================
+
+ES_HOST = EnvVarLoader.get_str("ES_HOST", "")
+ES_PORT = EnvVarLoader.get_int("ES_PORT", 9200, min_value=1)
+ES_USER = EnvVarLoader.get_str("ES_USER", "")
+ES_PASSWORD = EnvVarLoader.get_str("ES_PASSWORD", "")
+ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_messages")
