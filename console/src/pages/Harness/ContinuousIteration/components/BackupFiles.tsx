@@ -214,6 +214,7 @@ export default function BackupFilesPage() {
                   <DatabaseOutlined />
                 </div>
                 <Statistic
+                  className={styles.statValue}
                   title={t("dreamLogs.backup.totalSize")}
                   value={formatSize(backups.total_size)}
                 />
