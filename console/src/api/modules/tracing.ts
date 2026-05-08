@@ -109,6 +109,8 @@ export interface TraceListItem {
 export interface SessionListItem {
   session_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   channel: string;
   total_traces: number;
   total_tokens: number;
