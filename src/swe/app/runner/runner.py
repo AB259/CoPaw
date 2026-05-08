@@ -380,6 +380,59 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     return ""
 
 
+async def _index_model_output_to_monitor(
+    trace_id: str,
+    model_output: str,
+) -> None:
+    """通过 Monitor API 写入 model_output 到 ES.
+
+    Args:
+        trace_id: 追踪 ID
+        model_output: 模型输出文本
+    """
+    monitor_url = os.environ.get(
+        "SWE_MONITOR_API_URL",
+        "http://127.0.0.1:9090",
+    )
+    url = f"{monitor_url}/api/monitor/tracing/model-output"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "trace_id": trace_id,
+                    "model_output": model_output,
+                },
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(
+                        "Model output indexed via Monitor API: trace_id=%s",
+                        trace_id,
+                    )
+                else:
+                    logger.info(
+                        "Model output write skipped: trace_id=%s, reason=%s",
+                        trace_id,
+                        result.get("reason", "unknown"),
+                    )
+            else:
+                logger.warning(
+                    "Monitor API returned %s: trace_id=%s",
+                    response.status_code,
+                    trace_id,
+                )
+    except httpx.TimeoutException:
+        logger.warning("Monitor API timeout: trace_id=%s", trace_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to call Monitor API for model_output: %s",
+            e,
+        )
+
+
 async def _generate_and_store_suggestions(
     session_id: str,
     user_message: str,
@@ -827,36 +880,14 @@ class AgentRunner(Runner):
             ):
                 yield msg, last
 
-            # Index model output to Elasticsearch
+            # 通过 Monitor API 写入 model_output 到 ES
             if trace_id and agent is not None:
                 assistant_response = _extract_assistant_response(agent)
-                logger.info(
-                    "ES write check: trace_id=%s, response_len=%d",
-                    trace_id,
-                    len(assistant_response) if assistant_response else 0,
-                )
                 if assistant_response:
-                    try:
-                        from ...elasticsearch import get_es_client
-
-                        es_client = get_es_client()
-                        if es_client and es_client.is_connected:
-                            await es_client.index_message(
-                                trace_id,
-                                assistant_response,
-                            )
-                        else:
-                            logger.warning(
-                                "ES client not available: connected=%s",
-                                es_client.is_connected if es_client else None,
-                            )
-                    except Exception as es_err:
-                        logger.warning(
-                            "Failed to index model output to ES: %s",
-                            es_err,
-                        )
-                else:
-                    logger.info("ES write skipped: empty assistant_response")
+                    await _index_model_output_to_monitor(
+                        trace_id,
+                        assistant_response,
+                    )
 
             # End trace with success status
             if trace_id and has_trace_manager():

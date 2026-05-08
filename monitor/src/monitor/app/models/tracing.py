@@ -467,3 +467,10 @@ class UserMessageItem(BaseModel):
     model_name: Optional[str] = None
     start_time: datetime
     duration_ms: Optional[int] = None
+
+
+class ModelOutputRequest(BaseModel):
+    """Model output 写入请求."""
+
+    trace_id: str = Field(description="追踪 ID")
+    model_output: str = Field(description="模型输出文本")

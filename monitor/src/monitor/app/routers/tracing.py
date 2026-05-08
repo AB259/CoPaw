@@ -5,11 +5,14 @@
 提供运营看板的数据查询和导出 API 端点。
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from ..models.tracing import (
     OverviewStats,
@@ -17,8 +20,10 @@ from ..models.tracing import (
     TraceDetailWithTimeline,
     SessionStats,
     UserStats,
+    ModelOutputRequest,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
+from ..database import get_es_client
 
 
 def _get_source_id(
@@ -849,3 +854,41 @@ async def get_mcp_usage(
         "mcp_tools": [t.model_dump() for t in stats.top_mcp_tools],
         "mcp_servers": [s.model_dump() for s in stats.mcp_servers],
     }
+
+
+# ===== Model Output 写入 =====
+
+
+@router.post("/model-output")
+async def index_model_output(
+    request: Request,
+    body: ModelOutputRequest,
+):
+    """写入 model_output 到 ES.
+
+    由 SWE 服务调用，将 model_output 写入 Elasticsearch。
+
+    Args:
+        body: 包含 trace_id 和 model_output
+
+    Returns:
+        写入结果
+    """
+    es_client = get_es_client()
+    if es_client is None or not es_client.is_connected:
+        # ES 未配置，静默跳过（与原 SWE 行为一致）
+        logger.info("ES not configured, skipping model_output write")
+        return {"status": "skipped", "reason": "ES not configured"}
+
+    try:
+        success = await es_client.index_message(
+            body.trace_id,
+            body.model_output,
+        )
+        if success:
+            return {"status": "success"}
+        else:
+            return {"status": "failed"}
+    except Exception as e:
+        logger.warning("Failed to write model_output: %s", e)
+        return {"status": "failed", "error": str(e)}
