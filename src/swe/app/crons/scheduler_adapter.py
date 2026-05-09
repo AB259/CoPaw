@@ -342,7 +342,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
     async def _post(self, path: str, payload: dict) -> dict:
         """发送 POST 请求到外部调度平台，处理通用错误。"""
         url = f"{self._base_url}{path}"
-        logger.debug("RealAdapter POST %s: %s", url, payload)
+        logger.info("RealAdapter POST %s: %s", url, payload)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()

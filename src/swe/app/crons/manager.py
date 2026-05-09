@@ -1419,7 +1419,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         tenant/agent/job 等参数已通过 jobParam 传递，URL 统一使用短路径。
         """
-        base = os.environ.get("SWE_SERVER_DOMAIN", "http://localhost:8000")
+        base = (
+            os.environ.get("SWE_SERVER_DOMAIN", "").strip()
+            or "http://localhost:8000"
+        )
         return f"{base}/api/internal/cron/callback"
 
     async def _refresh_next_run_at(self, job_id: str) -> None:
