@@ -73,7 +73,7 @@ def normalize_system_prompt_files(
     Existing custom selections are preserved verbatim. Historical defaults are
     normalized to the current ordered default that includes MEMORY.md.
     """
-    if not files:
+    if files is None:
         return get_default_system_prompt_files()
 
     normalized_files = list(files)
@@ -1524,10 +1524,7 @@ def load_agent_config(
                 else AgentsLLMRoutingConfig()
             ),
             system_prompt_files=normalize_system_prompt_files(
-                config.agents.system_prompt_files
-                if hasattr(config.agents, "system_prompt_files")
-                and config.agents.system_prompt_files
-                else None,
+                getattr(config.agents, "system_prompt_files", None),
             ),
         )
         # Save for future use

@@ -137,10 +137,7 @@ def _do_migrate_legacy_workspace() -> bool:
         ),
         # llm_routing removed - now managed at tenant level
         system_prompt_files=normalize_system_prompt_files(
-            legacy_agents.system_prompt_files
-            if hasattr(legacy_agents, "system_prompt_files")
-            and legacy_agents.system_prompt_files
-            else None,
+            getattr(legacy_agents, "system_prompt_files", None),
         ),
         tools=config.tools if hasattr(config, "tools") else None,
         security=config.security if hasattr(config, "security") else None,
