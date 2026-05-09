@@ -264,6 +264,7 @@ class UserStats(BaseModel):
     avg_duration_ms: int = 0
     tools_used: list[ToolUsage] = Field(default_factory=list)
     skills_used: list[SkillUsage] = Field(default_factory=list)
+    mcp_tools_used: list[MCPToolUsage] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):

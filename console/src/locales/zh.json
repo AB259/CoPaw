@@ -26,6 +26,7 @@
     "actions": "操作",
     "overwrite": "覆盖",
     "rename": "重命名",
+    "search": "查询",
     "total": "共 {{count}} 条"
   },
   "nav": {

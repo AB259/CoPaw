@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tracing query service for operational dashboard."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -68,34 +69,59 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        total_users = await self._get_total_users(
-            source_id,
-            start_date,
-            end_date,
-        )
-        online_users, online_user_ids = await self._get_online_users(source_id)
-        token_row = await self._get_token_stats(
-            source_id,
-            start_date,
-            end_date,
-        )
-        model_distribution = await self._get_model_distribution(
-            source_id,
-            start_date,
-            end_date,
-        )
-        top_tools = await self._get_top_tools(source_id, start_date, end_date)
-        top_skills = await self._get_top_skills(
-            source_id,
-            start_date,
-            end_date,
-        )
-        top_mcp_tools, mcp_servers = await self._get_mcp_stats(
-            source_id,
-            start_date,
-            end_date,
+        # 并行获取各项统计数据
+        (
+            total_users,
+            (online_users, online_user_ids),
+            token_row,
+            model_distribution,
+            top_tools,
+            top_skills,
+            (top_mcp_tools, mcp_servers),
+        ) = await self._fetch_overview_data(source_id, start_date, end_date)
+
+        return self._build_overview_stats(
+            online_users=online_users,
+            online_user_ids=online_user_ids,
+            total_users=total_users,
+            model_distribution=model_distribution,
+            token_row=token_row,
+            top_tools=top_tools,
+            top_skills=top_skills,
+            top_mcp_tools=top_mcp_tools,
+            mcp_servers=mcp_servers,
         )
 
+    async def _fetch_overview_data(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list:
+        """并行获取运营概览的各项数据."""
+        return await asyncio.gather(
+            self._get_total_users(source_id, start_date, end_date),
+            self._get_online_users(source_id),
+            self._get_token_stats(source_id, start_date, end_date),
+            self._get_model_distribution(source_id, start_date, end_date),
+            self._get_top_tools(source_id, start_date, end_date),
+            self._get_top_skills(source_id, start_date, end_date),
+            self._get_mcp_stats(source_id, start_date, end_date),
+        )
+
+    def _build_overview_stats(
+        self,
+        online_users: int,
+        online_user_ids: list[str],
+        total_users: int,
+        model_distribution: list,
+        token_row: Optional[dict],
+        top_tools: list,
+        top_skills: list,
+        top_mcp_tools: list,
+        mcp_servers: list,
+    ) -> OverviewStats:
+        """构建运营概览统计对象."""
         return OverviewStats(
             online_users=online_users,
             online_user_ids=online_user_ids,
@@ -110,17 +136,19 @@ class TracingQueryService:
             total_conversations=(
                 token_row["total_traces"] or 0 if token_row else 0
             ),
-            avg_duration_ms=(
-                int(token_row["avg_duration"] or 0)
-                if token_row and token_row["avg_duration"]
-                else 0
-            ),
+            avg_duration_ms=self._extract_avg_duration(token_row),
             top_tools=top_tools,
             top_skills=top_skills,
             top_mcp_tools=top_mcp_tools,
             mcp_servers=mcp_servers,
             daily_trend=[],
         )
+
+    def _extract_avg_duration(self, token_row: Optional[dict]) -> int:
+        """从 token 统计行中提取平均时长."""
+        if token_row and token_row.get("avg_duration"):
+            return int(token_row["avg_duration"] or 0)
+        return 0
 
     async def get_growth_stats(
         self,
@@ -140,9 +168,17 @@ class TracingQueryService:
             period_days = (end_date - start_date).days
 
         prev_start = start_date - timedelta(days=period_days)
-        prev_end = start_date - timedelta(seconds=1)
+        # 使用 start_date 作为上一周期的结束时间，配合 SQL 的 < 比较
+        # 避免使用 timedelta(seconds=1) 造成的时间间隙问题
+        prev_end = start_date
 
-        async def get_stats(s: datetime, e: datetime) -> dict:
+        async def get_stats(
+            s: datetime,
+            e: datetime,
+            is_prev: bool = False,
+        ) -> dict:
+            # 对于上一周期，使用 < 比较；对于当前周期，使用 <= 比较
+            time_compare = "<" if is_prev else "<="
             if source_id == "all":
                 exclude_placeholders = ", ".join(
                     ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -156,7 +192,7 @@ class TracingQueryService:
                         COUNT(DISTINCT source_id) as platforms,
                         AVG(duration_ms) as avg_duration
                     FROM swe_tracing_traces
-                    WHERE start_time >= %s AND start_time <= %s
+                    WHERE start_time >= %s AND start_time {time_compare} %s
                       AND source_id NOT IN ({exclude_placeholders})
                       AND user_id != 'default'
                 """
@@ -165,7 +201,7 @@ class TracingQueryService:
                     (s, e, *EXCLUDED_SOURCE_IDS),
                 )
             else:
-                query = """
+                query = f"""
                     SELECT
                         COUNT(*) as calls,
                         COALESCE(SUM(total_tokens), 0) as tokens,
@@ -174,7 +210,7 @@ class TracingQueryService:
                         COUNT(DISTINCT channel) as platforms,
                         AVG(duration_ms) as avg_duration
                     FROM swe_tracing_traces
-                    WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                    WHERE source_id = %s AND start_time >= %s AND start_time {time_compare} %s
                       AND user_id != 'default'
                 """
                 row = await self._db.fetch_one(query, (source_id, s, e))
@@ -197,8 +233,8 @@ class TracingQueryService:
                 "avg_duration": float(row["avg_duration"] or 0),
             }
 
-        curr = await get_stats(start_date, end_date)
-        prev = await get_stats(prev_start, prev_end)
+        curr = await get_stats(start_date, end_date, is_prev=False)
+        prev = await get_stats(prev_start, prev_end, is_prev=True)
 
         def calc_growth(curr_val: float, prev_val: float) -> float:
             if prev_val == 0:
@@ -518,8 +554,40 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now()
 
+        stats_row = await self._fetch_user_stats_row(
+            source_id,
+            user_id,
+            start_date,
+            end_date,
+        )
+        model_usage, tools_used, skills_used, mcp_tools_used = (
+            await self._fetch_user_usage_data(
+                source_id,
+                user_id,
+                start_date,
+                end_date,
+            )
+        )
+
+        return self._build_user_stats(
+            user_id=user_id,
+            stats_row=stats_row,
+            model_usage=model_usage,
+            tools_used=tools_used,
+            skills_used=skills_used,
+            mcp_tools_used=mcp_tools_used,
+        )
+
+    async def _fetch_user_stats_row(
+        self,
+        source_id: str,
+        user_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> Optional[dict]:
+        """获取用户统计行数据."""
         if source_id == "all":
-            stats_query = """
+            query = """
                 SELECT
                     COUNT(DISTINCT session_id) as total_sessions,
                     COUNT(*) as total_conversations,
@@ -530,46 +598,72 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE user_id = %s AND start_time >= %s AND start_time <= %s
             """
-            stats_row = await self._db.fetch_one(
-                stats_query,
+            return await self._db.fetch_one(
+                query,
                 (user_id, start_date, end_date),
             )
-        else:
-            stats_query = """
-                SELECT
-                    COUNT(DISTINCT session_id) as total_sessions,
-                    COUNT(*) as total_conversations,
-                    SUM(total_input_tokens) as input_tokens,
-                    SUM(total_output_tokens) as output_tokens,
-                    SUM(total_tokens) as total_tokens,
-                    AVG(duration_ms) as avg_duration
-                FROM swe_tracing_traces
-                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-            """
-            stats_row = await self._db.fetch_one(
-                stats_query,
-                (source_id, user_id, start_date, end_date),
-            )
 
-        model_usage = await self._get_user_model_usage(
-            source_id,
-            user_id,
-            start_date,
-            end_date,
-        )
-        tools_used = await self._get_user_tool_usage(
-            source_id,
-            user_id,
-            start_date,
-            end_date,
-        )
-        skills_used = await self._get_user_skill_usage(
-            source_id,
-            user_id,
-            start_date,
-            end_date,
+        query = """
+            SELECT
+                COUNT(DISTINCT session_id) as total_sessions,
+                COUNT(*) as total_conversations,
+                SUM(total_input_tokens) as input_tokens,
+                SUM(total_output_tokens) as output_tokens,
+                SUM(total_tokens) as total_tokens,
+                AVG(duration_ms) as avg_duration
+            FROM swe_tracing_traces
+            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+        """
+        return await self._db.fetch_one(
+            query,
+            (source_id, user_id, start_date, end_date),
         )
 
+    async def _fetch_user_usage_data(
+        self,
+        source_id: str,
+        user_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> tuple:
+        """并行获取用户使用数据."""
+        return await asyncio.gather(
+            self._get_user_model_usage(
+                source_id,
+                user_id,
+                start_date,
+                end_date,
+            ),
+            self._get_user_tool_usage(
+                source_id,
+                user_id,
+                start_date,
+                end_date,
+            ),
+            self._get_user_skill_usage(
+                source_id,
+                user_id,
+                start_date,
+                end_date,
+            ),
+            self._get_user_mcp_tool_usage(
+                source_id,
+                user_id,
+                start_date,
+                end_date,
+            ),
+        )
+
+    def _build_user_stats(
+        self,
+        user_id: str,
+        stats_row: Optional[dict],
+        model_usage: list,
+        tools_used: list,
+        skills_used: list,
+        mcp_tools_used: list,
+    ) -> UserStats:
+        """构建用户统计对象."""
         return UserStats(
             user_id=user_id,
             model_usage=model_usage,
@@ -582,13 +676,10 @@ class TracingQueryService:
             total_conversations=(
                 stats_row["total_conversations"] or 0 if stats_row else 0
             ),
-            avg_duration_ms=(
-                int(stats_row["avg_duration"] or 0)
-                if stats_row and stats_row["avg_duration"]
-                else 0
-            ),
+            avg_duration_ms=self._extract_avg_duration(stats_row),
             tools_used=tools_used,
             skills_used=skills_used,
+            mcp_tools_used=mcp_tools_used,
         )
 
     # ===== 私有辅助方法 =====
@@ -1189,6 +1280,59 @@ class TracingQueryService:
             for row in skill_rows
         ]
 
+    async def _get_user_mcp_tool_usage(
+        self,
+        source_id: str,
+        user_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[MCPToolUsage]:
+        """获取用户 MCP 工具使用."""
+        if source_id == "all":
+            query = """
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND tool_name IS NOT NULL
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+            """
+            rows = await self._db.fetch_all(
+                query,
+                (user_id, start_date, end_date),
+            )
+        else:
+            query = """
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND tool_name IS NOT NULL
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+            """
+            rows = await self._db.fetch_all(
+                query,
+                (source_id, user_id, start_date, end_date),
+            )
+        return [
+            MCPToolUsage(
+                tool_name=row["tool_name"],
+                mcp_server=row["mcp_server"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
+
     # ===== 会话分析 =====
 
     async def get_sessions(
@@ -1316,7 +1460,68 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now()
 
-        stats_row = await self._db.fetch_one(
+        stats_row = await self._fetch_session_stats_row(
+            source_id,
+            session_id,
+            start_date,
+            end_date,
+        )
+
+        if not stats_row or not stats_row.get("user_id"):
+            return SessionStats(session_id=session_id, user_id="", channel="")
+
+        user_id = stats_row["user_id"]
+        channel = stats_row["channel"] or ""
+
+        model_usage, tools_used, skills_used, mcp_tools_used = (
+            await asyncio.gather(
+                self._fetch_session_model_usage(
+                    source_id,
+                    session_id,
+                    start_date,
+                    end_date,
+                ),
+                self._fetch_session_tools_used(
+                    source_id,
+                    session_id,
+                    start_date,
+                    end_date,
+                ),
+                self._fetch_session_skills_used(
+                    source_id,
+                    session_id,
+                    start_date,
+                    end_date,
+                ),
+                self._fetch_session_mcp_tools(
+                    source_id,
+                    session_id,
+                    start_date,
+                    end_date,
+                ),
+            )
+        )
+
+        return self._build_session_stats(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            stats_row=stats_row,
+            model_usage_rows=model_usage,
+            tools_used_rows=tools_used,
+            skills_used_rows=skills_used,
+            mcp_tools_rows=mcp_tools_used,
+        )
+
+    async def _fetch_session_stats_row(
+        self,
+        source_id: str,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> Optional[dict]:
+        """获取会话统计行数据."""
+        return await self._db.fetch_one(
             """
             SELECT
                 user_id,
@@ -1335,13 +1540,15 @@ class TracingQueryService:
             (source_id, session_id, start_date, end_date),
         )
 
-        if not stats_row or not stats_row.get("user_id"):
-            return SessionStats(session_id=session_id, user_id="", channel="")
-
-        user_id = stats_row["user_id"]
-        channel = stats_row["channel"] or ""
-
-        model_usage = await self._db.fetch_all(
+    async def _fetch_session_model_usage(
+        self,
+        source_id: str,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list:
+        """获取会话模型使用数据."""
+        return await self._db.fetch_all(
             """
             SELECT model_name, COUNT(*) as count,
                    SUM(total_input_tokens) as input_tokens,
@@ -1356,7 +1563,15 @@ class TracingQueryService:
             (source_id, session_id, start_date, end_date),
         )
 
-        tools_used = await self._db.fetch_all(
+    async def _fetch_session_tools_used(
+        self,
+        source_id: str,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list:
+        """获取会话工具使用数据."""
+        return await self._db.fetch_all(
             """
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
@@ -1372,7 +1587,15 @@ class TracingQueryService:
             (source_id, session_id, start_date, end_date),
         )
 
-        skills_used = await self._db.fetch_all(
+    async def _fetch_session_skills_used(
+        self,
+        source_id: str,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list:
+        """获取会话技能使用数据."""
+        return await self._db.fetch_all(
             """
             SELECT skill_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration
@@ -1386,7 +1609,15 @@ class TracingQueryService:
             (source_id, session_id, start_date, end_date),
         )
 
-        mcp_tools_used = await self._db.fetch_all(
+    async def _fetch_session_mcp_tools(
+        self,
+        source_id: str,
+        session_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list:
+        """获取会话 MCP 工具使用数据."""
+        return await self._db.fetch_all(
             """
             SELECT tool_name, mcp_server, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
@@ -1401,59 +1632,83 @@ class TracingQueryService:
             (source_id, session_id, start_date, end_date),
         )
 
+    def _build_session_stats(
+        self,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        stats_row: dict,
+        model_usage_rows: list,
+        tools_used_rows: list,
+        skills_used_rows: list,
+        mcp_tools_rows: list,
+    ) -> SessionStats:
+        """构建会话统计对象."""
         return SessionStats(
             session_id=session_id,
             user_id=user_id,
             channel=channel,
-            model_usage=[
-                ModelUsage(
-                    model_name=row["model_name"],
-                    count=row["count"],
-                    total_tokens=row["total_tokens"] or 0,
-                    input_tokens=row["input_tokens"] or 0,
-                    output_tokens=row["output_tokens"] or 0,
-                )
-                for row in model_usage
-            ],
+            model_usage=self._build_model_usage_list(model_usage_rows),
             total_tokens=stats_row["total_tokens"] or 0,
             input_tokens=stats_row["input_tokens"] or 0,
             output_tokens=stats_row["output_tokens"] or 0,
             total_traces=stats_row["total_traces"] or 0,
-            avg_duration_ms=(
-                int(stats_row["avg_duration"] or 0)
-                if stats_row and stats_row["avg_duration"]
-                else 0
-            ),
-            tools_used=[
-                ToolUsage(
-                    tool_name=row["tool_name"],
-                    count=row["count"],
-                    avg_duration_ms=int(row["avg_duration"] or 0),
-                    error_count=row["error_count"] or 0,
-                )
-                for row in tools_used
-            ],
-            skills_used=[
-                SkillUsage(
-                    skill_name=row["skill_name"],
-                    count=row["count"],
-                    avg_duration_ms=int(row["avg_duration"] or 0),
-                )
-                for row in skills_used
-            ],
-            mcp_tools_used=[
-                MCPToolUsage(
-                    tool_name=row["tool_name"],
-                    mcp_server=row["mcp_server"],
-                    count=row["count"],
-                    avg_duration_ms=int(row["avg_duration"] or 0),
-                    error_count=row["error_count"] or 0,
-                )
-                for row in mcp_tools_used
-            ],
+            avg_duration_ms=self._extract_avg_duration(stats_row),
+            tools_used=self._build_tool_usage_list(tools_used_rows),
+            skills_used=self._build_skill_usage_list(skills_used_rows),
+            mcp_tools_used=self._build_mcp_tool_usage_list(mcp_tools_rows),
             first_active=stats_row["first_active"],
             last_active=stats_row["last_active"],
         )
+
+    def _build_model_usage_list(self, rows: list) -> list[ModelUsage]:
+        """构建模型使用列表."""
+        return [
+            ModelUsage(
+                model_name=row["model_name"],
+                count=row["count"],
+                total_tokens=row["total_tokens"] or 0,
+                input_tokens=row["input_tokens"] or 0,
+                output_tokens=row["output_tokens"] or 0,
+            )
+            for row in rows
+        ]
+
+    def _build_tool_usage_list(self, rows: list) -> list[ToolUsage]:
+        """构建工具使用列表."""
+        return [
+            ToolUsage(
+                tool_name=row["tool_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
+
+    def _build_skill_usage_list(self, rows: list) -> list[SkillUsage]:
+        """构建技能使用列表."""
+        return [
+            SkillUsage(
+                skill_name=row["skill_name"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+            )
+            for row in rows
+        ]
+
+    def _build_mcp_tool_usage_list(self, rows: list) -> list[MCPToolUsage]:
+        """构建 MCP 工具使用列表."""
+        return [
+            MCPToolUsage(
+                tool_name=row["tool_name"],
+                mcp_server=row["mcp_server"],
+                count=row["count"],
+                avg_duration_ms=int(row["avg_duration"] or 0),
+                error_count=row["error_count"] or 0,
+            )
+            for row in rows
+        ]
 
     # ===== 对话分析 =====
 

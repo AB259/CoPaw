@@ -24,6 +24,7 @@
     "help": "Help",
     "close": "Close",
     "actions": "Actions",
+    "search": "Search",
     "total": "Total {{count}}"
   },
   "nav": {

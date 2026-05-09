@@ -77,6 +77,7 @@ export interface UserStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
 }
 
 export interface UserListItem {
