@@ -9,7 +9,9 @@ Each Workspace represents a standalone agent workspace with its own:
 
 All existing single-agent components are reused without modification.
 """
+
 import logging
+import os
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -22,7 +24,10 @@ from .service_factories import (
 from ..runner import AgentRunner
 from ..runner.task_tracker import TaskTracker
 from ..crons.manager import CronManager
-from ..crons.scheduler_adapter import NoopSchedulerAdapter
+from ..crons.scheduler_adapter import (
+    NoopSchedulerAdapter,
+    RealSchedulerAdapter,
+)
 from ..crons.repo.json_repo import JsonJobRepository
 from ...config.config import load_agent_config
 from ...agents.memory.reme_light_memory_manager import (
@@ -34,6 +39,31 @@ if TYPE_CHECKING:
     from ..channels.base import BaseChannel
 
 logger = logging.getLogger(__name__)
+
+
+def _build_scheduler_adapter():
+    """根据环境变量构造调度平台适配器。
+
+    有 SWE_CRON_SCHEDULER_BASE_URL 时返回 RealSchedulerAdapter，
+    否则返回 NoopSchedulerAdapter（本地/测试环境）。
+    """
+    base_url = os.environ.get("SWE_CRON_SCHEDULER_BASE_URL", "").strip()
+    if not base_url:
+        return NoopSchedulerAdapter()
+
+    def _env(key: str, default: str = "") -> str:
+        return os.environ.get(key, default).strip()
+
+    job_group_str = _env("SWE_CRON_SCHEDULER_JOB_GROUP", "0")
+    return RealSchedulerAdapter(
+        base_url=base_url,
+        job_group=int(job_group_str) if job_group_str else 0,
+        author=_env("SWE_CRON_SCHEDULER_AUTHOR"),
+        alarm_email=_env("SWE_CRON_SCHEDULER_ALARM_EMAIL"),
+        client_no=_env("SWE_CRON_SCHEDULER_CLIENT_NO"),
+        client_key=_env("SWE_CRON_SCHEDULER_CLIENT_KEY"),
+        client_remark=_env("SWE_CRON_SCHEDULER_CLIENT_REMARK"),
+    )
 
 
 def _resolve_memory_class(backend: str) -> type:
@@ -264,7 +294,7 @@ class Workspace:
                     "timezone": ws._get_user_timezone(),
                     "agent_id": ws.agent_id,
                     "tenant_id": ws.tenant_id,
-                    "scheduler_adapter": NoopSchedulerAdapter(),
+                    "scheduler_adapter": _build_scheduler_adapter(),
                 },
                 start_method="start",
                 stop_method="stop",
