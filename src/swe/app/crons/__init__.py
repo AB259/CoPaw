@@ -8,6 +8,7 @@ from importlib import import_module
 _EXPORTS = {
     "SchedulerAdapter": (".scheduler_adapter", "SchedulerAdapter"),
     "NoopSchedulerAdapter": (".scheduler_adapter", "NoopSchedulerAdapter"),
+    "RealSchedulerAdapter": (".scheduler_adapter", "RealSchedulerAdapter"),
     "CronManager": (".manager", "CronManager"),
     "CronJobSpec": (".models", "CronJobSpec"),
     "CronJobState": (".models", "CronJobState"),
