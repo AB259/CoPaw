@@ -418,6 +418,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         agent_id=self._agent_id or "",
                         task_type="job",
                         job_id=spec.id,
+                        job_name=spec.name,
                         cron=spec.schedule.cron if spec.schedule else "",
                         callback_url=callback_url,
                     )
@@ -427,6 +428,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         agent_id=self._agent_id or "",
                         task_type="job",
                         job_id=spec.id,
+                        job_name=spec.name,
                         cron=spec.schedule.cron if spec.schedule else "",
                         callback_url=callback_url,
                     )
@@ -867,16 +869,53 @@ class CronManager:  # pylint: disable=too-many-public-methods
         ):
             return spec
 
+        # 从已持久化的任务中合并执行状态元数据，避免 PUT 等操作覆盖运行时状态
+        existing_meta: dict = {}
+        try:
+            existing = await self._repo.get_job(spec.id)
+            if existing and existing.meta:
+                existing_meta = dict(existing.meta)
+        except Exception:
+            pass
+
         meta = dict(spec.meta or {})
+        # 已持久化的执行状态优先于默认值，但传入 spec.meta 优先于已持久化值
+        for _key in (
+            "task_has_scheduled_result",
+            "task_last_scheduled_preview",
+            "task_unread_execution_count",
+            "task_last_scheduled_run_at",
+            "pause_reason",
+            "auto_paused_at",
+            "unread_count_at_pause",
+        ):
+            if _key not in meta and _key in existing_meta:
+                meta[_key] = existing_meta[_key]
+
         task_session_id = str(
-            meta.get("task_session_id") or f"cron-task:{spec.id}",
+            meta.get("task_session_id")
+            or existing_meta.get("task_session_id")
+            or f"cron-task:{spec.id}",
         )
-        task_chat = await self._chat_manager.get_or_create_chat(
-            task_session_id,
-            creator_user_id,
-            DEFAULT_CHANNEL,
-            name=spec.name,
+        task_chat_id = (
+            meta.get("task_chat_id") or existing_meta.get("task_chat_id") or ""
         )
+        if task_chat_id:
+            task_chat = await self._chat_manager.get_chat(task_chat_id)
+            if task_chat is None:
+                task_chat = await self._chat_manager.get_or_create_chat(
+                    task_session_id,
+                    creator_user_id,
+                    DEFAULT_CHANNEL,
+                    name=spec.name,
+                )
+        else:
+            task_chat = await self._chat_manager.get_or_create_chat(
+                task_session_id,
+                creator_user_id,
+                DEFAULT_CHANNEL,
+                name=spec.name,
+            )
         task_chat.name = spec.name
         task_chat.meta = {
             **(getattr(task_chat, "meta", {}) or {}),

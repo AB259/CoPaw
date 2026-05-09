@@ -44,6 +44,7 @@ class SchedulerAdapter(ABC):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> str:
@@ -54,6 +55,7 @@ class SchedulerAdapter(ABC):
             agent_id: Agent ID
             task_type: 任务类型（"job" | "heartbeat" | "dream"）
             job_id: Copaw 内部 job ID
+            job_name: 任务名称
             cron: cron 表达式
             callback_url: 完整的回调 URL（含 server_domain 前缀）
 
@@ -70,6 +72,7 @@ class SchedulerAdapter(ABC):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> None:
@@ -81,6 +84,7 @@ class SchedulerAdapter(ABC):
             agent_id: Agent ID
             task_type: 任务类型（"job" | "heartbeat" | "dream"）
             job_id: Copaw 内部 job ID
+            job_name: 任务名称
             cron: cron 表达式
             callback_url: 完整的回调 URL（含 server_domain 前缀）
         """
@@ -114,14 +118,16 @@ class NoopSchedulerAdapter(SchedulerAdapter):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> str:
         logger.debug(
-            "NoopAdapter.register_job: tenant=%s agent=%s type=%s job=%s cron=%s url=%s",
+            "NoopAdapter.register_job: tenant=%s agent=%s type=%s name=%s job=%s cron=%s url=%s",
             tenant_id,
             agent_id,
             task_type,
+            job_name,
             job_id,
             cron,
             callback_url,
@@ -135,15 +141,17 @@ class NoopSchedulerAdapter(SchedulerAdapter):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> None:
         logger.debug(
-            "NoopAdapter.update_job: ext_id=%s tenant=%s agent=%s type=%s job=%s cron=%s",
+            "NoopAdapter.update_job: ext_id=%s tenant=%s agent=%s type=%s name=%s job=%s cron=%s",
             external_id,
             tenant_id,
             agent_id,
             task_type,
+            job_name,
             job_id,
             cron,
         )
@@ -199,6 +207,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> str:
@@ -207,6 +216,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
             agent_id,
             task_type,
             job_id,
+            job_name,
             cron,
             callback_url,
         )
@@ -229,6 +239,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> None:
@@ -237,6 +248,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
             agent_id,
             task_type,
             job_id,
+            job_name,
             cron,
             callback_url,
         )
@@ -296,12 +308,13 @@ class RealSchedulerAdapter(SchedulerAdapter):
         agent_id: str,
         task_type: str,
         job_id: str,
+        job_name: str,
         cron: str,
         callback_url: str,
     ) -> dict:
         """构建 add-job / update-job 的请求体。"""
         job_desc = _truncate(
-            f"[Copaw] {tenant_id}/{agent_id}/{task_type}",
+            f"[Copaw] {tenant_id}/{agent_id}/{task_type} - {job_name}",
             _MAX_JOBDESC_CHARS,
         )
         glue_remark = _truncate(job_id, _MAX_GLUEREMARK_CHARS)
