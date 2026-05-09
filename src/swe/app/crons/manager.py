@@ -640,6 +640,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     async def _dream_callback(self) -> None:
         """Run one dream-based memory optimization task."""
+        # 延迟导入避免循环依赖
+        from ..routers.dream_logs import _set_running, _clear_running  # pylint: disable=import-outside-toplevel
+
+        _set_running("cron")
         try:
             # Bind tenant context for dream execution
             workspace_dir = (
@@ -665,6 +669,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 repr(e),
                 exc_info=True,
             )
+        finally:
+            _clear_running()
 
     # ----- read/state -----
 

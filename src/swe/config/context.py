@@ -322,6 +322,20 @@ current_passthrough_headers: ContextVar[dict[str, str] | None] = ContextVar(
     default=None,
 )
 
+# Context variables for explicit task progress updates
+current_task_progress_tracker: ContextVar[Any | None] = ContextVar(
+    "current_task_progress_tracker",
+    default=None,
+)
+current_task_progress_chat_id: ContextVar[str | None] = ContextVar(
+    "current_task_progress_chat_id",
+    default=None,
+)
+current_task_progress_turn_id: ContextVar[str | None] = ContextVar(
+    "current_task_progress_turn_id",
+    default=None,
+)
+
 
 def get_current_passthrough_headers() -> dict[str, str] | None:
     """Get current passthrough headers from context.
@@ -354,6 +368,51 @@ def reset_current_passthrough_headers(token: Token) -> None:
         token: The token returned by set_current_passthrough_headers.
     """
     current_passthrough_headers.reset(token)
+
+
+def get_current_task_progress_tracker() -> Any | None:
+    """Get current task progress tracker from context."""
+    return current_task_progress_tracker.get()
+
+
+def set_current_task_progress_tracker(tracker: Any | None) -> Token:
+    """Set current task progress tracker in context."""
+    return current_task_progress_tracker.set(tracker)
+
+
+def reset_current_task_progress_tracker(token: Token) -> None:
+    """Reset current task progress tracker using token."""
+    current_task_progress_tracker.reset(token)
+
+
+def get_current_task_progress_chat_id() -> str | None:
+    """Get current task progress chat id from context."""
+    return current_task_progress_chat_id.get()
+
+
+def set_current_task_progress_chat_id(chat_id: str | None) -> Token:
+    """Set current task progress chat id in context."""
+    return current_task_progress_chat_id.set(chat_id)
+
+
+def reset_current_task_progress_chat_id(token: Token) -> None:
+    """Reset current task progress chat id using token."""
+    current_task_progress_chat_id.reset(token)
+
+
+def get_current_task_progress_turn_id() -> str | None:
+    """Get current task progress turn id from context."""
+    return current_task_progress_turn_id.get()
+
+
+def set_current_task_progress_turn_id(turn_id: str | None) -> Token:
+    """Set current task progress turn id in context."""
+    return current_task_progress_turn_id.set(turn_id)
+
+
+def reset_current_task_progress_turn_id(token: Token) -> None:
+    """Reset current task progress turn id using token."""
+    current_task_progress_turn_id.reset(token)
 
 
 def resolve_effective_tenant_id(

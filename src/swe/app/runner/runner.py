@@ -17,7 +17,10 @@ from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
-from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest, Event
+from agentscope_runtime.engine.schemas.agent_schemas import (
+    AgentRequest,
+    Event,
+)
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
@@ -32,6 +35,7 @@ from .command_dispatch import (
 from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
 from .stream_boundary import normalize_reasoning_boundary_stream
+from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
@@ -783,6 +787,47 @@ class AgentRunner(Runner):
                 passthrough_headers=passthrough_headers or None,
             )
 
+            name = "New Chat"
+            if len(msgs) > 0:
+                content = msgs[0].get_text_content()
+                if content:
+                    name = msgs[0].get_text_content()[:10]
+                else:
+                    name = "Media Message"
+
+            logger.debug(
+                f"DEBUG chat_manager status: "
+                f"_chat_manager={self._chat_manager}, "
+                f"is_none={self._chat_manager is None}, "
+                f"agent_id={self.agent_id}",
+            )
+
+            turn_id = f"turn-{uuid4().hex}"
+            if self._chat_manager is not None:
+                logger.debug(
+                    f"Runner: Calling get_or_create_chat for "
+                    f"session_id={session_id}, user_id={user_id}, "
+                    f"channel={channel}, name={name}",
+                )
+                chat = await self._chat_manager.get_or_create_chat(
+                    session_id,
+                    user_id,
+                    channel,
+                    name=name,
+                    meta={"agent_id": self.agent_id},
+                )
+                logger.debug(f"Runner: Got chat: {chat.id}")
+                request.channel_meta = {
+                    **(getattr(request, "channel_meta", None) or {}),
+                    "chat_id": chat.id,
+                    "turn_id": turn_id,
+                }
+            else:
+                logger.warning(
+                    f"ChatManager is None! Cannot auto-register chat for "
+                    f"session_id={session_id}",
+                )
+
             agent = SWEAgent(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -792,6 +837,8 @@ class AgentRunner(Runner):
                     "session_id": session_id,
                     "user_id": user_id,
                     "channel": channel,
+                    "chat_id": chat.id if chat is not None else "",
+                    "turn_id": turn_id,
                     "agent_id": self.agent_id,
                     **(
                         {
@@ -824,41 +871,6 @@ class AgentRunner(Runner):
             logger.debug(
                 f"Agent Query msgs {msgs}",
             )
-
-            name = "New Chat"
-            if len(msgs) > 0:
-                content = msgs[0].get_text_content()
-                if content:
-                    name = msgs[0].get_text_content()[:10]
-                else:
-                    name = "Media Message"
-
-            logger.debug(
-                f"DEBUG chat_manager status: "
-                f"_chat_manager={self._chat_manager}, "
-                f"is_none={self._chat_manager is None}, "
-                f"agent_id={self.agent_id}",
-            )
-
-            if self._chat_manager is not None:
-                logger.debug(
-                    f"Runner: Calling get_or_create_chat for "
-                    f"session_id={session_id}, user_id={user_id}, "
-                    f"channel={channel}, name={name}",
-                )
-                chat = await self._chat_manager.get_or_create_chat(
-                    session_id,
-                    user_id,
-                    channel,
-                    name=name,
-                    meta={"agent_id": self.agent_id},
-                )
-                logger.debug(f"Runner: Got chat: {chat.id}")
-            else:
-                logger.warning(
-                    f"ChatManager is None! Cannot auto-register chat for "
-                    f"session_id={session_id}",
-                )
 
             _was_cancelled = False
 
@@ -1413,7 +1425,17 @@ class AgentRunner(Runner):
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
-            yield event
+            progress = None
+            channel_meta = getattr(request, "channel_meta", None) or {}
+            chat_id = channel_meta.get("chat_id")
+            if not chat_id and self._chat_manager is not None:
+                chat_id = await self._chat_manager.get_chat_id_by_session(
+                    getattr(request, "session_id", "") or "",
+                    getattr(request, "channel", DEFAULT_CHANNEL),
+                )
+            if chat_id and self._task_tracker is not None:
+                progress = await self._task_tracker.get_task_progress(chat_id)
+            yield attach_task_progress(event, progress)
 
     async def init_handler(self, *args, **kwargs):
         """

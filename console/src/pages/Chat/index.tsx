@@ -79,12 +79,18 @@ import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/Agen
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
 import ApprovalActionCard from "./components/ApprovalActionCard";
 import TaskRunGroupCard from "./components/TaskRunGroupCard";
+import TaskProgressFloatingCard from "./components/TaskProgressFloatingCard";
+import GeneratedFilesDrawer from "./components/GeneratedFilesDrawer";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
   ChatTaskRunGroupCardData,
 } from "./messageMeta";
+import {
+  CHAT_TASK_PROGRESS_UPDATE_EVENT,
+  type ChatTaskProgressData,
+} from "./taskProgressEvents";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const CHAT_REQUEST_TIMEOUT_MS = 300_000;
@@ -388,6 +394,9 @@ export default function ChatPage() {
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
   const [jobs, setJobs] = useState<CronJobSpecOutput[]>([]);
+  const [taskProgress, setTaskProgress] = useState<ChatTaskProgressData | null>(
+    null,
+  );
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -414,6 +423,30 @@ export default function ChatPage() {
     return () =>
       document.removeEventListener(FOLLOW_UP_SUBMIT_FAILED_EVENT, handler);
   }, [message, t]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
+      if (!detail) {
+        setTaskProgress(null);
+        return;
+      }
+      setTaskProgress((previous) => {
+        if (
+          previous
+          && previous.turn_id === detail.turn_id
+          && previous.version > detail.version
+        ) {
+          return previous;
+        }
+        return detail;
+      });
+    };
+
+    document.addEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+    return () =>
+      document.removeEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+  }, []);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -537,6 +570,10 @@ export default function ChatPage() {
       sessionApi.onSessionCreated = null;
     };
   }, []);
+
+  useEffect(() => {
+    setTaskProgress(null);
+  }, [chatId, location.pathname]);
 
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
@@ -1123,6 +1160,7 @@ export default function ChatPage() {
             <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
+            <GeneratedFilesDrawer />
             <ModelSelector />
             {/* <ChatActionGroup /> */}
           </>
@@ -1154,6 +1192,7 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
+        beforeUI: <TaskProgressFloatingCard progress={taskProgress} />,
         allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
@@ -1289,6 +1328,7 @@ export default function ChatPage() {
     multimodalCaps,
     resolveLogicalRequestSessionId,
     resolveRequestChatId,
+    taskProgress,
     t,
   ]);
 
