@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -266,6 +268,28 @@ class RealSchedulerAdapter(SchedulerAdapter):
     # 内部方法
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_job_param(
+        tenant_id: str,
+        agent_id: str,
+        task_type: str,
+        job_id: str,
+    ) -> str:
+        """将回调上下文参数编码为 base64 JSON，放入 jobParam。
+
+        外部平台回调时会将 jobParam 原样传回，用于在统一的
+        /api/internal/cron/callback 端点中确定租户、Agent、任务类型。
+        """
+        payload = json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "task_type": task_type,
+                "job_id": job_id,
+            },
+        )
+        return base64.urlsafe_b64encode(payload.encode()).decode()
+
     def _build_add_payload(
         self,
         tenant_id: str,
@@ -293,6 +317,12 @@ class RealSchedulerAdapter(SchedulerAdapter):
             "clientNo": self._client_no,
             "clientKey": self._client_key,
             "clientRemark": self._client_remark,
+            "jobParam": self._build_job_param(
+                tenant_id,
+                agent_id,
+                task_type,
+                job_id,
+            ),
         }
         if self._mis_fire_strategy is not None:
             payload["misFireStrategy"] = self._mis_fire_strategy

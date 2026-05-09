@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """Internal API for service-to-service communication."""
 
+import base64
+import json
 import logging
 import os
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Header, HTTPException, Request
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 logger = logging.getLogger(__name__)
@@ -194,4 +196,81 @@ async def internal_cron_run_dream(
         raise
     except Exception as e:
         logger.error(f"Failed to run dream: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Unified callback endpoint (jobParam-based) ──
+
+
+@router.post("/cron/callback")
+async def internal_cron_callback(
+    request: Request,
+    x_internal_token: Optional[str] = Header(
+        default=None,
+        alias="X-Internal-Token",
+    ),
+    body: Dict[str, Any] = Body(...),
+):
+    """外部调度平台统一回调端点。
+
+    从 jobParam（base64 JSON）中解码 tenant_id、agent_id、
+    task_type 和 job_id，分发到对应的 CronManager 方法。
+    """
+    _verify_internal_token(x_internal_token)
+
+    job_param = body.get("jobParam") or body.get("job_param") or ""
+    if not job_param:
+        raise HTTPException(status_code=400, detail="Missing jobParam")
+
+    try:
+        params = json.loads(base64.urlsafe_b64decode(job_param))
+        tenant_id = params["tenant_id"]
+        agent_id = params["agent_id"]
+        task_type = params["task_type"]
+        job_id = params.get("job_id", "")
+    except Exception as e:
+        logger.warning("Failed to decode jobParam: %s", e)
+        raise HTTPException(status_code=400, detail=f"Invalid jobParam: {e}")
+
+    manager = getattr(request.app.state, "multi_agent_manager", None)
+    if manager is None:
+        logger.warning("MultiAgentManager not initialized")
+        raise HTTPException(status_code=503, detail="Manager not available")
+
+    mgr = await _get_cron_manager(manager, tenant_id, agent_id)
+    if mgr is None:
+        raise HTTPException(status_code=404, detail="CronManager not found")
+
+    try:
+        if task_type == "heartbeat":
+            await mgr.run_heartbeat()
+        elif task_type == "dream":
+            await mgr.run_dream()
+        else:
+            if not job_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="job_id required for task_type=job",
+                )
+            await mgr.run_job(job_id)
+
+        logger.info(
+            "Callback dispatched: type=%s tenant=%s agent=%s job=%s",
+            task_type,
+            tenant_id,
+            agent_id,
+            job_id,
+        )
+        return {"status": "ok", "task_type": task_type}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to run callback (type=%s, tenant=%s, agent=%s, job=%s): %s",
+            task_type,
+            tenant_id,
+            agent_id,
+            job_id,
+            e,
+        )
         raise HTTPException(status_code=500, detail=str(e))

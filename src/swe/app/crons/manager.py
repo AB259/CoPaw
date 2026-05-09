@@ -1413,16 +1413,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
         logger.debug("Dream task executed successfully")
 
     def _build_callback_url(self, task_type: str, job_id: str = "") -> str:
-        """拼接外部调度平台回调 URL。"""
+        """拼接外部调度平台回调 URL。
+
+        tenant/agent/job 等参数已通过 jobParam 传递，URL 统一使用短路径。
+        """
         base = os.environ.get("SWE_SERVER_DOMAIN", "http://localhost:8000")
-        tid = self._tenant_id or "default"
-        aid = self._agent_id or "default"
-        if task_type == "heartbeat":
-            return f"{base}/api/internal/cron/tenants/{tid}/agents/{aid}/heartbeat/run"
-        elif task_type == "dream":
-            return f"{base}/api/internal/cron/tenants/{tid}/agents/{aid}/dream/run"
-        else:
-            return f"{base}/api/internal/cron/tenants/{tid}/agents/{aid}/jobs/{job_id}/run"
+        return f"{base}/api/internal/cron/callback"
 
     async def _refresh_next_run_at(self, job_id: str) -> None:
         """用 croniter 重新计算 next_run_at（仅用于展示）。"""
