@@ -688,14 +688,16 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self,
         mutator: Callable[[JobsFile], tuple[bool, _T]],
     ) -> tuple[bool, _T, int]:
-        """在文件级别加锁下修改 jobs.json。"""
-        async with self._lock:
-            jobs_file = await self._repo.load()
-            changed, result = mutator(jobs_file)
-            if not changed:
-                return False, result, 0
-            await self._repo.save(jobs_file)
-            return True, result, 0
+        """在文件级别加锁下修改 jobs.json。
+
+        调用者必须已持有 self._lock。
+        """
+        jobs_file = await self._repo.load()
+        changed, result = mutator(jobs_file)
+        if not changed:
+            return False, result, 0
+        await self._repo.save(jobs_file)
+        return True, result, 0
 
     def _upsert_job_in_jobs_file(
         self,
