@@ -57,8 +57,9 @@ async def internal_reload_agent(
 
 async def _get_cron_manager(manager, tenant_id: str, agent_id: str):
     """获取指定 tenant/agent 的 CronManager 实例。"""
-    ws = manager.get_workspace(tenant_id, agent_id)
-    if ws is None:
+    try:
+        ws = await manager.get_agent(agent_id, tenant_id=tenant_id)
+    except ValueError:
         return None
     return ws.cron_manager
 
