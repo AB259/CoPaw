@@ -17,7 +17,10 @@ from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
-from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest, Event
+from agentscope_runtime.engine.schemas.agent_schemas import (
+    AgentRequest,
+    Event,
+)
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
@@ -32,6 +35,7 @@ from .command_dispatch import (
 from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
 from .stream_boundary import normalize_reasoning_boundary_stream
+from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
@@ -380,6 +384,64 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     return ""
 
 
+async def _index_model_output_to_monitor(
+    trace_id: str,
+    model_output: str,
+) -> None:
+    """通过 Monitor API 写入 model_output 到 ES.
+
+    Args:
+        trace_id: 追踪 ID
+        model_output: 模型输出文本
+    """
+    monitor_url = os.environ.get(
+        "SWE_MONITOR_API_URL",
+        "http://127.0.0.1:9090",
+    )
+    url = f"{monitor_url}/monitor/tracing/model-output"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "trace_id": trace_id,
+                    "model_output": model_output,
+                },
+            )
+            logger.debug(
+                "Monitor API response: status=%s, body=%s",
+                response.status_code,
+                response.text[:200] if response.text else "",
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(
+                        "Model output indexed via Monitor API: trace_id=%s",
+                        trace_id,
+                    )
+                else:
+                    logger.info(
+                        "Model output write skipped: trace_id=%s, reason=%s",
+                        trace_id,
+                        result.get("reason", "unknown"),
+                    )
+            else:
+                logger.warning(
+                    "Monitor API returned %s: trace_id=%s",
+                    response.status_code,
+                    trace_id,
+                )
+    except httpx.TimeoutException:
+        logger.warning("Monitor API timeout: trace_id=%s", trace_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to call Monitor API for model_output: %s",
+            e,
+        )
+
+
 async def _generate_and_store_suggestions(
     session_id: str,
     user_message: str,
@@ -725,6 +787,47 @@ class AgentRunner(Runner):
                 passthrough_headers=passthrough_headers or None,
             )
 
+            name = "New Chat"
+            if len(msgs) > 0:
+                content = msgs[0].get_text_content()
+                if content:
+                    name = msgs[0].get_text_content()[:10]
+                else:
+                    name = "Media Message"
+
+            logger.debug(
+                f"DEBUG chat_manager status: "
+                f"_chat_manager={self._chat_manager}, "
+                f"is_none={self._chat_manager is None}, "
+                f"agent_id={self.agent_id}",
+            )
+
+            turn_id = f"turn-{uuid4().hex}"
+            if self._chat_manager is not None:
+                logger.debug(
+                    f"Runner: Calling get_or_create_chat for "
+                    f"session_id={session_id}, user_id={user_id}, "
+                    f"channel={channel}, name={name}",
+                )
+                chat = await self._chat_manager.get_or_create_chat(
+                    session_id,
+                    user_id,
+                    channel,
+                    name=name,
+                    meta={"agent_id": self.agent_id},
+                )
+                logger.debug(f"Runner: Got chat: {chat.id}")
+                request.channel_meta = {
+                    **(getattr(request, "channel_meta", None) or {}),
+                    "chat_id": chat.id,
+                    "turn_id": turn_id,
+                }
+            else:
+                logger.warning(
+                    f"ChatManager is None! Cannot auto-register chat for "
+                    f"session_id={session_id}",
+                )
+
             agent = SWEAgent(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -734,6 +837,8 @@ class AgentRunner(Runner):
                     "session_id": session_id,
                     "user_id": user_id,
                     "channel": channel,
+                    "chat_id": chat.id if chat is not None else "",
+                    "turn_id": turn_id,
                     "agent_id": self.agent_id,
                     **(
                         {
@@ -767,41 +872,6 @@ class AgentRunner(Runner):
                 f"Agent Query msgs {msgs}",
             )
 
-            name = "New Chat"
-            if len(msgs) > 0:
-                content = msgs[0].get_text_content()
-                if content:
-                    name = msgs[0].get_text_content()[:10]
-                else:
-                    name = "Media Message"
-
-            logger.debug(
-                f"DEBUG chat_manager status: "
-                f"_chat_manager={self._chat_manager}, "
-                f"is_none={self._chat_manager is None}, "
-                f"agent_id={self.agent_id}",
-            )
-
-            if self._chat_manager is not None:
-                logger.debug(
-                    f"Runner: Calling get_or_create_chat for "
-                    f"session_id={session_id}, user_id={user_id}, "
-                    f"channel={channel}, name={name}",
-                )
-                chat = await self._chat_manager.get_or_create_chat(
-                    session_id,
-                    user_id,
-                    channel,
-                    name=name,
-                    meta={"agent_id": self.agent_id},
-                )
-                logger.debug(f"Runner: Got chat: {chat.id}")
-            else:
-                logger.warning(
-                    f"ChatManager is None! Cannot auto-register chat for "
-                    f"session_id={session_id}",
-                )
-
             _was_cancelled = False
 
             session_state_loaded = await self.get_state_loaded(
@@ -827,36 +897,29 @@ class AgentRunner(Runner):
             ):
                 yield msg, last
 
-            # Index model output to Elasticsearch
+            # 通过 Monitor API 写入 model_output 到 ES
             if trace_id and agent is not None:
+                logger.debug(
+                    "Preparing to index model output: trace_id=%s, agent=%s",
+                    trace_id,
+                    type(agent).__name__,
+                )
                 assistant_response = _extract_assistant_response(agent)
-                logger.info(
-                    "ES write check: trace_id=%s, response_len=%d",
+                logger.debug(
+                    "Extracted assistant response: trace_id=%s, response_len=%d",
                     trace_id,
                     len(assistant_response) if assistant_response else 0,
                 )
                 if assistant_response:
-                    try:
-                        from ...elasticsearch import get_es_client
-
-                        es_client = get_es_client()
-                        if es_client and es_client.is_connected:
-                            await es_client.index_message(
-                                trace_id,
-                                assistant_response,
-                            )
-                        else:
-                            logger.warning(
-                                "ES client not available: connected=%s",
-                                es_client.is_connected if es_client else None,
-                            )
-                    except Exception as es_err:
-                        logger.warning(
-                            "Failed to index model output to ES: %s",
-                            es_err,
-                        )
+                    await _index_model_output_to_monitor(
+                        trace_id,
+                        assistant_response,
+                    )
                 else:
-                    logger.info("ES write skipped: empty assistant_response")
+                    logger.warning(
+                        "No assistant response to index: trace_id=%s",
+                        trace_id,
+                    )
 
             # End trace with success status
             if trace_id and has_trace_manager():
@@ -1362,7 +1425,17 @@ class AgentRunner(Runner):
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
-            yield event
+            progress = None
+            channel_meta = getattr(request, "channel_meta", None) or {}
+            chat_id = channel_meta.get("chat_id")
+            if not chat_id and self._chat_manager is not None:
+                chat_id = await self._chat_manager.get_chat_id_by_session(
+                    getattr(request, "session_id", "") or "",
+                    getattr(request, "channel", DEFAULT_CHANNEL),
+                )
+            if chat_id and self._task_tracker is not None:
+                progress = await self._task_tracker.get_task_progress(chat_id)
+            yield attach_task_progress(event, progress)
 
     async def init_handler(self, *args, **kwargs):
         """

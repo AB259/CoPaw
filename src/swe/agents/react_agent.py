@@ -48,6 +48,7 @@ from .tools import (
     write_file,
     create_memory_search_tool,
     copy_file_to_static,
+    update_task_progress,
 )
 from .utils import process_file_and_media_blocks_in_message
 from ..utils.fs_text import sanitize_text_for_json
@@ -244,6 +245,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             "set_user_timezone": set_user_timezone,
             "get_token_usage": get_token_usage,
             "copy_file_to_static": copy_file_to_static,
+            "update_task_progress": update_task_progress,
         }
 
         # Register only enabled tools
@@ -451,6 +453,29 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
 
         if self._env_context is not None:
             sys_prompt = sys_prompt + "\n\n" + self._env_context
+
+        # 任务进度要求
+        sys_prompt += (
+            "\n\n[Task Progress Requirement]\n"
+            "You MUST call the update_task_progress tool for every non-trivial "
+            "user request. This is mandatory, not optional.\n\n"
+            "Each item in the items array has these fields:\n"
+            "- label: short Chinese step title (required)\n"
+            '- status: "todo" | "running" | "done" (required)\n'
+            "- id: unique step identifier (optional, auto-generated)\n\n"
+            "CRITICAL RULES:\n"
+            "- Call update_task_progress BEFORE your first tool call or substantive "
+            "action, with 3-6 short Chinese step titles.\n"
+            "- After finishing each step, call update_task_progress again to "
+            "mark it done and advance the next step to running.\n"
+            "- Always keep EXACTLY ONE step in 'running' status.\n"
+            '- When fully done, call with phase_status="completed" and all steps '
+            'marked "done".\n\n'
+            'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
+            '("what is Python"), or single-command requests ("run npm install").\n'
+            "For analysis, coding, debugging, refactoring, optimization, or any "
+            "multi-step request — ALWAYS use the tool. When in doubt, use it."
+        )
 
         return sys_prompt
 
@@ -1149,6 +1174,9 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         # Set workspace_dir and recent_max_bytes in context for tool functions
         from ..config.context import (
+            set_current_task_progress_chat_id,
+            set_current_task_progress_tracker,
+            set_current_task_progress_turn_id,
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
@@ -1156,6 +1184,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         set_current_workspace_dir(self._workspace_dir)
         set_current_recent_max_bytes(
             self._agent_config.running.tool_result_compact.recent_max_bytes,
+        )
+        set_current_task_progress_tracker(self._task_tracker)
+        set_current_task_progress_chat_id(
+            self._request_context.get("chat_id"),
+        )
+        set_current_task_progress_turn_id(
+            self._request_context.get("turn_id"),
         )
 
         # Process file and media blocks in messages

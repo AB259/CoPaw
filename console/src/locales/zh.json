@@ -26,6 +26,7 @@
     "actions": "操作",
     "overwrite": "覆盖",
     "rename": "重命名",
+    "search": "查询",
     "total": "共 {{count}} 条"
   },
   "nav": {
@@ -1573,7 +1574,7 @@
     "searchTargetId": "搜索目标 ID"
   },
   "dreamLogs": {
-    "title": "梦境优化记录",
+    "title": "持续治理记录",
     "triggerNow": "立即执行",
     "triggerType": "触发方式",
     "trigger": {
@@ -1586,21 +1587,21 @@
       "failed": "失败",
       "rollback": "已回滚"
     },
-    "filesOptimized": "优化文件",
+    "filesOptimized": "变更文件",
     "runTime": "运行时间",
     "duration": "耗时",
     "modelUsed": "使用模型",
-    "summary": "优化摘要",
+    "summary": "治理摘要",
     "stats": {
-      "title": "梦境优化统计",
+      "title": "治理统计",
       "totalExecutions": "总执行次数",
       "successRate": "成功率",
       "spaceSaved": "累计节省空间",
       "filesChanged": "累计变动文件",
       "avgDuration": "平均耗时",
-      "lastOptimization": "上次优化时间"
+      "lastOptimization": "上次治理时间"
     },
-    "tabRecords": "优化记录",
+    "tabRecords": "治理记录",
     "tabBackups": "备份文件",
     "backup": {
       "title": "备份文件列表",
@@ -1624,21 +1625,21 @@
     },
     "file": {
       "filename": "文件名",
-      "sizeBefore": "优化前",
-      "sizeAfter": "优化后",
+      "sizeBefore": "变更前",
+      "sizeAfter": "变更后",
       "sizeSaved": "节省",
       "linesRemoved": "删除行数"
     },
     "diff": {
       "title": "文件对比",
-      "before": "优化前",
-      "after": "优化后",
+      "before": "变更前",
+      "after": "变更后",
       "noChanges": "无变化"
     },
     "rollback": {
       "confirm": "确认回滚？",
-      "confirmMessage": "确定要回滚选中的文件吗？此操作将恢复优化前的内容。",
-      "confirmAllMessage": "确定要回滚全部文件吗？此操作将恢复优化前的内容。",
+      "confirmMessage": "确定要回滚选中的文件吗？此操作将恢复变更前的内容。",
+      "confirmAllMessage": "确定要回滚全部文件吗？此操作将恢复变更前的内容。",
       "success": "回滚成功",
       "failed": "回滚失败",
       "single": "回滚此文件",
@@ -1646,7 +1647,7 @@
     },
     "viewDiff": "查看对比",
     "noRecords": "暂无记录",
-    "firstRecord": "首次执行梦境优化后将在此显示记录",
+    "firstRecord": "首次执行治理后将在此显示记录",
     "filter": {
       "startDate": "开始日期",
       "endDate": "结束日期",
@@ -1655,6 +1656,12 @@
       "clear": "清除筛选"
     },
     "tabCleanup": "文件清理",
+    "running": {
+      "title": "治理任务执行中...",
+      "autoTitle": "定时治理任务执行中...",
+      "elapsed": "已运行时长",
+      "triggering": "执行中..."
+    },
     "orphanFiles": {
       "title": "临时文件列表",
       "workspaceDir": "工作目录",

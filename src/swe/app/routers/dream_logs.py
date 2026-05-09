@@ -3,11 +3,13 @@
 
 Provides REST API endpoints for dream optimization records.
 """
+import asyncio
 import json
 import shutil
 import logging
 import base64
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +18,36 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/dream-logs", tags=["dream-logs"])
 logger = logging.getLogger(__name__)
+
+# 治理任务运行状态（模块级共享，兼容线程+协程）
+_current_run_lock = threading.Lock()
+_current_run: dict = {
+    "running": False,
+    "started_at": None,
+    "trigger": None,
+}
+
+
+def _set_running(trigger: str) -> None:
+    """标记治理任务开始运行"""
+    with _current_run_lock:
+        _current_run["running"] = True
+        _current_run["started_at"] = datetime.now(timezone.utc).isoformat()
+        _current_run["trigger"] = trigger
+
+
+def _clear_running() -> None:
+    """标记治理任务运行结束"""
+    with _current_run_lock:
+        _current_run["running"] = False
+        _current_run["started_at"] = None
+        _current_run["trigger"] = None
+
+
+def _get_running_status() -> dict:
+    """获取当前运行状态（线程安全）"""
+    with _current_run_lock:
+        return dict(_current_run)
 
 
 # ------------------------------------------------------------------
@@ -93,6 +125,14 @@ class TriggerResponse(BaseModel):
     success: bool
     message: str
     record_id: Optional[str] = None
+
+
+class DreamStatusResponse(BaseModel):
+    """治理任务运行状态"""
+
+    running: bool
+    started_at: Optional[str] = None
+    trigger: Optional[str] = None  # "cron" 或 "manual"
 
 
 class RollbackResponse(BaseModel):
@@ -597,8 +637,6 @@ async def trigger_dream_optimization(request: Request) -> TriggerResponse:
     Returns:
         TriggerResponse with trigger status.
     """
-    import asyncio
-
     tenant_id = _get_tenant_id(request)
 
     # Get agent_id from request or use default
@@ -628,13 +666,26 @@ async def trigger_dream_optimization(request: Request) -> TriggerResponse:
                 message="Memory manager not available",
             )
 
+        # 如果已有任务在运行，拒绝重复触发
+        status = _get_running_status()
+        if status["running"]:
+            return TriggerResponse(
+                success=False,
+                message="A governance task is already running",
+            )
+
+        async def _wrapped_dream():
+            _set_running("manual")
+            try:
+                await runner.memory_manager.dream_memory(
+                    tenant_id=tenant_id,
+                    trigger="manual",
+                )
+            finally:
+                _clear_running()
+
         # Execute dream asynchronously in background (fire and forget)
-        asyncio.create_task(
-            runner.memory_manager.dream_memory(
-                tenant_id=tenant_id,
-                trigger="manual",
-            ),
-        )
+        asyncio.create_task(_wrapped_dream())
 
         return TriggerResponse(
             success=True,
@@ -648,6 +699,20 @@ async def trigger_dream_optimization(request: Request) -> TriggerResponse:
             success=False,
             message=f"Failed to trigger dream optimization: {str(e)}",
         )
+
+
+# ------------------------------------------------------------------
+# 治理任务运行状态
+# ------------------------------------------------------------------
+
+
+@router.get("/status", response_model=DreamStatusResponse)
+async def get_governance_status(request: Request) -> DreamStatusResponse:
+    """查询治理任务运行状态。
+
+    由前端轮询调用，用于展示「执行中」提示。
+    """
+    return DreamStatusResponse(**_get_running_status())
 
 
 # ------------------------------------------------------------------

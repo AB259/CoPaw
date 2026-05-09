@@ -47,7 +47,7 @@ export default function SessionsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
-    null,
+    [dayjs().subtract(30, "day"), dayjs()],
   );
 
   // 详情抽屉状态
@@ -72,7 +72,7 @@ export default function SessionsPage() {
   // 用于追踪筛选条件变化，避免 useEffect 重复触发
   const filtersRef = useRef({
     searchQuery: "",
-    dateRange: null as [dayjs.Dayjs, dayjs.Dayjs] | null,
+    dateRange: [dayjs().subtract(30, "day"), dayjs()] as [dayjs.Dayjs, dayjs.Dayjs] | null,
   });
 
   useEffect(() => {
