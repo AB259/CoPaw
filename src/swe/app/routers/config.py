@@ -382,21 +382,12 @@ async def put_heartbeat(
         tenant_id=agent.tenant_id,
     )
 
-    # Reschedule heartbeat (async, non-blocking)
-    import asyncio
+    # Heartbeat config update - scheduling is handled externally
+    import logging
 
-    async def reschedule_in_background():
-        try:
-            if agent.cron_manager is not None:
-                await agent.cron_manager.reschedule_heartbeat()
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"Background reschedule failed: {e}",
-            )
-
-    asyncio.create_task(reschedule_in_background())
+    logging.getLogger(__name__).debug(
+        f"Heartbeat config updated for agent {agent.agent_id}",
+    )
 
     return hb.model_dump(mode="json", by_alias=True)
 
