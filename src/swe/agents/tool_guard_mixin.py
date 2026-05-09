@@ -8,20 +8,48 @@ guard / approve flow.
 Separated from ``react_agent.py`` to keep the main agent class
 focused on lifecycle management.
 """
+
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json as _json
 import logging
+import os
+import time
 import uuid as _uuid
 from typing import Any, Literal
 
 from agentscope.message import Msg
 
+from ..constant import AGENT_WATCHDOG_TIMEOUT, QUERY_TIMEOUT_SECONDS
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ..tracing import has_trace_manager, get_trace_manager, get_current_trace
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = min(
+    QUERY_TIMEOUT_SECONDS,
+    max(AGENT_WATCHDOG_TIMEOUT * 2.0, AGENT_WATCHDOG_TIMEOUT + 60.0),
+)
+try:
+    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = max(
+        float(
+            os.environ.get(
+                "SWE_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT",
+                str(_DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT),
+            ),
+        ),
+        1.0,
+    )
+except (TypeError, ValueError):
+    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = _DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT
+
+_TOOLS_WITH_SPECIFIC_TIMEOUTS = {
+    "execute_shell_command",
+    "grep_search",
+    "glob_search",
+}
 
 
 class _GuardAction:
@@ -72,6 +100,78 @@ class ToolGuardMixin:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _agent_phase_context(
+        self,
+        phase: str,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+        reason: str | None = None,
+    ):
+        enter_phase = getattr(self, "agent_phase", None)
+        if enter_phase is None:
+            return nullcontext()
+        return enter_phase(
+            phase,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            reason=reason,
+        )
+
+    def _tool_has_specific_timeout(self, tool_name: str) -> bool:
+        if self._resolve_mcp_server(tool_name):
+            return True
+        return tool_name in _TOOLS_WITH_SPECIFIC_TIMEOUTS
+
+    async def _run_tool_call_with_hard_timeout(
+        self,
+        tool_call: dict[str, Any],
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict | None:
+        """Run a local tool under the generic hard timeout when applicable."""
+        tool_call_id = str(tool_call.get("id") or "")
+        with self._agent_phase_context(
+            "tool_execution",
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            reason="tool_execution",
+        ):
+            if self._tool_has_specific_timeout(tool_name):
+                return await super()._acting(tool_call)  # type: ignore[misc]
+
+            started_at = time.monotonic()
+            try:
+                return await asyncio.wait_for(
+                    super()._acting(tool_call),  # type: ignore[misc]
+                    timeout=LOCAL_TOOL_EXECUTION_HARD_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                elapsed = time.monotonic() - started_at
+                logger.warning(
+                    "Local tool hard timeout: tool_name=%s tool_call_id=%s "
+                    "elapsed=%.3fs timeout=%.3fs",
+                    tool_name,
+                    tool_call_id,
+                    elapsed,
+                    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT,
+                )
+                return {
+                    "type": "tool_result",
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "output": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Error: Tool {tool_name} timed out after "
+                                f"{LOCAL_TOOL_EXECUTION_HARD_TIMEOUT:.2f}s "
+                                f"(elapsed {elapsed:.2f}s)."
+                            ),
+                        },
+                    ],
+                }
 
     def _should_require_approval(self) -> bool:
         """``True`` when a ``session_id`` is available for approval."""
@@ -400,15 +500,21 @@ class ToolGuardMixin:
         )
 
         action: _GuardAction | None = None
-        async with self._tool_guard_lock:
-            try:
-                action = await self._decide_guard_action(tool_call)
-            except Exception as exc:
-                logger.warning(
-                    "Tool guard check error (non-blocking): %s",
-                    exc,
-                    exc_info=True,
-                )
+        with self._agent_phase_context(
+            "tool_guard",
+            tool_name=tool_name,
+            tool_call_id=str(tool_call.get("id") or ""),
+            reason="guard_decision",
+        ):
+            async with self._tool_guard_lock:
+                try:
+                    action = await self._decide_guard_action(tool_call)
+                except Exception as exc:
+                    logger.warning(
+                        "Tool guard check error (non-blocking): %s",
+                        exc,
+                        exc_info=True,
+                    )
 
         if action is not None:
             result = await self._execute_guard_action(action, tool_call)
@@ -416,7 +522,11 @@ class ToolGuardMixin:
             return result
 
         try:
-            result = await super()._acting(tool_call)  # type: ignore[misc]
+            result = await self._run_tool_call_with_hard_timeout(
+                tool_call,
+                tool_name,
+                tool_input,
+            )
             await self._emit_tool_trace_end(span_id, result)
 
             if getattr(self, "_tool_guard_forced_replay_active", False):
@@ -549,7 +659,11 @@ class ToolGuardMixin:
         tool_input: dict[str, Any],
     ) -> dict | None:
         """Execute approved call and persist replay state."""
-        result = await super()._acting(tool_call)  # type: ignore[misc]
+        result = await self._run_tool_call_with_hard_timeout(
+            tool_call,
+            tool_name,
+            tool_input,
+        )
         if getattr(self, "_tool_guard_forced_replay_active", False):
             self._tool_guard_forced_replay_active = False
             self._tool_guard_replay_done = {
@@ -753,18 +867,34 @@ class ToolGuardMixin:
         completion message so the ``ReActAgent.reply`` loop exits
         naturally.
         """
-        replay_msg = await self._reason_about_replay_done()
+        with self._agent_phase_context(
+            "approval_replay",
+            reason="approval_replay_done",
+        ):
+            replay_msg = await self._reason_about_replay_done()
         if replay_msg is not None:
             return replay_msg
 
         forced_tool_call = self._pop_forced_tool_call()
         if forced_tool_call is not None:
-            replay_msg = await self._emit_forced_tool_use(forced_tool_call)
+            with self._agent_phase_context(
+                "approval_replay",
+                tool_name=str(forced_tool_call.get("name") or ""),
+                tool_call_id=str(forced_tool_call.get("id") or ""),
+                reason="forced_tool_replay",
+            ):
+                replay_msg = await self._emit_forced_tool_use(
+                    forced_tool_call,
+                )
             if replay_msg is not None:
                 return replay_msg
 
         if self._last_tool_response_is_denied():
-            return await self._emit_waiting_for_approval()
+            with self._agent_phase_context(
+                "approval_replay",
+                reason="waiting_for_approval",
+            ):
+                return await self._emit_waiting_for_approval()
 
         return await super()._reasoning(  # type: ignore[misc]
             tool_choice=tool_choice,
