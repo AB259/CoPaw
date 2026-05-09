@@ -674,8 +674,8 @@ export default function BusinessOverviewPage() {
       );
     }
 
-    const padding = { top: 20, right: 10, bottom: 60, left: 35 };
-    const width = 1000;
+    const padding = { top: 20, right: 10, bottom: 60, left: 40 };
+    const width = 1400; // 增大宽度以更好地填充容器
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
 
@@ -712,13 +712,33 @@ export default function BusinessOverviewPage() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // SVG 拉伸填充容器，直接按比例计算
-      const scaleX = rect.width / width;
+      // 容器有124px 左右 padding
+      const containerPadding = 12;
+      const svgWidth = rect.width - containerPadding * 2;
+
+      // SVG 保持宽高比，计算实际渲染尺寸
+      const svgAspect = width / height;
+      const containerAspect = svgWidth / height;
+
+      let actualSvgWidth: number;
+      let offsetX: number;
+
+      if (containerAspect >= svgAspect) {
+        // 容器更宽，SVG 高度撑满，左右留白
+        actualSvgWidth = height * svgAspect;
+        offsetX = containerPadding + (svgWidth - actualSvgWidth) / 2;
+      } else {
+        // 容器更窄，SVG 宽度撑满
+        actualSvgWidth = svgWidth;
+        offsetX = containerPadding;
+      }
+
+      const scaleX = actualSvgWidth / width;
 
       // 计算每个数据点在 DOM 中的实际 X 位置
       const dataPoints = chartData.map((d, i) => ({
         index: i,
-        x: xScale(i) * scaleX,
+        x: offsetX + xScale(i) * scaleX,
         data: d,
       }));
 
@@ -768,7 +788,7 @@ export default function BusinessOverviewPage() {
           width="100%"
           height={height}
           viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio="none"
+          preserveAspectRatio="xMidYMin meet"
         >
           {/* Y轴 */}
           {yTicks.map((tick, i) => (
