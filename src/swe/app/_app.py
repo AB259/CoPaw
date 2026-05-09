@@ -40,6 +40,7 @@ from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
 from ..database import get_database_config
 from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
+from .crons.monitor_sync_client import get_monitor_sync_client
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -377,6 +378,12 @@ async def lifespan(
 
     # 启动服务心跳任务
     await start_service_heartbeat()
+
+    # SWE 重启后通知 Monitor 触发定时任务恢复预热；延迟执行是为了确保
+    # 当前服务已经开始接收 Monitor 对 /cron/jobs 的回调请求。
+    get_monitor_sync_client().schedule_swe_cron_warmup(
+        start_delay_seconds=5.0,
+    )
 
     try:
         yield

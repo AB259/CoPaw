@@ -79,6 +79,37 @@ class MonitorSyncClient:
             await self._client.aclose()
             self._client = None
 
+    def schedule_swe_cron_warmup(
+        self,
+        start_delay_seconds: float = 5.0,
+    ) -> None:
+        """Schedule Monitor-side SWE cron warmup in the background."""
+        if not self._enabled:
+            return
+
+        async def _run_with_delay() -> None:
+            if start_delay_seconds > 0:
+                # SWE 需要先完成启动并开始接收 /cron/jobs 回调。
+                await asyncio.sleep(start_delay_seconds)
+            await self.trigger_swe_cron_warmup()
+
+        self._sync_fire_and_forget(_run_with_delay())
+
+    async def trigger_swe_cron_warmup(self) -> None:
+        """Trigger Monitor to warm up SWE cron schedules."""
+        if not self._enabled:
+            return
+
+        client = await self._get_client()
+        response = await client.post("/warmup/swe-crons")
+        if 200 <= response.status_code < 300:
+            logger.info("Triggered Monitor SWE cron warmup")
+        else:
+            logger.warning(
+                "Failed to trigger Monitor SWE cron warmup: status=%d",
+                response.status_code,
+            )
+
     def _sync_fire_and_forget(self, coro: Any) -> None:
         """Fire and forget - run coroutine in background.
 
