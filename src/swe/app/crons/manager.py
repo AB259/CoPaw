@@ -1425,25 +1425,31 @@ class CronManager:  # pylint: disable=too-many-public-methods
         )
         return f"{base}/api/internal/cron/callback"
 
-    async def _refresh_next_run_at(self, job_id: str) -> None:
-        """用 croniter 重新计算 next_run_at（仅用于展示）。"""
-        job = await self._repo.get_job(job_id)
-        if not job or not job.schedule or not job.schedule.cron:
+    async def refresh_next_run_at(self, job: CronJobSpec) -> None:
+        """实时计算 next_run_at（直接从 job 对象，无需查 repo）。"""
+        if not job.schedule or not job.schedule.cron:
             return
         try:
             next_run = compute_next_run_at(
                 job.schedule.cron,
                 job.schedule.timezone or self._timezone or "UTC",
             )
-            st = self._states.get(job_id, CronJobState())
+            st = self._states.get(job.id, CronJobState())
             st.next_run_at = next_run
-            self._states[job_id] = st
+            self._states[job.id] = st
         except Exception:
             logger.debug(
                 "Failed to compute next_run_at for job %s",
-                job_id,
+                job.id,
                 exc_info=True,
             )
+
+    async def _refresh_next_run_at(self, job_id: str) -> None:
+        """用 croniter 重新计算 next_run_at（仅用于展示）。"""
+        job = await self._repo.get_job(job_id)
+        if not job:
+            return
+        await self.refresh_next_run_at(job)
 
     async def _prefetch_loop(self) -> None:
         """后台循环：每30~60分钟随机间隔，预热所有已知 workspace 的 auth token。"""
