@@ -194,6 +194,7 @@ class CronJobState(BaseModel):
         Literal["success", "error", "running", "skipped", "cancelled"]
     ] = None
     last_error: Optional[str] = None
+    external_job_id: Optional[str] = None
 
 
 class CronJobView(BaseModel):
