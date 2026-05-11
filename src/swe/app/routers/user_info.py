@@ -261,12 +261,29 @@ async def _fetch_user_info_for_tenant(
             return None, None
 
         data = response.json()
-        result_data = data.get("data", {}).get("data", [])
+
+        # 响应结构可能是 {"data": {...}} 或 {"data": [...]}
+        outer_data = data.get("data")
+        if outer_data is None:
+            return None, None
+
+        # 检查 outer_data 是 dict 还是 list
+        if isinstance(outer_data, list):
+            result_data = outer_data
+        elif isinstance(outer_data, dict):
+            result_data = outer_data.get("data", [])
+            if not isinstance(result_data, list):
+                result_data = []
+        else:
+            result_data = []
 
         if not result_data or len(result_data) == 0:
             return None, None
 
         user_info = result_data[0]
+        if not isinstance(user_info, dict):
+            return None, None
+
         user_name = user_info.get("userName")
         path_name = user_info.get("pathName")
         bbk_id = _extract_bbk_id_from_path_name(path_name)
