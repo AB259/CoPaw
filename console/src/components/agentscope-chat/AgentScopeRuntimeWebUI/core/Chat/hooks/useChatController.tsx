@@ -420,6 +420,21 @@ export default function useChatController() {
     [pollSuggestions, sessionHandler, updatePostTurnValidationStatus],
   );
 
+  const handleSuggestionSubmit = useCallback(
+    async (data: FollowUpSubmitData) => {
+      if (!data?.query || getLoading?.()) {
+        return;
+      }
+
+      await submitTurn({
+        query: data.query,
+        fileList: data.fileList || [],
+        biz_params: data.biz_params,
+      });
+    },
+    [getLoading, submitTurn],
+  );
+
   /**
    * 处理重新生成
    */
@@ -504,6 +519,16 @@ export default function useChatController() {
       },
     },
     [handleSubmit],
+  );
+
+  useChatAnywhereEventEmitter(
+    {
+      type: "handleSuggestionSubmit",
+      callback: async (data) => {
+        await handleSuggestionSubmit(data.detail);
+      },
+    },
+    [handleSuggestionSubmit],
   );
 
   useChatAnywhereEventEmitter(

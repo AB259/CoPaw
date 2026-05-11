@@ -32,10 +32,13 @@ export default createGlobalStyle`
     display: flex;
     align-items: center;
     gap: 6px;
+    border: 0;
     padding: 6px 12px;
     background-color: ${({ theme }) => theme.colorFillQuaternary};
     border-radius: 16px;
     cursor: pointer;
+    font: inherit;
+    text-align: left;
     max-width: 400px; // 扩大宽度限制
     transition: background-color 0.2s ease;
 

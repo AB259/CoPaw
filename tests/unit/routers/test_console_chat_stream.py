@@ -33,7 +33,6 @@ class _FakeChatManager:
         channel_id: str,
         name: str,
         meta=None,
-        meta=None,
     ):
         _ = meta
         return SimpleNamespace(

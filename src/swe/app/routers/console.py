@@ -313,7 +313,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         content_parts = (
             list(request_data.input[0].content) if request_data.input else []
         )
-        resume_id = request_dict.get("post_turn_validation_resume_id")
+        resume_id = getattr(request_data, "post_turn_validation_resume_id", None)
 
     else:
         channel_id = request_data.get("channel", "console")
