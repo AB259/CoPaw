@@ -35,9 +35,9 @@ MANUAL_PAUSE_REASON = "manual"
 TASK_MESSAGES_STATE_KEY = "task_messages"
 _SYSTEM_JOB_IDS_FILE = "system_jobs.json"
 
-# 心跳 every 字段解析正则（如 "30m"、"6h"、"2h30m"）
+# 心跳 every 字段解析正则（如 "30m"、"6h"）
 _EVERY_PATTERN = re.compile(
-    r"^(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?(?:(?P<seconds>\d+)s)?$",
+    r"^(?:(?P<hours>\d+)h|(?P<minutes>\d+)m)$",
     re.IGNORECASE,
 )
 
@@ -105,6 +105,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 return
             self._started = True
         self._load_system_job_ids()
+        await self._restore_external_job_ids()
         self._prefetch_task = asyncio.create_task(self._prefetch_loop())
         await self._register_system_jobs()
 
@@ -417,6 +418,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         # 同步到外部调度平台
         if self._scheduler_adapter is not None:
             callback_url = self._build_callback_url("job", spec.id)
+            ext_id = ""
             try:
                 existing_ext_id = self._states.get(
                     spec.id,
@@ -433,6 +435,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         cron=spec.schedule.cron if spec.schedule else "",
                         callback_url=callback_url,
                     )
+                    ext_id = existing_ext_id
                 else:
                     ext_id = await self._scheduler_adapter.register_job(
                         tenant_id=spec.tenant_id or self._tenant_id or "",
@@ -447,12 +450,27 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         st = self._states.get(spec.id, CronJobState())
                         st.external_job_id = ext_id
                         self._states[spec.id] = st
+                        await self._persist_external_job_id(spec.id, ext_id)
             except Exception:
                 logger.warning(
                     "Failed to sync job %s to external scheduler",
                     spec.id,
                     exc_info=True,
                 )
+            # 根据 enabled 状态启停外部调度平台上的任务
+            if ext_id:
+                try:
+                    if spec.enabled:
+                        await self._scheduler_adapter.resume_job(ext_id)
+                    else:
+                        await self._scheduler_adapter.pause_job(ext_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to set run state for job %s (enabled=%s)",
+                        spec.id,
+                        spec.enabled,
+                        exc_info=True,
+                    )
 
         await self._refresh_next_run_at(spec.id)
 
@@ -472,6 +490,45 @@ class CronManager:  # pylint: disable=too-many-public-methods
         return saved or bound
 
     async def delete_job(self, job_id: str) -> bool:
+        # 先拿到 job 数据（删除前），用于调用外部调度平台
+        job_before_delete = await self._repo.get_job(job_id)
+        if job_before_delete is None:
+            return False
+
+        # 先通知外部调度平台改名并停止
+        ext_id = self._states.get(job_id, CronJobState()).external_job_id
+        if ext_id and self._scheduler_adapter is not None:
+            try:
+                callback_url = self._build_callback_url(
+                    "job",
+                    job_id,
+                )
+                cron = (
+                    job_before_delete.schedule.cron
+                    if job_before_delete.schedule
+                    and job_before_delete.schedule.cron
+                    else "0 0 1 1 *"
+                )
+                await self._scheduler_adapter.delete_job(
+                    ext_id,
+                    tenant_id=job_before_delete.tenant_id
+                    or self._tenant_id
+                    or "",
+                    agent_id=self._agent_id or "",
+                    task_type="job",
+                    job_id=job_id,
+                    job_name=job_before_delete.name,
+                    cron=cron,
+                    callback_url=callback_url,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to delete job %s from external scheduler",
+                    job_id,
+                    exc_info=True,
+                )
+
+        # 再从本地删除
         async with self._lock:
             changed, deleted_job, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._delete_job_in_jobs_file(
@@ -479,23 +536,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     job_id,
                 ),
             )
-            if deleted_job is None:
-                return False
-
-            ext_id = self._states.get(job_id, CronJobState()).external_job_id
             self._states.pop(job_id, None)
             self._rt.pop(job_id, None)
-            if ext_id and self._scheduler_adapter is not None:
-                try:
-                    await self._scheduler_adapter.delete_job(ext_id)
-                except Exception:
-                    logger.warning(
-                        "Failed to delete job %s from external scheduler",
-                        job_id,
-                        exc_info=True,
-                    )
+
             task_chat_id = str(
-                (deleted_job.meta or {}).get("task_chat_id") or "",
+                (job_before_delete.meta or {}).get("task_chat_id") or "",
             )
             if task_chat_id and self._chat_manager is not None:
                 try:
@@ -541,6 +586,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
             ext_id = self._states.get(job_id, CronJobState()).external_job_id
             if ext_id and self._scheduler_adapter:
                 await self._scheduler_adapter.pause_job(ext_id)
+            elif not ext_id:
+                logger.warning(
+                    "pause_job: no external_job_id for %s, skipping external sync",
+                    job_id,
+                )
 
             # Sync to Monitor (async, non-blocking)
             if self._monitor_sync_client is not None:
@@ -571,6 +621,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
             ext_id = self._states.get(job_id, CronJobState()).external_job_id
             if ext_id and self._scheduler_adapter:
                 await self._scheduler_adapter.resume_job(ext_id)
+            elif not ext_id:
+                logger.warning(
+                    "resume_job: no external_job_id for %s, skipping external sync",
+                    job_id,
+                )
 
             # Sync to Monitor (async, non-blocking)
             if self._monitor_sync_client is not None:
@@ -1490,10 +1545,61 @@ class CronManager:  # pylint: disable=too-many-public-methods
         except Exception:
             logger.warning("Failed to save system_job_ids", exc_info=True)
 
+    async def _restore_external_job_ids(self) -> None:
+        """从 jobs.json 的 meta 中恢复 external_job_id 到内存 _states。"""
+        try:
+            for job in await self._repo.list_jobs():
+                ext_id = (job.meta or {}).get("external_job_id", "")
+                if ext_id:
+                    st = self._states.get(job.id, CronJobState())
+                    st.external_job_id = ext_id
+                    self._states[job.id] = st
+        except Exception:
+            logger.debug("Failed to restore external_job_ids from jobs.json")
+
+    async def _persist_external_job_id(
+        self,
+        job_id: str,
+        ext_id: str,
+    ) -> None:
+        """将 external_job_id 写入 jobs.json 中对应任务的 meta 字段。"""
+        try:
+            async with self._lock:
+                await self._mutate_jobs_file_locked(
+                    lambda jobs_file: self._set_job_meta_in_jobs_file(
+                        jobs_file,
+                        job_id,
+                        {"external_job_id": ext_id},
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to persist external_job_id for %s",
+                job_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _set_job_meta_in_jobs_file(
+        jobs_file,
+        job_id: str,
+        meta_updates: dict,
+    ) -> tuple[bool, None]:
+        for index, job in enumerate(jobs_file.jobs):
+            if job.id == job_id:
+                meta = dict(job.meta or {})
+                meta.update(meta_updates)
+                jobs_file.jobs[index] = job.model_copy(update={"meta": meta})
+                return True, None
+        return False, None
+
     @staticmethod
     def _every_to_cron(every: str) -> str:
-        """将 interval 字符串（如 "30m"、"6h"）转换为 5 字段 cron 表达式。
+        """将 interval 字符串转换为 5 字段 cron 表达式。
 
+        支持格式：
+        - "Nm"（1-59 分钟）→ "*/N * * * *"
+        - "Nh"（1-23 小时）→ "0 */N * * *"
         如果 every 已经是 5 字段 cron，直接返回。
         """
         from .heartbeat import is_cron_expression
@@ -1507,21 +1613,29 @@ class CronManager:  # pylint: disable=too-many-public-methods
         m = _EVERY_PATTERN.match(every)
         if not m:
             logger.warning(
-                "Failed to parse every=%r, fallback to */30 * * * *",
+                "Failed to parse every=%r, fallback to 0/30 * * * *",
                 every,
             )
-            return "*/30 * * * *"
+            return "0/30 * * * *"
 
-        hours = int(m.group("hours") or 0)
-        minutes = int(m.group("minutes") or 0)
-        seconds = int(m.group("seconds") or 0)
-        total_minutes = hours * 60 + minutes + max(seconds // 60, 1)
+        if m.group("hours"):
+            hours = int(m.group("hours"))
+            if 1 <= hours <= 23:
+                return f"0 0/{hours} * * *"
+            logger.warning(
+                "Hours out of range (1-23): %s, fallback to 0/30 * * * *",
+                hours,
+            )
+            return "0/30 * * * *"
 
-        if total_minutes < 60:
-            return f"*/{total_minutes} * * * *"
-        if total_minutes % 60 == 0:
-            return f"0 */{total_minutes // 60} * * *"
-        return f"*/{total_minutes} * * * *"
+        minutes = int(m.group("minutes"))
+        if 1 <= minutes <= 59:
+            return f"0/{minutes} * * * *"
+        logger.warning(
+            "Minutes out of range (1-59): %s, fallback to 0/30 * * * *",
+            minutes,
+        )
+        return "0/30 * * * *"
 
     async def _register_system_jobs(self) -> None:
         """注册 heartbeat 和 dream 到外部调度平台。"""
@@ -1541,9 +1655,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         if not hb.enabled:
             if ext_id:
-                await self._scheduler_adapter.delete_job(ext_id)
-                self._system_job_ids.pop(job_id, None)
-                self._save_system_job_ids()
+                await self._scheduler_adapter.pause_job(ext_id)
             return
 
         cron = self._every_to_cron(hb.every)
@@ -1563,6 +1675,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     cron=cron,
                     callback_url=callback_url,
                 )
+                await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
                     tenant_id=self._tenant_id or "",
@@ -1595,9 +1708,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         if not dream_cron:
             if ext_id:
-                await self._scheduler_adapter.delete_job(ext_id)
-                self._system_job_ids.pop(job_id, None)
-                self._save_system_job_ids()
+                await self._scheduler_adapter.pause_job(ext_id)
             return
 
         callback_url = self._build_callback_url("dream")
@@ -1613,6 +1724,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     cron=dream_cron,
                     callback_url=callback_url,
                 )
+                await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
                     tenant_id=self._tenant_id or "",

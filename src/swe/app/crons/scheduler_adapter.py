@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 _MAX_JOBDESC_CHARS = 200
 _MAX_GLUEREMARK_CHARS = 60
 _MAX_CRON_CHARS = 20
-_MAX_ADDRESS_CHARS = 60
 
 
 def _truncate(value: str, max_chars: int) -> str:
@@ -54,7 +53,7 @@ class SchedulerAdapter(ABC):
             tenant_id: 租户 ID
             agent_id: Agent ID
             task_type: 任务类型（"job" | "heartbeat" | "dream"）
-            job_id: Copaw 内部 job ID
+            job_id: SWE 内部 job ID
             job_name: 任务名称
             cron: cron 表达式
             callback_url: 完整的回调 URL（含 server_domain 前缀）
@@ -83,7 +82,7 @@ class SchedulerAdapter(ABC):
             tenant_id: 租户 ID
             agent_id: Agent ID
             task_type: 任务类型（"job" | "heartbeat" | "dream"）
-            job_id: Copaw 内部 job ID
+            job_id: SWE 内部 job ID
             job_name: 任务名称
             cron: cron 表达式
             callback_url: 完整的回调 URL（含 server_domain 前缀）
@@ -91,10 +90,22 @@ class SchedulerAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_job(self, external_id: str) -> None:
-        """从外部调度平台删除任务（或停止任务）。
+    async def delete_job(
+        self,
+        external_id: str,
+        *,
+        tenant_id: str = "",
+        agent_id: str = "",
+        task_type: str = "",
+        job_id: str = "",
+        job_name: str = "",
+        cron: str = "",
+        callback_url: str = "",
+    ) -> None:
+        """从外部调度平台删除任务。
 
-        外部平台不支持真正删除时，退化为 stop。
+        若提供 job_name，先更名为 [已删除] {job_name} 再停止，
+        以区分于普通暂停。其余参数用于构建完整的 update 请求体。
         """
         raise NotImplementedError
 
@@ -156,8 +167,23 @@ class NoopSchedulerAdapter(SchedulerAdapter):
             cron,
         )
 
-    async def delete_job(self, external_id: str) -> None:
-        logger.debug("NoopAdapter.delete_job: ext_id=%s", external_id)
+    async def delete_job(
+        self,
+        external_id: str,
+        *,
+        tenant_id: str = "",
+        agent_id: str = "",
+        task_type: str = "",
+        job_id: str = "",
+        job_name: str = "",
+        cron: str = "",
+        callback_url: str = "",
+    ) -> None:
+        logger.debug(
+            "NoopAdapter.delete_job: ext_id=%s name=%s",
+            external_id,
+            job_name,
+        )
 
     async def pause_job(self, external_id: str) -> None:
         logger.debug("NoopAdapter.pause_job: ext_id=%s", external_id)
@@ -230,6 +256,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
             task_type,
             job_id,
         )
+        await self._set_run_state(ext_id, run_flag=1)
         return ext_id
 
     async def update_job(
@@ -263,10 +290,47 @@ class RealSchedulerAdapter(SchedulerAdapter):
             job_id,
         )
 
-    async def delete_job(self, external_id: str) -> None:
-        """外部平台不支持真正删除，退化为停止任务。"""
+    async def delete_job(
+        self,
+        external_id: str,
+        *,
+        tenant_id: str = "",
+        agent_id: str = "",
+        task_type: str = "",
+        job_id: str = "",
+        job_name: str = "",
+        cron: str = "",
+        callback_url: str = "",
+    ) -> None:
+        """停止任务；若提供 job_name 则先更名为 [已删除] 前缀以区分暂停。"""
+        if job_name:
+            try:
+                payload = self._build_add_payload(
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    task_type=task_type,
+                    job_id=job_id,
+                    job_name=job_name,
+                    cron=cron,
+                    callback_url=callback_url,
+                )
+                payload["id"] = int(external_id)
+                payload["jobDesc"] = _truncate(
+                    f"[已删除] {job_name}",
+                    _MAX_JOBDESC_CHARS,
+                )
+                await self._post("/job-admin/v2/update-job", payload)
+            except Exception:
+                logger.warning(
+                    "Failed to rename job %s before delete",
+                    external_id,
+                    exc_info=True,
+                )
         await self._set_run_state(external_id, run_flag=0)
-        logger.info("RealAdapter stopped (delete) job: ext_id=%s", external_id)
+        logger.info(
+            "RealAdapter stopped (delete) job: ext_id=%s",
+            external_id,
+        )
 
     async def pause_job(self, external_id: str) -> None:
         await self._set_run_state(external_id, run_flag=0)
@@ -279,6 +343,21 @@ class RealSchedulerAdapter(SchedulerAdapter):
     # ------------------------------------------------------------------
     # 内部方法
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_cron(cron: str) -> str:
+        """将5位cron表达式转换为外部平台的6位格式。
+
+        外部平台格式：秒 分 时 日 月 周
+        - 最前面补0表示第0秒运行
+        - 最后一位（星期）固定为?
+        """
+        parts = cron.strip().split()
+        if len(parts) != 5:
+            return cron
+        normalized = f"0 {' '.join(parts[:4])} ?"
+        logger.debug("Normalized cron: %s -> %s", cron, normalized)
+        return normalized
 
     @staticmethod
     def _build_job_param(
@@ -298,6 +377,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
                 "agent_id": agent_id,
                 "task_type": task_type,
                 "job_id": job_id,
+                "fromId": tenant_id,
             },
         )
         return base64.urlsafe_b64encode(payload.encode()).decode()
@@ -314,7 +394,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
     ) -> dict:
         """构建 add-job / update-job 的请求体。"""
         job_desc = _truncate(
-            f"[Copaw] {tenant_id}/{agent_id}/{task_type} - {job_name}",
+            f"[SWE] {tenant_id}/{agent_id}/{task_type} - {job_name}",
             _MAX_JOBDESC_CHARS,
         )
         glue_remark = _truncate(job_id, _MAX_GLUEREMARK_CHARS)
@@ -322,11 +402,11 @@ class RealSchedulerAdapter(SchedulerAdapter):
             "jobDesc": job_desc,
             "jobGroup": self._job_group,
             "glueRemark": glue_remark,
-            "jobCron": _truncate(cron, _MAX_CRON_CHARS),
+            "jobCron": _truncate(self._normalize_cron(cron), _MAX_CRON_CHARS),
             "author": self._author,
             "alarmEmail": self._alarm_email,
             "glueType": self._glue_type,
-            "jobAddress": _truncate(callback_url, _MAX_ADDRESS_CHARS),
+            "jobAddress": callback_url,
             "clientNo": self._client_no,
             "clientKey": self._client_key,
             "clientRemark": self._client_remark,
