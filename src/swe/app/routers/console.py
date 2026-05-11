@@ -27,6 +27,10 @@ from starlette.responses import StreamingResponse
 
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
+from ..post_turn_continuation_store import (
+    claim_pending_continuation,
+    peek_latest_pending_continuation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +340,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
 
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
     """
+    resume_id = None
     if isinstance(request_data, AgentRequest):
         channel_id = getattr(request_data, "channel", None) or "console"
         sender_id = request_data.user_id or "default"
@@ -343,11 +348,15 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         content_parts = (
             list(request_data.input[0].content) if request_data.input else []
         )
+        resume_id = getattr(request_data, "post_turn_validation_resume_id", None)
+
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
+        resume_id = request_data.get("post_turn_validation_resume_id")
+
 
         content_parts = []
         for content_part in input_data:
@@ -366,7 +375,15 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             "user_id": sender_id,
         },
     }
+    if resume_id:
+        native_payload["meta"]["post_turn_validation_resume_id"] = resume_id
     return native_payload
+
+
+class PostTurnValidationConsumeRequest(BaseModel):
+    """Request body for confirming a pending post-turn continuation."""
+
+    session_id: str = Field(..., description="Session id for validation scope")
 
 
 def _derive_chat_name(native_payload: dict) -> str:
@@ -512,6 +529,7 @@ async def post_console_chat(
         # Hold iterator so finally can aclose(); guarantees stream_from_queue's
         # finally (detach_subscriber) on client abort / generator teardown.
         stream_it = tracker.stream_from_queue(queue, run_key)
+        yield ": keep-alive\n\n"
         try:
             try:
                 async for event_data in stream_it:
@@ -673,6 +691,44 @@ async def get_suggestions(
     return {"suggestions": suggestions}
 
 
+@router.get("/post-turn-validation")
+async def get_post_turn_validation(
+    request: Request,
+    session_id: str = Query(
+        ...,
+        description="Session id to get pending post-turn validation result",
+    ),
+) -> dict:
+    """Return the latest pending continuation confirmation for a session."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    result = await peek_latest_pending_continuation(
+        session_id=session_id,
+        tenant_id=tenant_id,
+    )
+    return {"result": result}
+
+
+@router.post("/post-turn-validation/{validation_id}/consume")
+async def consume_post_turn_validation(
+    validation_id: str,
+    body: PostTurnValidationConsumeRequest,
+    request: Request,
+) -> dict:
+    """Confirm a pending continuation without exposing the internal prompt."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    result = await claim_pending_continuation(
+        validation_id=validation_id,
+        session_id=body.session_id,
+        tenant_id=tenant_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Post-turn validation result not found or expired",
+        )
+    return {"result": result}
+
+
 class QAContentRequest(BaseModel):
     """Q&A 内容请求模型."""
 
@@ -714,6 +770,7 @@ async def get_suggestions_qa_content(
 
     entry = await get_qa_content(
         chat_id=body.chat_id,
+        user_message=body.user_message,
         tenant_id=tenant_id,
     )
 
