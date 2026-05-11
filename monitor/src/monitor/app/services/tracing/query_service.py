@@ -218,7 +218,7 @@ class TracingQueryService:
             if row is None:
                 return {
                     "calls": 0,
-                    "tokens": 0,
+                    "tokens": 0.0,
                     "sessions": 0,
                     "users": 0,
                     "platforms": 0,
@@ -226,7 +226,7 @@ class TracingQueryService:
                 }
             return {
                 "calls": row["calls"] or 0,
-                "tokens": row["tokens"] or 0,
+                "tokens": float(row["tokens"] or 0),
                 "sessions": row["sessions"] or 0,
                 "users": row["users"] or 0,
                 "platforms": row["platforms"] or 0,
