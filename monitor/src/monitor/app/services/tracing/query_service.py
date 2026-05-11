@@ -1638,6 +1638,16 @@ class TracingQueryService:
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
+        # 构建技能统计子查询的日期筛选条件
+        skill_date_conditions = "s.event_type = 'skill_invocation'"
+        skill_params: list[Any] = []
+        if start_date:
+            skill_date_conditions += " AND s.start_time >= %s"
+            skill_params.append(start_date)
+        if end_date:
+            skill_date_conditions += " AND s.start_time <= %s"
+            skill_params.append(end_date)
+
         count_query = f"SELECT COUNT(DISTINCT session_id) as total FROM swe_tracing_traces WHERE {where_sql}"
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
@@ -1654,7 +1664,7 @@ class TracingQueryService:
                        MAX(t.start_time) as last_active,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
@@ -1667,7 +1677,7 @@ class TracingQueryService:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend([page_size, offset])
+            params.extend(skill_params + [page_size, offset])
         else:
             query = f"""
                 SELECT t.session_id,
@@ -1680,7 +1690,7 @@ class TracingQueryService:
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.source_id = %s
                         AND s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
@@ -1694,7 +1704,9 @@ class TracingQueryService:
                 LIMIT %s OFFSET %s
             """
             params = (
-                [source_id, source_id, source_id]
+                [source_id]
+                + skill_params
+                + [source_id, source_id]
                 + params
                 + [page_size, offset]
             )
