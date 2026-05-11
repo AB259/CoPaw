@@ -3,6 +3,12 @@
  */
 
 // ============================================================
+// 机构映射（从公共常量导入）
+// ============================================================
+
+export { BBK_ID_TO_NAME_MAP as BBK_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
+
+// ============================================================
 // 类型定义
 // ============================================================
 
@@ -31,6 +37,8 @@ export interface BarChartData {
 
 export interface UserRow {
   userId: string;
+  userName?: string;
+  bbkId?: string;
   name: string;
   calls: number;
   tokens: number;
@@ -140,4 +148,18 @@ export function truncateName(name: string, maxLength: number = 20): string {
   if (!name) return "";
   if (name.length <= maxLength) return name;
   return name.slice(0, maxLength) + "...";
+}
+
+// ============================================================
+// Modal 相关类型
+// ============================================================
+
+// 用户详情 Modal 状态类型
+export interface UserDetailModalProps {
+  open: boolean;
+  userId: string | null;
+  startDate?: string;
+  endDate?: string;
+  sourceId?: string;
+  onClose: () => void;
 }

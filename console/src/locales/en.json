@@ -24,6 +24,7 @@
     "help": "Help",
     "close": "Close",
     "actions": "Actions",
+    "search": "Search",
     "total": "Total {{count}}"
   },
   "nav": {
@@ -55,6 +56,8 @@
     "analyticsMessages": "User Messages",
     "analyticsTraces": "Conversation Analytics",
     "analyticsBusinessOverview": "Business Overview",
+    "monitorCronOverview": "Cron Overview",
+    "monitor": "Monitor",
     "instance": "Instance",
     "instanceOverview": "Overview",
     "instanceInstances": "Instances",
@@ -419,7 +422,10 @@
     "statusConflict": "Conflict",
     "renameEntry": "New name for \"{{name}}\":",
     "builtin": "Built-in",
-    "custom": "Custom"
+    "custom": "Custom",
+    "resolveModeRename": "Rename to new name",
+    "resolveModeOverwrite": "Overwrite existing skills",
+    "overwriteWarning": "Will overwrite {{count}} existing skill(s). This action cannot be undone."
   },
   "mcp": {
     "title": "MCP Clients",
@@ -1482,7 +1488,14 @@
     "filterStatus": "Filter status",
     "exportExcel": "Export Excel",
     "search": "Search",
-    "totalItems": "Total {{total}} items"
+    "totalItems": "Total {{total}} items",
+    "sessionList": "Sessions",
+    "tracesFlow": "Conversation Flow",
+    "viewDetail": "View Details",
+    "collapseDetail": "Collapse",
+    "modelOutput": "Model Output",
+    "noSessionData": "No session data",
+    "noTraceData": "No conversation data"
   },
   "instance": {
     "overview": "Overview",
@@ -1557,7 +1570,7 @@
     "searchTargetId": "Search target ID"
   },
   "dreamLogs": {
-    "title": "Dream Optimization Records",
+    "title": "Governance Records",
     "triggerNow": "Trigger Now",
     "triggerType": "Trigger Type",
     "trigger": {
@@ -1570,19 +1583,19 @@
       "failed": "Failed",
       "rollback": "Rolled Back"
     },
-    "filesOptimized": "Files Optimized",
+    "filesOptimized": "Files Changed",
     "runTime": "Run Time",
     "duration": "Duration",
     "modelUsed": "Model Used",
-    "summary": "Summary",
+    "summary": "Governance Summary",
     "stats": {
-      "title": "Dream Optimization Statistics",
+      "title": "Governance Statistics",
       "totalExecutions": "Total Executions",
       "successRate": "Success Rate",
       "spaceSaved": "Space Saved",
       "filesChanged": "Files Changed",
       "avgDuration": "Avg Duration",
-      "lastOptimization": "Last Optimization"
+      "lastOptimization": "Last Governance"
     },
     "tabRecords": "Records",
     "tabBackups": "Backups",
@@ -1615,14 +1628,14 @@
     },
     "diff": {
       "title": "File Comparison",
-      "before": "Before Optimization",
-      "after": "After Optimization",
+      "before": "Before",
+      "after": "After",
       "noChanges": "No Changes"
     },
     "rollback": {
       "confirm": "Confirm Rollback?",
-      "confirmMessage": "Are you sure you want to rollback selected files? This will restore content before optimization.",
-      "confirmAllMessage": "Are you sure you want to rollback all files? This will restore content before optimization.",
+      "confirmMessage": "Are you sure you want to rollback selected files? This will restore content before governance.",
+      "confirmAllMessage": "Are you sure you want to rollback all files? This will restore content before governance.",
       "success": "Rollback successful",
       "failed": "Rollback failed",
       "single": "Rollback this file",
@@ -1630,7 +1643,7 @@
     },
     "viewDiff": "View Diff",
     "noRecords": "No records yet",
-    "firstRecord": "Records will appear after first dream optimization",
+    "firstRecord": "Records will appear after first governance execution",
     "filter": {
       "startDate": "Start Date",
       "endDate": "End Date",
@@ -1639,6 +1652,12 @@
       "clear": "Clear Filters"
     },
     "tabCleanup": "File Cleanup",
+    "running": {
+      "title": "Governance task running...",
+      "autoTitle": "Scheduled governance task running...",
+      "elapsed": "Elapsed",
+      "triggering": "Running..."
+    },
     "orphanFiles": {
       "title": "Orphan Files List",
       "workspaceDir": "Workspace Directory",

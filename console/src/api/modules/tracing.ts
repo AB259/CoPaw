@@ -77,10 +77,13 @@ export interface UserStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
 }
 
 export interface UserListItem {
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   total_sessions: number;
   total_conversations: number;
   total_tokens: number;
@@ -90,6 +93,8 @@ export interface UserListItem {
 export interface TraceListItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -105,6 +110,8 @@ export interface TraceListItem {
 export interface SessionListItem {
   session_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   channel: string;
   total_traces: number;
   total_tokens: number;
@@ -141,6 +148,8 @@ export interface TraceDetail {
 export interface Trace {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -173,6 +182,8 @@ export interface Span {
   tool_input: Record<string, unknown> | null;
   tool_output: string | null;
   error: string | null;
+  user_name?: string;
+  bbk_id?: string;
 }
 
 export interface ToolCall {
@@ -242,11 +253,11 @@ export interface TraceDetailWithTimeline {
 export interface UserMessageItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   user_message: string | null;
-  input_tokens: number;
-  output_tokens: number;
   model_name: string | null;
   start_time: string;
   duration_ms: number | null;
@@ -263,7 +274,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
-    return request(`/tracing/overview?${params.toString()}`);
+    return request(`/monitor/tracing/overview?${params.toString()}`);
   },
 
   getUsers: async (
@@ -274,6 +285,9 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      sort_by?: string;
+      filter_user_type?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -286,10 +300,16 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== "all") params.append(key, value);
+        // filter_user_type 需要传递 "all" 或 "filtered"
+        // source_id 使用 "all" 表示查询全部
+        if (key === "filter_user_type") {
+          if (value) params.append(key, value);
+        } else if (value && value !== "all") {
+          params.append(key, value);
+        }
       });
     }
-    return request(`/tracing/users?${params.toString()}`);
+    return request(`/monitor/tracing/users?${params.toString()}`);
   },
 
   getUserStats: async (
@@ -303,7 +323,7 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/users/${encodeURIComponent(userId)}${query}`);
+    return request(`/monitor/tracing/users/${encodeURIComponent(userId)}${query}`);
   },
 
   getTraces: async (
@@ -316,6 +336,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -331,11 +352,11 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/traces?${params.toString()}`);
+    return request(`/monitor/tracing/traces?${params.toString()}`);
   },
 
   getTraceDetail: async (traceId: string): Promise<TraceDetail> => {
-    return request(`/tracing/traces/${traceId}`);
+    return request(`/monitor/tracing/traces/${traceId}`);
   },
 
   getModelUsage: async (
@@ -348,7 +369,7 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/models${query}`);
+    return request(`/monitor/tracing/models${query}`);
   },
 
   getToolUsage: async (
@@ -361,7 +382,7 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/tools${query}`);
+    return request(`/monitor/tracing/tools${query}`);
   },
 
   getSessions: async (
@@ -372,7 +393,8 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -388,7 +410,7 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/sessions?${params.toString()}`);
+    return request(`/monitor/tracing/sessions?${params.toString()}`);
   },
 
   getSessionStats: async (
@@ -403,7 +425,7 @@ export const tracingApi = {
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
-      `/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
+      `/monitor/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
     );
   },
 
@@ -416,7 +438,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -432,7 +455,7 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/user-messages?${params.toString()}`);
+    return request(`/monitor/tracing/user-messages?${params.toString()}`);
   },
 
   exportUserMessages: async (
@@ -442,7 +465,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {
@@ -455,7 +479,7 @@ export const tracingApi = {
     }
     // Use the proper API URL and include authorization token
     const { getApiUrl } = await import("../config");
-    const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
+    const url = getApiUrl(`/monitor/tracing/user-messages/export?${params.toString()}`);
     const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
@@ -477,7 +501,7 @@ export const tracingApi = {
 
   // Timeline with skill hierarchy
   getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
-    return request(`/tracing/traces/${traceId}/timeline`);
+    return request(`/monitor/tracing/traces/${traceId}/timeline`);
   },
 
   // Business Overview APIs
@@ -489,7 +513,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/sources${query}`);
+    return request(`/monitor/tracing/sources${query}`);
   },
 
   getChannelDistribution: async (
@@ -506,7 +530,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/channel-distribution${query}`);
+    return request(`/monitor/tracing/channel-distribution${query}`);
   },
 
   getGrowthStats: async (
@@ -520,13 +544,14 @@ export const tracingApi = {
     sessionGrowth: number;
     userGrowth: number;
     platformGrowth: number;
+    avgDurationGrowth: number;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
     if (sourceId) params.append("source_id", sourceId);
-    return request(`/tracing/growth-stats?${params.toString()}`);
+    return request(`/monitor/tracing/growth-stats?${params.toString()}`);
   },
 
   getDailyTrend: async (
@@ -541,6 +566,6 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/daily-trend${query}`);
+    return request(`/monitor/tracing/daily-trend${query}`);
   },
 };

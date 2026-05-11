@@ -258,12 +258,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     //   label: t("nav.voiceTranscription"),
     // },
     {
-      key: "analytics-overview",
-      icon: <SparkBarChartLine size={18} />,
-      path: "/analytics/overview",
-      label: t("nav.analyticsOverview", "Overview"),
-    },
-    {
       key: "analytics-users",
       icon: <SparkUserGroupLine size={18} />,
       path: "/analytics/users",
@@ -292,6 +286,12 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       icon: <SparkBarChartLine size={18} />,
       path: "/analytics/business-overview",
       label: t("nav.analyticsBusinessOverview", "运营看板"),
+    },
+    {
+      key: "monitor-cron-overview",
+      icon: <SparkAdvancedMonitoringLine size={18} />,
+      path: "/monitor/cron-overview",
+      label: t("nav.monitorCronOverview", "定时任务概览"),
     },
     {
       key: "instance-overview",
@@ -463,11 +463,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       key: "analytics-group",
       label: collapsed ? null : t("nav.analytics", "Analytics"),
       children: [
-        // {
-        //   key: "analytics-overview",
-        //   label: collapsed ? null : t("nav.analyticsOverview", "Overview"),
-        //   icon: <SparkBarChartLine size={16} />,
-        // },
         {
           key: "analytics-business-overview",
           label: collapsed
@@ -494,6 +489,11 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
+        },
+        {
+          key: "monitor-cron-overview",
+          label: collapsed ? null : t("nav.monitorCronOverview", "定时任务概览"),
+          icon: <SparkAdvancedMonitoringLine size={16} />,
         },
       ],
     },

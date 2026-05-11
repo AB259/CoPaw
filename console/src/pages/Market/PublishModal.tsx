@@ -1,7 +1,8 @@
-import { Modal, Form, Input, Select, Button } from "antd";
+import { Modal, Form, Input, Select, Button, Spin } from "antd";
 import { useState, useEffect } from "react";
-import { marketApi, PublishSkillRequest } from "../../api/modules/market";
+import { marketApi, PublishSkillRequest, type Category } from "../../api/modules/market";
 import { BBK_ID_MAP } from "../../constants/bbk";
+import { useIframeStore } from "../../stores/iframeStore";
 
 const { TextArea } = Input;
 
@@ -9,7 +10,6 @@ interface PublishModalProps {
   open: boolean;
   sourceId: string;
   userId: string;
-  userName: string;
   onClose: () => void;
   onSuccess: () => void;
   // 同步模式：预填技能数据
@@ -21,9 +21,25 @@ interface PublishModalProps {
   };
 }
 
-export function PublishModal({ open, sourceId, userId, userName, onClose, onSuccess, initialData }: PublishModalProps) {
+export function PublishModal({ open, sourceId, userId, onClose, onSuccess, initialData }: PublishModalProps) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const resolvedUserName = useIframeStore((state) => state.userName);
+  const resolvedClawName = useIframeStore((state) => state.clawName);
+  const userName = resolvedUserName || resolvedClawName || userId;
+
+  // 加载分类列表
+  useEffect(() => {
+    if (open) {
+      setLoadingCategories(true);
+      marketApi.listCategories(sourceId)
+        .then(setCategories)
+        .catch(console.error)
+        .finally(() => setLoadingCategories(false));
+    }
+  }, [open, sourceId]);
 
   // 当 initialData 变化时预填表单
   useEffect(() => {
@@ -52,7 +68,7 @@ export function PublishModal({ open, sourceId, userId, userName, onClose, onSucc
         skill_json: initialData?.skillJson || {},
         skill_md: values.skill_md,
       };
-      await marketApi.publishSkill(sourceId, userId, userName, payload);
+      await marketApi.publishSkill(sourceId, payload);
       form.resetFields();
       onSuccess();
       onClose();
@@ -85,7 +101,15 @@ export function PublishModal({ open, sourceId, userId, userName, onClose, onSucc
           <TextArea rows={2} />
         </Form.Item>
         <Form.Item name="category_id" label="分类">
-          <Select allowClear placeholder="选择分类" options={[]} />
+          {loadingCategories ? (
+            <Spin size="small" />
+          ) : (
+            <Select
+              allowClear
+              placeholder="选择分类"
+              options={categories.map((c) => ({ label: c.name, value: c.id }))}
+            />
+          )}
         </Form.Item>
         <Form.Item name="bbk_ids" label="可见机构">
           <Select

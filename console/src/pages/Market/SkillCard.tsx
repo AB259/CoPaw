@@ -1,6 +1,6 @@
 import { Card, Tag, Typography, Button, Space, Popconfirm } from "antd";
 import { MarketSkill } from "../../api/modules/market";
-import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2 } from "lucide-react";
+import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2, Send } from "lucide-react";
 
 const { Text } = Typography;
 
@@ -12,9 +12,10 @@ interface SkillCardProps {
   isManager: boolean;
   isInstalled?: boolean;
   isFeatured?: boolean;
+  categoryName?: string;
 }
 
-export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager, isInstalled, isFeatured }: SkillCardProps) {
+export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager, isInstalled, isFeatured, categoryName }: SkillCardProps) {
   const formatMetricValue = (value: number | null): string => {
     if (value === null) return "0";
     if (value >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
@@ -73,7 +74,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
                   精品
                 </Tag>
               )}
-              {skill.category_id && (
+              {categoryName && (
                 <Tag
                   style={{
                     fontSize: 11,
@@ -88,7 +89,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
                   }}
                 >
                   <TagIcon size={12} style={{ color: "#87867f" }} />
-                  {skill.category_id}
+                  {categoryName}
                 </Tag>
               )}
               {isInstalled && (
@@ -206,6 +207,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
         <div style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={(e) => e.stopPropagation()}>
           <Button
             size="small"
+            onClick={onClick}
             style={{
               height: 28,
               padding: "0 12px",
@@ -222,6 +224,25 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
             <FileText size={12} />
             详情
           </Button>
+          {isManager && onDistribute && (
+            <Button
+              size="small"
+              type="primary"
+              onClick={onDistribute}
+              style={{
+                height: 28,
+                padding: "0 12px",
+                fontSize: 12,
+                borderRadius: 8,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Send size={12} />
+              分发
+            </Button>
+          )}
           {isManager && onUnpublish && (
             <Popconfirm
               title="下架技能"

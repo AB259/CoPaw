@@ -1,12 +1,11 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Input, Upload, Tooltip, message } from "antd";
-import type { UploadFile } from "antd";
+import type { GetRef, UploadFile } from "antd";
 import { SparkAttachmentLine } from "@agentscope-ai/icons";
 import { IconButton } from "@agentscope-ai/design";
 import { Attachments } from "@/components/agentscope-chat";
 import { chatApi } from "@/api/modules/chat";
 import Style from "./style";
-import KnowledgeTabs from "../KnowledgeTabs";
 import FeaturedCases from "../FeaturedCases";
 import CaseDetailDrawer from "../CaseDetailDrawer";
 import { featuredCasesApi } from "@/api/modules/featuredCases";
@@ -14,9 +13,16 @@ import type { FeaturedCase } from "@/api/types/featuredCases";
 import sendIcon from '../../../assets/icons/send_highlight.svg'
 import { useTranslation } from 'react-i18next';
 
+const RUNTIME_INPUT_UPLOAD_FILE_EVENT = "pasteFile";
+const PLACEHOLDER_OPTIONS = [
+  '告诉我你要做什么，我将召唤相应专家，为你执行...',
+  '有什么要求都告诉我，我会越用越懂你...',
+  '你可以给我取个名字，甚至设定我的人设...'
+];
+
 interface WelcomeCenterLayoutProps {
   greeting?: string;
-  onSubmit: (data: { query: string; fileList?: any[] }) => void;
+  onSubmit: (data: { query: string; fileList?: UploadFile[] }) => void;
 }
 
 export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
@@ -28,27 +34,21 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
   const [selectedCase, setSelectedCase] = useState<FeaturedCase | null>(null);
   const [randomPlaceholder, setRandomPlaceholder] = useState('');
   const [loadingCase, setLoadingCase] = useState(false);
-  const uploadRef = useRef<any>(null);
-  // 随机placeholder文案数组
-  const placeholderOptions = [
-    '告诉我你要做什么，我将召唤对应专家，为你执行...',
-    '有什么要求都告诉我，我会越用越懂你...',
-    '你可以给我取个名字，甚至设定我的人设...'
-  ];
+  const uploadRef = useRef<GetRef<typeof Upload>>(null);
 
   // 组件挂载时随机选择placeholder文案
   useEffect(() => {
-    const randomIndex = Math.floor(Math.random() * placeholderOptions.length);
-    setRandomPlaceholder(placeholderOptions[randomIndex]);
+    const randomIndex = Math.floor(Math.random() * PLACEHOLDER_OPTIONS.length);
+    setRandomPlaceholder(PLACEHOLDER_OPTIONS[randomIndex]);
   }, []);
 
   const handleSend = useCallback(() => {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    
+
     // Filter files that have been successfully uploaded (have response.url)
     const uploadedFiles = fileList.filter((f) => f.response?.url);
-    
+
     // Submit with file list
     onSubmit({ query: trimmed, fileList: uploadedFiles });
     setInputValue("");
@@ -102,7 +102,7 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
       type: file.type,
       status: "uploading",
       percent: 0,
-      originFileObj: file as any,
+      originFileObj: file as UploadFile["originFileObj"],
     };
 
     setFileList((prev) => [...prev, uploadFile]);
@@ -151,6 +151,19 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
     return false; // Prevent default upload behavior
   }, [t]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ file?: File }>).detail;
+      if (detail?.file instanceof File) {
+        handleBeforeUpload(detail.file);
+      }
+    };
+
+    document.addEventListener(RUNTIME_INPUT_UPLOAD_FILE_EVENT, handler);
+    return () =>
+      document.removeEventListener(RUNTIME_INPUT_UPLOAD_FILE_EVENT, handler);
+  }, [handleBeforeUpload]);
+
   return (
     <>
       <Style />
@@ -169,7 +182,7 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
               />
             </div>
           )}
-          
+
           <Input.TextArea
             className="welcome-input-placeholder"
             value={inputValue}
@@ -207,11 +220,6 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
             </button>
           </div>
         </div>
-
-        {/* Knowledge Tabs */}
-        {/* <div className="welcome-tabs-area">
-          <KnowledgeTabs />
-        </div> */}
 
         {/* Featured Cases */}
         <div className="welcome-cases-area">

@@ -3,6 +3,7 @@
 
 用于用户登录后获取更多用户信息，转发到外部API。
 """
+
 import logging
 from typing import Optional
 
@@ -62,7 +63,7 @@ async def query_user_info(
         )
 
     # 构建请求
-    url = USER_INFO_API_URL.rstrip("/") + "/user/query"
+    url = USER_INFO_API_URL
     headers = {
         "Content-Type": "application/json",
     }

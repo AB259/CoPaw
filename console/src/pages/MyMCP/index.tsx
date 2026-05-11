@@ -17,10 +17,9 @@ import type { MyMCPListItem } from "../../api/types";
 export default function MyMCPPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const userId = getUserId();
-  const userName = useIframeStore((state) => state.clawName) || "Unknown";
   const manager = useIframeStore((state) => state.manager);
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
-  const canManage = manager || isSuperManager;
+  const canManage = manager || isSuperManager || userId === "default";
 
   const {
     mcpList,
@@ -375,9 +374,6 @@ export default function MyMCPPage() {
 
       <PublishMCPModal
         open={publishModalOpen}
-        sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         clientKey={publishClientKey}
         clientName={selectedMCP?.name || ""}
         onClose={() => {

@@ -132,6 +132,64 @@ def _sort_items_by_updated_at_desc(
     return sorted(items, key=sort_key, reverse=True)
 
 
+def _normalize_transport_value(raw_transport: str) -> str | None:
+    """Normalize transport string to standard values."""
+    lowered = raw_transport.strip().lower()
+    if lowered == "streamable-http":
+        return "streamable_http"
+    if lowered in {"stdio", "sse", "streamable_http"}:
+        return lowered
+    return None
+
+
+def _extract_first_mcp_server(config_data: dict) -> dict:
+    """Extract first MCP server config from nested mcpServers structure."""
+    mcp_servers = config_data.get("mcpServers")
+    if not isinstance(mcp_servers, dict) or not mcp_servers:
+        return dict(config_data)
+
+    _, first_value = next(iter(mcp_servers.items()))
+    if isinstance(first_value, dict):
+        return dict(first_value)
+    return dict(config_data)
+
+
+def _apply_advanced_fields(normalized: dict) -> None:
+    """Apply fields from nested 'advanced' dict to normalized config."""
+    advanced = normalized.get("advanced")
+    if not isinstance(advanced, dict):
+        return
+
+    if "headers" not in normalized and isinstance(
+        advanced.get("headers"),
+        dict,
+    ):
+        normalized["headers"] = advanced.get("headers", {})
+
+    if "transport" not in normalized and isinstance(
+        advanced.get("transport"),
+        str,
+    ):
+        transport = _normalize_transport_value(advanced["transport"])
+        if transport:
+            normalized["transport"] = transport
+
+
+def _infer_transport_from_config(normalized: dict) -> None:
+    """Infer transport type from command or url if not set."""
+    if "transport" in normalized:
+        return
+
+    command = normalized.get("command")
+    if isinstance(command, str) and command.strip():
+        normalized["transport"] = "stdio"
+        return
+
+    url = normalized.get("url")
+    if isinstance(url, str) and url.strip():
+        normalized["transport"] = "streamable_http"
+
+
 def _normalize_market_mcp_config_data(config_data: dict) -> dict:
     """兼容旧市场条目中的原始 MCP 上传结构。
 
@@ -142,51 +200,17 @@ def _normalize_market_mcp_config_data(config_data: dict) -> dict:
     if not isinstance(config_data, dict):
         return {}
 
-    normalized = dict(config_data)
+    normalized = _extract_first_mcp_server(config_data)
+    _apply_advanced_fields(normalized)
 
-    mcp_servers = normalized.get("mcpServers")
-    if isinstance(mcp_servers, dict) and mcp_servers:
-        _, first_value = next(iter(mcp_servers.items()))
-        if isinstance(first_value, dict):
-            normalized = dict(first_value)
-
-    advanced = normalized.get("advanced")
-    if isinstance(advanced, dict):
-        if "headers" not in normalized and isinstance(
-            advanced.get("headers"),
-            dict,
-        ):
-            normalized["headers"] = advanced.get("headers", {})
-        if "transport" not in normalized and isinstance(
-            advanced.get("transport"),
-            str,
-        ):
-            raw_transport = advanced["transport"].strip().lower()
-            if raw_transport == "streamable-http":
-                normalized["transport"] = "streamable_http"
-            elif raw_transport in {"stdio", "sse", "streamable_http"}:
-                normalized["transport"] = raw_transport
-
+    # Normalize top-level transport/type field
     raw_transport = normalized.get("transport") or normalized.get("type")
     if isinstance(raw_transport, str):
-        lowered = raw_transport.strip().lower()
-        if lowered == "streamable-http":
-            normalized["transport"] = "streamable_http"
-        elif lowered in {"stdio", "sse", "streamable_http"}:
-            normalized["transport"] = lowered
+        transport = _normalize_transport_value(raw_transport)
+        if transport:
+            normalized["transport"] = transport
 
-    if "transport" not in normalized:
-        if (
-            isinstance(normalized.get("command"), str)
-            and normalized.get("command", "").strip()
-        ):
-            normalized["transport"] = "stdio"
-        elif (
-            isinstance(normalized.get("url"), str)
-            and normalized.get("url", "").strip()
-        ):
-            normalized["transport"] = "streamable_http"
-
+    _infer_transport_from_config(normalized)
     return normalized
 
 
@@ -268,9 +292,15 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> None:
         """扫描技能目录，发现安全问题抛出异常."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if skill_dir.exists():
             scan_skill_directory(skill_dir, skill_name=skill_name)
@@ -280,16 +310,22 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """启用技能（含安全扫描 + 回调重载）."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if not skill_dir.exists():
             return {"success": False, "reason": "not_found"}
 
         # 安全扫描
         try:
-            self._scan_skill_or_raise(user_id, skill_name, agent_id)
+            self._scan_skill_or_raise(user_id, skill_name, agent_id, source_id)
         except SkillScanError as e:
             return {
                 "success": False,
@@ -309,6 +345,7 @@ class MarketplaceService:
             user_id,
             agent_id,
             _update,
+            source_id,
         )
 
         if updated:
@@ -321,6 +358,7 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """禁用技能（含回调重载）."""
 
@@ -337,6 +375,7 @@ class MarketplaceService:
             user_id,
             agent_id,
             _update,
+            source_id,
         )
 
         if updated:
@@ -349,11 +388,17 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量删除技能."""
         import shutil
 
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         results: dict[str, Any] = {}
 
         for skill_name in skill_names:
@@ -363,7 +408,7 @@ class MarketplaceService:
                 continue
 
             # 先禁用
-            await self.disable_skill(user_id, skill_name, agent_id)
+            await self.disable_skill(user_id, skill_name, agent_id, source_id)
 
             # 删除目录
             try:
@@ -385,6 +430,7 @@ class MarketplaceService:
                 user_id,
                 agent_id,
                 _remove,
+                source_id,
             )
 
         return results
@@ -394,6 +440,7 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量启用技能."""
         results: dict[str, Any] = {}
@@ -402,6 +449,7 @@ class MarketplaceService:
                 user_id,
                 skill_name,
                 agent_id,
+                source_id,
             )
         return results
 
@@ -410,6 +458,7 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量禁用技能."""
         results: dict[str, Any] = {}
@@ -418,6 +467,7 @@ class MarketplaceService:
                 user_id,
                 skill_name,
                 agent_id,
+                source_id,
             )
         return results
 
@@ -694,12 +744,22 @@ class MarketplaceService:
         agent_id: str = "default",
     ) -> list[MySkillItem]:
         """获取用户技能列表（我创建的 + 我接收的）。"""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         if not skills_dir.exists():
             return []
 
         # 读取 manifest 获取启用状态
-        manifest = read_user_skill_manifest(self.swe_root, user_id, agent_id)
+        manifest = read_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         manifest_skills = manifest.get("skills", {})
 
         market_index = load_index(self.marketplace_root, source_id)
@@ -832,9 +892,15 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> list[dict]:
         """列出技能文件树（不包含 skill.json）."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if not skill_dir.exists():
             return []
@@ -882,9 +948,15 @@ class MarketplaceService:
         skill_name: str,
         file_path: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> tuple[str | None, str]:
         """读取技能文件内容，返回 (content, file_type)."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         target = skill_dir / file_path
 
@@ -919,9 +991,15 @@ class MarketplaceService:
         file_path: str,
         content: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> bool:
         """保存技能文件内容."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         target = skill_dir / file_path
 
@@ -944,11 +1022,17 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> bool:
         """删除用户技能."""
         import shutil
 
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
 
         if not skill_dir.exists():

@@ -3,6 +3,7 @@
 
 Defines Trace, Span, EventType, and related models for tracing events.
 """
+
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
@@ -54,6 +55,8 @@ class Span(BaseModel):
         description="Duration in milliseconds",
     )
     user_id: str = Field(default="", description="User identifier")
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str = Field(default="", description="Session identifier")
     channel: str = Field(default="", description="Channel identifier")
     model_name: Optional[str] = Field(
@@ -106,6 +109,8 @@ class Trace(BaseModel):
     trace_id: str = Field(description="Unique trace identifier")
     source_id: str = Field(description="Source identifier for data isolation")
     user_id: str = Field(description="User identifier")
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str = Field(description="Session identifier")
     channel: str = Field(description="Channel identifier")
     start_time: datetime = Field(description="Trace start timestamp")
@@ -383,6 +388,8 @@ class UserListItem(BaseModel):
     """User list item with stats."""
 
     user_id: str
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     total_sessions: int = 0
     total_conversations: int = 0
     total_tokens: int = 0
@@ -396,6 +403,8 @@ class TraceListItem(BaseModel):
     trace_id: str
     source_id: str
     user_id: str
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str
     channel: str
     start_time: datetime
@@ -413,6 +422,8 @@ class SessionListItem(BaseModel):
 
     session_id: str
     user_id: str
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     channel: str
     total_traces: int = 0
     total_tokens: int = 0
@@ -446,6 +457,8 @@ class UserMessageItem(BaseModel):
     trace_id: str
     source_id: str
     user_id: str
+    user_name: Optional[str] = Field(default=None, description="User name")
+    bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str
     channel: str
     user_message: Optional[str] = None
