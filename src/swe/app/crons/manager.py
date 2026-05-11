@@ -641,7 +641,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def _dream_callback(self) -> None:
         """Run one dream-based memory optimization task."""
         # 延迟导入避免循环依赖
-        from ..routers.dream_logs import _set_running, _clear_running  # pylint: disable=import-outside-toplevel
+        from ..routers.dream_logs import (
+            _set_running,
+            _clear_running,
+        )  # pylint: disable=import-outside-toplevel
 
         _set_running("cron")
         try:
@@ -1899,7 +1902,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         meta = dict(job.dispatch.meta or {})
 
         # 仅 RMASSIST 来源的租户包含跳转链接
-        from ...workspace.tenant_init_source_store import is_tenant_source
+        from ..workspace.tenant_init_source_store import is_tenant_source
 
         if creator_id and await is_tenant_source(str(creator_id), "RMASSIST"):
             meta["link_url"] = wplus_link
