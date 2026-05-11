@@ -4,6 +4,7 @@
 Provides methods to query job definitions and execution history
 for the frontend overview page.
 """
+
 import logging
 from datetime import datetime
 from typing import List, Optional
