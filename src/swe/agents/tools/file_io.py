@@ -2,9 +2,12 @@
 # flake8: noqa: E501
 # pylint: disable=line-too-long
 import asyncio
+from contextlib import suppress
 import logging
 import os
 from pathlib import Path
+import tempfile
+import threading
 import time
 from typing import Optional
 
@@ -26,6 +29,8 @@ from ...security.tenant_path_boundary import (
 )
 
 logger = logging.getLogger(__name__)
+_FILE_WRITE_LOCKS: dict[str, asyncio.Lock] = {}
+_FILE_WRITE_LOCKS_GUARD = threading.Lock()
 
 try:
     FILE_WRITE_SLOW_WARNING_SECONDS = max(
@@ -124,6 +129,33 @@ def _log_file_write_diagnostics(
         logger.warning(message, *args)
 
 
+def _get_file_write_lock(file_path: str) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock_key = f"{id(loop)}:{file_path}"
+    with _FILE_WRITE_LOCKS_GUARD:
+        lock = _FILE_WRITE_LOCKS.get(lock_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _FILE_WRITE_LOCKS[lock_key] = lock
+        return lock
+
+
+def _make_temp_file_path(file_path: str) -> str:
+    target = Path(file_path)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    os.close(fd)
+    return temp_path
+
+
+def _remove_temp_file(temp_path: str) -> None:
+    with suppress(OSError):
+        os.unlink(temp_path)
+
+
 def _write_content_with_diagnostics(
     *,
     operation: str,
@@ -132,6 +164,7 @@ def _write_content_with_diagnostics(
     mode: str,
     encoding: str,
     resolve_seconds: float,
+    diagnostic_path: str | None = None,
 ) -> None:
     open_seconds = 0.0
     write_seconds = 0.0
@@ -152,12 +185,104 @@ def _write_content_with_diagnostics(
             close_seconds = time.perf_counter() - started_at
         _log_file_write_diagnostics(
             operation=operation,
-            file_path=file_path,
+            file_path=diagnostic_path or file_path,
             content_bytes=_content_byte_length(content, encoding),
             resolve_seconds=resolve_seconds,
             open_seconds=open_seconds,
             write_seconds=write_seconds,
             close_seconds=close_seconds,
+        )
+
+
+def _cleanup_temp_file_after_cancel(
+    task: asyncio.Task,
+    temp_path: str,
+) -> None:
+    with suppress(BaseException):
+        task.exception()
+    _remove_temp_file(temp_path)
+
+
+async def _write_file_atomically_unlocked(
+    *,
+    operation: str,
+    file_path: str,
+    content: str,
+    encoding: str,
+    resolve_seconds: float,
+) -> None:
+    temp_path = _make_temp_file_path(file_path)
+    write_task = asyncio.create_task(
+        asyncio.to_thread(
+            _write_content_with_diagnostics,
+            operation=operation,
+            file_path=temp_path,
+            content=content,
+            mode="w",
+            encoding=encoding,
+            resolve_seconds=resolve_seconds,
+            diagnostic_path=file_path,
+        ),
+    )
+    try:
+        await asyncio.shield(write_task)
+        os.replace(temp_path, file_path)
+    except asyncio.CancelledError:
+        write_task.add_done_callback(
+            lambda task: _cleanup_temp_file_after_cancel(task, temp_path),
+        )
+        raise
+    except Exception:
+        _remove_temp_file(temp_path)
+        raise
+    else:
+        _remove_temp_file(temp_path)
+
+
+async def _write_file_atomically_with_diagnostics(
+    *,
+    operation: str,
+    file_path: str,
+    content: str,
+    encoding: str,
+    resolve_seconds: float,
+) -> None:
+    async with _get_file_write_lock(file_path):
+        await _write_file_atomically_unlocked(
+            operation=operation,
+            file_path=file_path,
+            content=content,
+            encoding=encoding,
+            resolve_seconds=resolve_seconds,
+        )
+
+
+def _read_existing_file_content(file_path: str, encoding: str) -> str:
+    if not os.path.exists(file_path):
+        return ""
+    with open(file_path, "r", encoding=encoding) as file:
+        return file.read()
+
+
+async def _append_file_atomically_with_diagnostics(
+    *,
+    file_path: str,
+    content: str,
+    encoding: str,
+    resolve_seconds: float,
+) -> None:
+    async with _get_file_write_lock(file_path):
+        existing = await asyncio.to_thread(
+            _read_existing_file_content,
+            file_path,
+            encoding,
+        )
+        await _write_file_atomically_unlocked(
+            operation="append_file",
+            file_path=file_path,
+            content=existing + content,
+            encoding=encoding,
+            resolve_seconds=resolve_seconds,
         )
 
 
@@ -351,12 +476,10 @@ async def write_file(
     encoding = _get_encoding_for_file(file_path)
 
     try:
-        await asyncio.to_thread(
-            _write_content_with_diagnostics,
+        await _write_file_atomically_with_diagnostics(
             operation="write_file",
             file_path=file_path,
             content=content,
-            mode="w",
             encoding=encoding,
             resolve_seconds=resolve_seconds,
         )
@@ -520,12 +643,9 @@ async def append_file(
     encoding = _get_encoding_for_file(file_path)
 
     try:
-        await asyncio.to_thread(
-            _write_content_with_diagnostics,
-            operation="append_file",
+        await _append_file_atomically_with_diagnostics(
             file_path=file_path,
             content=content,
-            mode="a",
             encoding=encoding,
             resolve_seconds=resolve_seconds,
         )
