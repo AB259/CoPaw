@@ -48,6 +48,7 @@ import { IconButton } from "@agentscope-ai/design";
 // import ChatActionGroup from "./components/ChatActionGroup";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
+import ConversationQuickNav from "@/components/ConversationQuickNav";
 // ==================== 首页改版 (Kun He) ====================
 import WelcomeCenterLayout from "@/components/agentscope-chat/WelcomeCenterLayout";
 import ChatSidebar from "./components/ChatSidebar";
@@ -65,7 +66,11 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
-import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
+import {
+  deriveChatTaskState,
+  getTaskOpenTarget,
+  shouldMarkTaskReadOnOpen,
+} from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
 import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
@@ -73,16 +78,70 @@ import RuntimeRequestCard from "./components/RuntimeRequestCard";
 import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
 import ApprovalActionCard from "./components/ApprovalActionCard";
+import TaskRunGroupCard from "./components/TaskRunGroupCard";
+import TaskProgressFloatingCard from "./components/TaskProgressFloatingCard";
+import GeneratedFilesDrawer from "./components/GeneratedFilesDrawer";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
+  ChatTaskRunGroupCardData,
 } from "./messageMeta";
+import {
+  CHAT_TASK_PROGRESS_UPDATE_EVENT,
+  type ChatTaskProgressData,
+} from "./taskProgressEvents";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
+const CHAT_REQUEST_TIMEOUT_MS = 300_000;
 const TASK_RUNNING_POLL_MS = 30_000;
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
+
+function createTimedAbortSignal(
+  externalSignal?: AbortSignal,
+  timeoutMs: number = CHAT_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+
+  const abortWithReason = (reason?: unknown) => {
+    if (controller.signal.aborted) return;
+    controller.abort(
+      reason ?? new DOMException("The operation was aborted.", "AbortError"),
+    );
+  };
+
+  if (externalSignal?.aborted) {
+    abortWithReason(externalSignal.reason);
+  }
+
+  const handleExternalAbort = () => {
+    abortWithReason(externalSignal?.reason);
+  };
+
+  if (externalSignal && !externalSignal.aborted) {
+    externalSignal.addEventListener("abort", handleExternalAbort, {
+      once: true,
+    });
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    const elapsedSeconds = Math.ceil(timeoutMs / 1000);
+    abortWithReason(
+      new Error(`⏰ 任务执行超时（${elapsedSeconds}s > ${elapsedSeconds}s），已自动终止。`),
+    );
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", handleExternalAbort);
+      }
+    },
+  };
+}
 
 interface SessionInfo {
   session_id?: string;
@@ -335,6 +394,9 @@ export default function ChatPage() {
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
   const [jobs, setJobs] = useState<CronJobSpecOutput[]>([]);
+  const [taskProgress, setTaskProgress] = useState<ChatTaskProgressData | null>(
+    null,
+  );
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -361,6 +423,30 @@ export default function ChatPage() {
     return () =>
       document.removeEventListener(FOLLOW_UP_SUBMIT_FAILED_EVENT, handler);
   }, [message, t]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
+      if (!detail) {
+        setTaskProgress(null);
+        return;
+      }
+      setTaskProgress((previous) => {
+        if (
+          previous
+          && previous.turn_id === detail.turn_id
+          && previous.version > detail.version
+        ) {
+          return previous;
+        }
+        return detail;
+      });
+    };
+
+    document.addEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+    return () =>
+      document.removeEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+  }, []);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -485,6 +571,10 @@ export default function ChatPage() {
     };
   }, []);
 
+  useEffect(() => {
+    setTaskProgress(null);
+  }, [chatId, location.pathname]);
+
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
   // sessionId: 可传 backend chat.id 或逻辑 session_id，后续由初始选择逻辑解析
@@ -578,10 +668,17 @@ export default function ChatPage() {
       }
     };
 
+    // 监听定时任务创建成功事件
+    const handleTaskCreated = () => {
+      void refreshJobs();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    document.addEventListener("taskCreated", handleTaskCreated);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      document.removeEventListener("taskCreated", handleTaskCreated);
     };
   }, [refreshJobs]);
 
@@ -644,15 +741,15 @@ export default function ChatPage() {
 
   const handleTaskOpen = useCallback(
     (task: CronJobSpecOutput) => {
-      const taskChatId = task.task?.chat_id;
-      if (!taskChatId) return;
+      const taskOpenTarget = getTaskOpenTarget(task);
+      if (!taskOpenTarget) return;
 
       // Force loading to render immediately before navigate triggers re-render
       flushSync(() => {
         setSessionLoading(true);
       });
 
-      navigate(`/chat/${taskChatId}`, { replace: true });
+      navigate(`/chat/${taskOpenTarget}`, { replace: true });
     },
     [navigate, setSessionLoading],
   );
@@ -888,14 +985,37 @@ export default function ChatPage() {
         }
       }
 
-      const response = await fetch(getApiUrl("/console/chat"), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: data.signal,
-      });
+      const timeoutSignal = createTimedAbortSignal(data.signal);
+      try {
+        const response = await fetch(getApiUrl("/console/chat"), {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: timeoutSignal.signal,
+        });
 
-      return response;
+        return response;
+      } catch (error) {
+        // 如果是超时导致的abort,调用cancel API终止后端任务
+        if (error instanceof DOMException && error.name === "AbortError") {
+          const backendChatId = resolveRequestChatId(
+            {
+              session_id: data.session_id,
+              logical_session_id: data.logical_session_id,
+              chat_id: data.chat_id,
+            },
+            requestBody.session_id,
+          );
+          if (backendChatId) {
+            chatApi.stopChat(backendChatId).catch((err) => {
+              console.error("Failed to stop chat after timeout:", err);
+            });
+          }
+        }
+        throw error;
+      } finally {
+        timeoutSignal.cleanup();
+      }
     },
     [resolveLogicalRequestSessionId, resolveRequestChatId, selectedAgent],
   );
@@ -1040,6 +1160,7 @@ export default function ChatPage() {
             <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
+            <GeneratedFilesDrawer />
             <ModelSelector />
             {/* <ChatActionGroup /> */}
           </>
@@ -1071,6 +1192,7 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
+        beforeUI: <TaskProgressFloatingCard progress={taskProgress} />,
         allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
@@ -1114,6 +1236,9 @@ export default function ChatPage() {
         ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
           <ApprovalActionCard {...props} />
         ),
+        TaskRunGroupCard: (props: { data: ChatTaskRunGroupCardData }) => (
+          <TaskRunGroupCard {...props} />
+        ),
       },
       api: {
         ...defaultConfig.api,
@@ -1150,20 +1275,25 @@ export default function ChatPage() {
             logicalSessionId,
           );
 
-          return fetch(getApiUrl("/console/chat"), {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              reconnect: true,
-              session_id: reconnectSessionId,
-              // ==================== userId 统一整改 (Kun He) ====================
-              // 使用 getUserId()/getChannel() 获取
-              user_id: getUserId(),
-              channel: getChannel(),
-              // ==================== userId 统一整改结束 ====================
-            }),
-            signal: data.signal,
-          });
+          const timeoutSignal = createTimedAbortSignal(data.signal);
+          try {
+            return await fetch(getApiUrl("/console/chat"), {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                reconnect: true,
+                session_id: reconnectSessionId,
+                // ==================== userId 统一整改 (Kun He) ====================
+                // 使用 getUserId()/getChannel() 获取
+                user_id: getUserId(),
+                channel: getChannel(),
+                // ==================== userId 统一整改结束 ====================
+              }),
+              signal: timeoutSignal.signal,
+            });
+          } finally {
+            timeoutSignal.cleanup();
+          }
         },
       },
       // ==================== 自定义工具渲染器 ====================
@@ -1198,6 +1328,7 @@ export default function ChatPage() {
     multimodalCaps,
     resolveLogicalRequestSessionId,
     resolveRequestChatId,
+    taskProgress,
     t,
   ]);
 
@@ -1252,6 +1383,7 @@ export default function ChatPage() {
           >
             <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
             <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
+            <ConversationQuickNav />
           </div>
 
         <Modal

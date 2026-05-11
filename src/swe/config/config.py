@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import shortuuid
@@ -412,6 +413,22 @@ class MemorySummaryConfig(BaseModel):
         ),
     )
 
+    dream_cron: str = Field(
+        default="",
+        description=(
+            "Cron expression for dream-based memory optimization job "
+            "(empty string to disable). Default: disabled (empty string)."
+        ),
+    )
+
+
+class SuggestionMode(str, Enum):
+    """猜你想问生成模式."""
+
+    DISABLED = "disabled"  # 完全禁用
+    BACKEND_GENERATE = "backend_generate"  # 后端生成（原有模式）
+    QA_EXTRACTION_ONLY = "qa_extraction_only"  # 仅提取 Q&A（新模式）
+
 
 class SuggestionConfig(BaseModel):
     """猜你想问功能配置 - 在模型回答后异步生成后续问题建议."""
@@ -421,6 +438,10 @@ class SuggestionConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="是否启用猜你想问功能",
+    )
+    mode: SuggestionMode = Field(
+        default=SuggestionMode.QA_EXTRACTION_ONLY,
+        description="猜你想问生成模式",
     )
     max_suggestions: int = Field(
         default=3,
@@ -445,6 +466,18 @@ class SuggestionConfig(BaseModel):
         ge=200,
         le=2000,
         description="助手回答截断长度（字符）",
+    )
+    qa_content_total_max_length: int = Field(
+        default=1500,
+        ge=500,
+        le=3000,
+        description="Q&A 内容总长度上限（字符）",
+    )
+    qa_content_max_age_seconds: int = Field(
+        default=120,
+        ge=30,
+        le=300,
+        description="Q&A 内容存储有效期（秒）",
     )
 
 
@@ -589,13 +622,13 @@ class AgentsRunningConfig(BaseModel):
 
         normalized = dict(data)
         if normalized.get("llm_chat_max_concurrent") is None:
-            normalized[
-                "llm_chat_max_concurrent"
-            ] = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            normalized["llm_chat_max_concurrent"] = (
+                DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            )
         if normalized.get("llm_cron_max_concurrent") is None:
-            normalized[
-                "llm_cron_max_concurrent"
-            ] = DEFAULT_LLM_CRON_MAX_CONCURRENT
+            normalized["llm_cron_max_concurrent"] = (
+                DEFAULT_LLM_CRON_MAX_CONCURRENT
+            )
         return normalized
 
     @model_validator(mode="after")
@@ -910,6 +943,33 @@ class MCPClientConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
+    # 市场分发相关字段
+    source: str = Field(
+        default="",
+        description="来源标识：空=我创建的；marketplace:{item_id}=市场分发的",
+    )
+    market_client_key: str = Field(
+        default="",
+        description="市场来源的 client_key",
+    )
+    distributed_by: str = Field(
+        default="",
+        description="分发者 user_id",
+    )
+    # 懒加载预留字段
+    lazy_load: bool = Field(
+        default=False,
+        description="是否延迟加载 MCP 客户端",
+    )
+    # 时间戳字段
+    created_at: str = Field(
+        default="",
+        description="创建时间 ISO8601",
+    )
+    updated_at: str = Field(
+        default="",
+        description="更新时间 ISO8601",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1061,6 +1121,12 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             name="copy_file_to_static",
             enabled=True,
             description="copy file to static",
+        ),
+        "update_task_progress": BuiltinToolConfig(
+            name="update_task_progress",
+            enabled=True,
+            description="update task progress state",
+            display_to_user=False,
         ),
     }
 
@@ -1663,9 +1729,11 @@ def migrate_legacy_config_to_multi_agent() -> bool:
             else AgentsLLMRoutingConfig()
         ),
         system_prompt_files=normalize_system_prompt_files(
-            legacy_agents.system_prompt_files
-            if legacy_agents.system_prompt_files
-            else None,
+            (
+                legacy_agents.system_prompt_files
+                if legacy_agents.system_prompt_files
+                else None
+            ),
         ),
         tools=config.tools if config.tools else None,
         security=config.security if config.security else None,

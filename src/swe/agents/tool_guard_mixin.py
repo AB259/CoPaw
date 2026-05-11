@@ -43,7 +43,9 @@ try:
         1.0,
     )
 except (TypeError, ValueError):
-    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = _DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT
+    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = (
+        _DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT
+    )
 
 _TOOLS_WITH_SPECIFIC_TIMEOUTS = {
     "execute_shell_command",
@@ -466,6 +468,8 @@ class ToolGuardMixin:
                     session_id=trace_ctx.session_id,
                     channel=trace_ctx.channel,
                     mcp_server=mcp_server,
+                    user_name=trace_ctx.user_name,
+                    bbk_id=trace_ctx.bbk_id,
                 )
         except Exception as e:
             logger.debug("Failed to emit tool start event: %s", e)

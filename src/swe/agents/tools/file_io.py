@@ -108,7 +108,9 @@ def _log_file_write_diagnostics(
     write_seconds: float,
     close_seconds: float,
 ) -> None:
-    total_seconds = resolve_seconds + open_seconds + write_seconds + close_seconds
+    total_seconds = (
+        resolve_seconds + open_seconds + write_seconds + close_seconds
+    )
     message = (
         "file_write_diagnostic operation=%s path=%s content_bytes=%d "
         "resolve_seconds=%.6f open_seconds=%.6f write_seconds=%.6f "

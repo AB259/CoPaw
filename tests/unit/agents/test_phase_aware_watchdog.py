@@ -223,7 +223,9 @@ async def test_watchdog_interrupt_log_includes_phase_and_tool_metadata(
 
         assert any("phase=unknown" in message for message in messages)
         assert any("tool_name=mystery_tool" in message for message in messages)
-        assert any("tool_call_id=tool-call-2" in message for message in messages)
+        assert any(
+            "tool_call_id=tool-call-2" in message for message in messages
+        )
         assert any("session_id=session-1" in message for message in messages)
         assert any("agent_id=agent-1" in message for message in messages)
     finally:

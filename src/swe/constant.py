@@ -326,6 +326,24 @@ MCP_CALL_TIMEOUT = EnvVarLoader.get_float(
     min_value=10.0,
 )
 
+# Per-notification timeout for MCP call_tool (seconds).
+# Each progress notification from the server resets this countdown.
+# If no notification arrives within this window, the call is cancelled.
+MCP_PER_NOTIFICATION_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_MCP_PER_NOTIFICATION_TIMEOUT",
+    120.0,
+    min_value=10.0,
+)
+
+# Maximum total timeout for MCP call_tool (seconds).
+# A hard ceiling that prevents notification storms from extending the
+# timeout indefinitely.  0 means no hard limit (fully backward compatible).
+MCP_MAX_TOTAL_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_MCP_MAX_TOTAL_TIMEOUT",
+    0.0,
+    min_value=0.0,
+)
+
 # Query global timeout (seconds).
 # Maximum wall-clock time for a single user request.  When exceeded the
 # runner yields a timeout notification and terminates the query.
@@ -500,5 +518,11 @@ CRON_WPLUS_CHANNEL = EnvVarLoader.get_str(
 
 CRON_WPLUS_PRIVATE_KEY = EnvVarLoader.get_str(
     "SWE_CRON_WPLUS_PRIVATE_KEY",
+    "",
+)
+
+# User Info API URL (区分环境的用户信息查询接口地址)
+USER_INFO_API_URL = EnvVarLoader.get_str(
+    "SWE_USER_INFO_API_URL",
     "",
 )

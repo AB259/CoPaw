@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Style from "./style";
 import { featuredCasesApi } from "@/api/modules/featuredCases";
-import caseIcon from '../../../assets/icons/default_case.svg'
+import caseIcon from "../../../assets/icons/default_case.svg";
 
 export interface FeaturedCase {
-  id: string;
+  id: number;
   label: string;
   value: string;
   image?: string;
@@ -13,8 +13,19 @@ export interface FeaturedCase {
 export interface FeaturedCasesProps {
   cases?: FeaturedCase[];
   onFillInput?: (text: string) => void;
-  onViewCase?: (caseId: string) => void;
+  onViewCase?: (id: number) => void;
 }
+
+const DEFAULT_CASES: FeaturedCase[] = [
+  {
+    id: 1,
+    label: "默认案例",
+    value: "default",
+    image: caseIcon,
+  },
+];
+
+const INITIAL_VISIBLE_CASE_COUNT = 5;
 
 function MoreIcon() {
   return (
@@ -53,23 +64,38 @@ export default function FeaturedCases(props: FeaturedCasesProps) {
   const { onFillInput, onViewCase } = props;
   const [cases, setCases] = useState<FeaturedCase[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
-  // Load cases from API on mount
+  const hasMoreCases = cases.length > INITIAL_VISIBLE_CASE_COUNT;
+  const visibleCases = useMemo(
+    () =>
+      expanded || !hasMoreCases
+        ? cases
+        : cases.slice(0, INITIAL_VISIBLE_CASE_COUNT),
+    [cases, expanded, hasMoreCases],
+  );
+
   useEffect(() => {
     const loadCases = async () => {
       try {
         const apiCases = await featuredCasesApi.listCases();
-        const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
-          id: c.id,
-          label: c.label,
-          value: c.value,
-          image: c.image_url,
-        }));
-        setCases(featuredCases);
+        if (apiCases && apiCases.length > 0) {
+          const featuredCases: FeaturedCase[] = apiCases.map((c) => ({
+            id: c.id,
+            label: c.label,
+            value: c.value,
+            image: c.image_url,
+          }));
+          setCases(featuredCases);
+          setExpanded(false);
+        } else {
+          setCases(DEFAULT_CASES);
+          setExpanded(false);
+        }
       } catch (error) {
         console.error("Failed to load cases:", error);
-        // Keep empty array on error
         setCases([]);
+        setExpanded(false);
       } finally {
         setLoading(false);
       }
@@ -128,15 +154,19 @@ export default function FeaturedCases(props: FeaturedCasesProps) {
             </span>
             精选案例
           </div>
-          {cases.length > 5 && (
-            <div className="featured-cases-more">
-              查看更多
+          {hasMoreCases && (
+            <button
+              className="featured-cases-more"
+              onClick={() => setExpanded((value) => !value)}
+              type="button"
+            >
+              {expanded ? "收起" : "查看更多"}
               <MoreIcon />
-            </div>
+            </button>
           )}
         </div>
         <div className="featured-cases-scroll">
-          {cases.map((caseItem) => (
+          {visibleCases.map((caseItem) => (
             <div
               key={caseItem.id}
               className="featured-cases-card"

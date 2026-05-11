@@ -18,6 +18,7 @@ from typing import Any, List, Literal, Optional, Type, TYPE_CHECKING
 from agentscope.agent import ReActAgent
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
+from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import Toolkit
 from anyio import ClosedResourceError
 from pydantic import BaseModel
@@ -51,6 +52,7 @@ from .tools import (
     write_file,
     create_memory_search_tool,
     copy_file_to_static,
+    update_task_progress,
 )
 from .utils import process_file_and_media_blocks_in_message
 from ..utils.fs_text import sanitize_text_for_json
@@ -249,11 +251,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 }
                 # Only execute_shell_command supports async_execution
                 async_execution_tools = {
-                    "execute_shell_command": builtin_tools.get(
-                        "execute_shell_command",
-                    ).async_execution
-                    if "execute_shell_command" in builtin_tools
-                    else False,
+                    "execute_shell_command": (
+                        builtin_tools.get(
+                            "execute_shell_command",
+                        ).async_execution
+                        if "execute_shell_command" in builtin_tools
+                        else False
+                    ),
                 }
         except Exception as e:
             logger.warning(
@@ -273,6 +277,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             "set_user_timezone": set_user_timezone,
             "get_token_usage": get_token_usage,
             "copy_file_to_static": copy_file_to_static,
+            "update_task_progress": update_task_progress,
         }
 
         # Register only enabled tools
@@ -481,6 +486,29 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         if self._env_context is not None:
             sys_prompt = sys_prompt + "\n\n" + self._env_context
 
+        # 任务进度要求
+        sys_prompt += (
+            "\n\n[Task Progress Requirement]\n"
+            "You MUST call the update_task_progress tool for every non-trivial "
+            "user request. This is mandatory, not optional.\n\n"
+            "Each item in the items array has these fields:\n"
+            "- label: short Chinese step title (required)\n"
+            '- status: "todo" | "running" | "done" (required)\n'
+            "- id: unique step identifier (optional, auto-generated)\n\n"
+            "CRITICAL RULES:\n"
+            "- Call update_task_progress BEFORE your first tool call or substantive "
+            "action, with 3-6 short Chinese step titles.\n"
+            "- After finishing each step, call update_task_progress again to "
+            "mark it done and advance the next step to running.\n"
+            "- Always keep EXACTLY ONE step in 'running' status.\n"
+            '- When fully done, call with phase_status="completed" and all steps '
+            'marked "done".\n\n'
+            'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
+            '("what is Python"), or single-command requests ("run npm install").\n'
+            "For analysis, coding, debugging, refactoring, optimization, or any "
+            "multi-step request — ALWAYS use the tool. When in doubt, use it."
+        )
+
         return sys_prompt
 
     def _setup_memory_manager(
@@ -584,11 +612,17 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         for i, client in enumerate(self._mcp_clients):
             client_name = getattr(client, "name", repr(client))
+            # Set progress callback so MCP notifications reset the watchdog.
+            if hasattr(client, "on_progress_callback"):
+                client.on_progress_callback = self._reset_watchdog
             try:
                 await self.toolkit.register_mcp_client(
                     client,
                     namesake_strategy=namesake_strategy,
                 )
+                # Wire watchdog callback into MCPToolFunction instances
+                # registered by this client.
+                self._wire_mcp_progress_callbacks(client)
             except (ClosedResourceError, asyncio.CancelledError) as error:
                 if self._should_propagate_cancelled_error(error):
                     raise
@@ -600,11 +634,16 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 recovered_client = await self._recover_mcp_client(client)
                 if recovered_client is not None:
                     self._mcp_clients[i] = recovered_client
+                    if hasattr(recovered_client, "on_progress_callback"):
+                        recovered_client.on_progress_callback = (
+                            self._reset_watchdog
+                        )
                     try:
                         await self.toolkit.register_mcp_client(
                             recovered_client,
                             namesake_strategy=namesake_strategy,
                         )
+                        self._wire_mcp_progress_callbacks(recovered_client)
                         continue
                     except asyncio.CancelledError as recover_error:
                         if self._should_propagate_cancelled_error(
@@ -635,6 +674,25 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                     e,
                     exc_info=True,
                 )
+
+    def _wire_mcp_progress_callbacks(self, client: Any) -> None:
+        """Set on_progress_callback on MCPToolFunction instances registered
+        by *client* so that MCP progress notifications reset the watchdog.
+        """
+        cb = self._reset_watchdog
+        mcp_name = getattr(client, "name", None)
+        for tool_entry in self.toolkit.tools.values():
+            func = getattr(tool_entry, "original_func", None)
+            if func is None:
+                continue
+            # original_func stores tool_func.__call__ (a bound method);
+            # extract the MCPToolFunction instance via __self__.
+            mcp_func = getattr(func, "__self__", None) or func
+            if (
+                isinstance(mcp_func, MCPToolFunction)
+                and mcp_func.mcp_name == mcp_name
+            ):
+                mcp_func.on_progress_callback = cb  # type: ignore[attr-defined]
 
     async def _recover_mcp_client(self, client: Any) -> Any | None:
         """Recover MCP client from broken session and return healthy client."""
@@ -1286,6 +1344,9 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         # Set workspace_dir and recent_max_bytes in context for tool functions
         from ..config.context import (
+            set_current_task_progress_chat_id,
+            set_current_task_progress_tracker,
+            set_current_task_progress_turn_id,
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
@@ -1293,6 +1354,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         set_current_workspace_dir(self._workspace_dir)
         set_current_recent_max_bytes(
             self._agent_config.running.tool_result_compact.recent_max_bytes,
+        )
+        set_current_task_progress_tracker(self._task_tracker)
+        set_current_task_progress_chat_id(
+            self._request_context.get("chat_id"),
+        )
+        set_current_task_progress_turn_id(
+            self._request_context.get("turn_id"),
         )
 
         # Process file and media blocks in messages

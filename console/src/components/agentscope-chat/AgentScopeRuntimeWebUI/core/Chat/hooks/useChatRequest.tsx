@@ -11,6 +11,10 @@ import { IAgentScopeRuntimeWebUIInputData } from "../../types";
 import { withResponseHeaderMeta } from "./headerMeta";
 import type { CurrentQARef } from "./currentQARef";
 import {
+  emitTaskProgressUpdate,
+  extractTaskProgress,
+} from "@/pages/Chat/taskProgressEvents";
+import {
   isActiveChatRequestOwner,
   type ChatRequestOwner,
 } from "./requestOwnership";
@@ -20,6 +24,19 @@ interface UseChatRequestOptions {
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
   getCurrentSessionId: () => string;
   onFinish: (owner: ChatRequestOwner) => void;
+}
+
+function isAbortLikeError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+
+function getUserVisibleErrorMessage(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : JSON.stringify(error);
 }
 
 /**
@@ -43,6 +60,54 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       currentQARef.current.response?.liveHeaderTimestamp
     );
   }, [currentQARef]);
+
+  const failActiveResponse = useCallback(
+    (owner: ChatRequestOwner, error: unknown) => {
+      const responseHeaderTimestamp = getResponseHeaderTimestamp();
+      const responseData = currentQARef.current.response?.cards?.[0]?.data as
+        | {
+            id?: string;
+            status?: AgentScopeRuntimeRunStatus;
+            created_at?: number;
+          }
+        | undefined;
+      const responseBuilder = new AgentScopeRuntimeResponseBuilder({
+        id: responseData?.id || "",
+        status: responseData?.status || AgentScopeRuntimeRunStatus.Created,
+        created_at: responseData?.created_at || 0,
+      });
+
+      if (responseData) {
+        responseBuilder.handle(responseData as never);
+      }
+
+      const errorMessage = getUserVisibleErrorMessage(error);
+
+      const failed = responseBuilder.handle({
+        object: "message",
+        type: AgentScopeRuntimeMessageType.ERROR,
+        content: [],
+        id: "error",
+        role: "assistant",
+        status: AgentScopeRuntimeRunStatus.Failed,
+        code: "stream_error",
+        message: errorMessage,
+      });
+
+      if (currentQARef.current.response) {
+        currentQARef.current.response.cards = [
+          {
+            code: "AgentScopeRuntimeResponseCard",
+            data: withResponseHeaderMeta(failed, responseHeaderTimestamp),
+          },
+        ];
+        updateMessage(currentQARef.current.response);
+      }
+
+      onFinish(owner);
+    },
+    [currentQARef, getResponseHeaderTimestamp, onFinish, updateMessage],
+  );
 
   const mockRequest = useCallback(async (mockdata) => {
     const responseHeaderTimestamp = getResponseHeaderTimestamp();
@@ -224,6 +289,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const responseParser =
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
+          const streamedTaskProgress = extractTaskProgress(chunkData);
+          if (streamedTaskProgress !== undefined) {
+            emitTaskProgressUpdate(streamedTaskProgress);
+          }
           const res = agentScopeRuntimeResponseBuilder.handle(chunkData);
 
           if (
@@ -256,6 +325,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               res.status === AgentScopeRuntimeRunStatus.Completed ||
               res.status === AgentScopeRuntimeRunStatus.Failed
             ) {
+              emitTaskProgressUpdate(null);
               onFinish(owner);
             } else {
               updateMessage(currentQARef.current.response);
@@ -264,9 +334,27 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         }
       } catch (error) {
         console.error(error);
+        if (!isOwnerActive()) {
+          return;
+        }
+        if (
+          currentQARef.current.response?.msgStatus === "interrupted" ||
+          isAbortLikeError(error)
+        ) {
+          onFinish(owner);
+          return;
+        }
+        failActiveResponse(owner, error);
       }
     },
-    [getCurrentSessionId, currentQARef, getResponseHeaderTimestamp, updateMessage, onFinish],
+    [
+      currentQARef,
+      failActiveResponse,
+      getCurrentSessionId,
+      getResponseHeaderTimestamp,
+      onFinish,
+      updateMessage,
+    ],
   );
 
   const request = useCallback(
@@ -310,13 +398,21 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               }),
               signal: abortSignal,
             });
-      } catch (error) {}
+      } catch (error) {
+        if (
+          !isAbortLikeError(error) &&
+          isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, requestOwner)
+        ) {
+          failActiveResponse(requestOwner, error);
+        }
+        return;
+      }
 
       if (response && response.body) {
         await processSSEResponse(response, requestOwner);
       }
     },
-    [getCurrentSessionId, currentQARef, processSSEResponse],
+    [currentQARef, failActiveResponse, getCurrentSessionId, processSSEResponse],
   );
 
   const reconnect = useCallback(
@@ -338,13 +434,21 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           logical_session_id: requestOwner.logicalSessionId,
           chat_id: requestOwner.chatId,
         });
-      } catch (error) {}
+      } catch (error) {
+        if (
+          !isAbortLikeError(error) &&
+          isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, requestOwner)
+        ) {
+          failActiveResponse(requestOwner, error);
+        }
+        return;
+      }
 
       if (response && response.body) {
         await processSSEResponse(response, requestOwner);
       }
     },
-    [currentQARef, processSSEResponse],
+    [currentQARef, failActiveResponse, processSSEResponse],
   );
 
   const cancelActiveRequest = useCallback(async () => {
@@ -394,6 +498,8 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
       updateMessage(currentQARef.current.response);
     }
+
+    emitTaskProgressUpdate(null);
   }, [currentQARef, getCurrentSessionId, getResponseHeaderTimestamp, updateMessage]);
 
   return { request, reconnect, mockRequest, cancelActiveRequest };

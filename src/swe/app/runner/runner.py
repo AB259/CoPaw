@@ -7,15 +7,20 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator
+from uuid import uuid4
 
 import httpx
 from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
-from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest, Event
+from agentscope_runtime.engine.schemas.agent_schemas import (
+    AgentRequest,
+    Event,
+)
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
@@ -30,11 +35,17 @@ from .command_dispatch import (
 from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
 from .stream_boundary import normalize_reasoning_boundary_stream
+from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
 from ...security.tool_guard.models import TOOL_GUARD_DENIED_MARK
-from ...config.config import MCPClientConfig, MCPConfig, load_agent_config
+from ...config.config import (
+    MCPClientConfig,
+    MCPConfig,
+    load_agent_config,
+    SuggestionMode,
+)
 from ...constant import (
     QUERY_CLEANUP_TIMEOUT,
     QUERY_TIMEOUT_SECONDS,
@@ -56,6 +67,7 @@ if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
 
 logger = logging.getLogger(__name__)
+TASK_RUNS_STATE_KEY = "task_runs"
 
 _APPROVE_EXACT = frozenset(
     {
@@ -74,6 +86,84 @@ _DENY_EXACT = frozenset(
         "/daemon deny",
     },
 )
+
+
+def _extract_memory_entry_payload(entry: Any) -> dict[str, Any] | None:
+    """提取内存条目里的消息载荷。"""
+    if isinstance(entry, list) and entry and isinstance(entry[0], dict):
+        return entry[0]
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def _extract_text_from_message_content(content: Any) -> str:
+    """从消息内容中提取可展示文本。"""
+    if isinstance(content, str):
+        return content.strip()
+
+    if not isinstance(content, list):
+        return ""
+
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = ""
+        if block.get("type") == "text":
+            text = str(block.get("text", "") or "")
+        elif block.get("type") == "thinking":
+            text = str(block.get("thinking", "") or "")
+        if text.strip():
+            texts.append(text.strip())
+    return "\n".join(texts).strip()
+
+
+def _build_task_run_record(
+    memory_entries: list[Any],
+    *,
+    memory_start: int,
+) -> dict[str, Any] | None:
+    """根据本次新增消息构建任务运行元数据。"""
+    if not memory_entries:
+        return None
+
+    started_at: str | None = None
+    ended_at: str | None = None
+    preview_text = ""
+
+    for entry in memory_entries:
+        payload = _extract_memory_entry_payload(entry)
+        if not payload:
+            continue
+        timestamp = payload.get("timestamp")
+        if isinstance(timestamp, str) and timestamp and not started_at:
+            started_at = timestamp
+        if isinstance(timestamp, str) and timestamp:
+            ended_at = timestamp
+
+    for entry in reversed(memory_entries):
+        payload = _extract_memory_entry_payload(entry)
+        if not payload or payload.get("role") != "assistant":
+            continue
+        preview_text = _extract_text_from_message_content(
+            payload.get("content"),
+        )
+        if preview_text:
+            break
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    started_at = started_at or now
+    ended_at = ended_at or started_at
+
+    return {
+        "run_id": f"task-run-{uuid4()}",
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "memory_start": memory_start,
+        "memory_end": memory_start + len(memory_entries),
+        "preview_text": preview_text,
+    }
 
 
 def _is_approval(text: str) -> bool:
@@ -294,6 +384,64 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     return ""
 
 
+async def _index_model_output_to_monitor(
+    trace_id: str,
+    model_output: str,
+) -> None:
+    """通过 Monitor API 写入 model_output 到 ES.
+
+    Args:
+        trace_id: 追踪 ID
+        model_output: 模型输出文本
+    """
+    monitor_url = os.environ.get(
+        "SWE_MONITOR_API_URL",
+        "http://127.0.0.1:9090",
+    )
+    url = f"{monitor_url}/monitor/tracing/model-output"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "trace_id": trace_id,
+                    "model_output": model_output,
+                },
+            )
+            logger.debug(
+                "Monitor API response: status=%s, body=%s",
+                response.status_code,
+                response.text[:200] if response.text else "",
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(
+                        "Model output indexed via Monitor API: trace_id=%s",
+                        trace_id,
+                    )
+                else:
+                    logger.info(
+                        "Model output write skipped: trace_id=%s, reason=%s",
+                        trace_id,
+                        result.get("reason", "unknown"),
+                    )
+            else:
+                logger.warning(
+                    "Monitor API returned %s: trace_id=%s",
+                    response.status_code,
+                    trace_id,
+                )
+    except httpx.TimeoutException:
+        logger.warning("Monitor API timeout: trace_id=%s", trace_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to call Monitor API for model_output: %s",
+            e,
+        )
+
+
 async def _generate_and_store_suggestions(
     session_id: str,
     user_message: str,
@@ -442,9 +590,9 @@ class AgentRunner(Runner):
                         approved_tool_call["_remaining_queue"] = remaining
                     thinking_blocks = record.extra.get("thinking_blocks")
                     if isinstance(thinking_blocks, list):
-                        approved_tool_call[
-                            "_thinking_blocks"
-                        ] = thinking_blocks
+                        approved_tool_call["_thinking_blocks"] = (
+                            thinking_blocks
+                        )
             return None, True, approved_tool_call
 
         explicit_deny = _is_denial(normalized)
@@ -555,12 +703,35 @@ class AgentRunner(Runner):
                     )
                     user_message = _get_last_user_text(msgs)
 
+                    # 提取用户名称：先尝试 request 属性，再尝试 request.state
+                    user_name_for_trace = getattr(
+                        request,
+                        "user_name",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "user_name",
+                        None,
+                    )
+                    # 提取 BBK 标识符：先尝试 request 属性，再尝试 request.state
+                    bbk_id_for_trace = getattr(
+                        request,
+                        "bbk_id",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "bbk_id",
+                        None,
+                    )
+
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
                         channel=channel_for_trace,
                         source_id=source_id_for_trace,
                         user_message=user_message,
+                        user_name=user_name_for_trace,
+                        bbk_id=bbk_id_for_trace,
                     )
             except Exception as e:
                 logger.warning("Failed to start trace: %s", e)
@@ -616,6 +787,47 @@ class AgentRunner(Runner):
                 passthrough_headers=passthrough_headers or None,
             )
 
+            name = "New Chat"
+            if len(msgs) > 0:
+                content = msgs[0].get_text_content()
+                if content:
+                    name = msgs[0].get_text_content()[:10]
+                else:
+                    name = "Media Message"
+
+            logger.debug(
+                f"DEBUG chat_manager status: "
+                f"_chat_manager={self._chat_manager}, "
+                f"is_none={self._chat_manager is None}, "
+                f"agent_id={self.agent_id}",
+            )
+
+            turn_id = f"turn-{uuid4().hex}"
+            if self._chat_manager is not None:
+                logger.debug(
+                    f"Runner: Calling get_or_create_chat for "
+                    f"session_id={session_id}, user_id={user_id}, "
+                    f"channel={channel}, name={name}",
+                )
+                chat = await self._chat_manager.get_or_create_chat(
+                    session_id,
+                    user_id,
+                    channel,
+                    name=name,
+                    meta={"agent_id": self.agent_id},
+                )
+                logger.debug(f"Runner: Got chat: {chat.id}")
+                request.channel_meta = {
+                    **(getattr(request, "channel_meta", None) or {}),
+                    "chat_id": chat.id,
+                    "turn_id": turn_id,
+                }
+            else:
+                logger.warning(
+                    f"ChatManager is None! Cannot auto-register chat for "
+                    f"session_id={session_id}",
+                )
+
             agent = SWEAgent(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -625,6 +837,8 @@ class AgentRunner(Runner):
                     "session_id": session_id,
                     "user_id": user_id,
                     "channel": channel,
+                    "chat_id": chat.id if chat is not None else "",
+                    "turn_id": turn_id,
                     "agent_id": self.agent_id,
                     **(
                         {
@@ -658,41 +872,6 @@ class AgentRunner(Runner):
                 f"Agent Query msgs {msgs}",
             )
 
-            name = "New Chat"
-            if len(msgs) > 0:
-                content = msgs[0].get_text_content()
-                if content:
-                    name = msgs[0].get_text_content()[:10]
-                else:
-                    name = "Media Message"
-
-            logger.debug(
-                f"DEBUG chat_manager status: "
-                f"_chat_manager={self._chat_manager}, "
-                f"is_none={self._chat_manager is None}, "
-                f"agent_id={self.agent_id}",
-            )
-
-            if self._chat_manager is not None:
-                logger.debug(
-                    f"Runner: Calling get_or_create_chat for "
-                    f"session_id={session_id}, user_id={user_id}, "
-                    f"channel={channel}, name={name}",
-                )
-                chat = await self._chat_manager.get_or_create_chat(
-                    session_id,
-                    user_id,
-                    channel,
-                    name=name,
-                    meta={"agent_id": self.agent_id},
-                )
-                logger.debug(f"Runner: Got chat: {chat.id}")
-            else:
-                logger.warning(
-                    f"ChatManager is None! Cannot auto-register chat for "
-                    f"session_id={session_id}",
-                )
-
             _was_cancelled = False
 
             session_state_loaded = await self.get_state_loaded(
@@ -718,36 +897,29 @@ class AgentRunner(Runner):
             ):
                 yield msg, last
 
-            # Index model output to Elasticsearch
+            # 通过 Monitor API 写入 model_output 到 ES
             if trace_id and agent is not None:
+                logger.debug(
+                    "Preparing to index model output: trace_id=%s, agent=%s",
+                    trace_id,
+                    type(agent).__name__,
+                )
                 assistant_response = _extract_assistant_response(agent)
-                logger.info(
-                    "ES write check: trace_id=%s, response_len=%d",
+                logger.debug(
+                    "Extracted assistant response: trace_id=%s, response_len=%d",
                     trace_id,
                     len(assistant_response) if assistant_response else 0,
                 )
                 if assistant_response:
-                    try:
-                        from ...elasticsearch import get_es_client
-
-                        es_client = get_es_client()
-                        if es_client and es_client.is_connected:
-                            await es_client.index_message(
-                                trace_id,
-                                assistant_response,
-                            )
-                        else:
-                            logger.warning(
-                                "ES client not available: connected=%s",
-                                es_client.is_connected if es_client else None,
-                            )
-                    except Exception as es_err:
-                        logger.warning(
-                            "Failed to index model output to ES: %s",
-                            es_err,
-                        )
+                    await _index_model_output_to_monitor(
+                        trace_id,
+                        assistant_response,
+                    )
                 else:
-                    logger.info("ES write skipped: empty assistant_response")
+                    logger.warning(
+                        "No assistant response to index: trace_id=%s",
+                        trace_id,
+                    )
 
             # End trace with success status
             if trace_id and has_trace_manager():
@@ -891,45 +1063,56 @@ class AgentRunner(Runner):
 
             await _safe_cleanup()
 
-            # 异步生成猜你想问建议（如果启用）
-            logger.debug(
-                "Suggestions check: enabled=%s, agent=%s, query=%s",
-                agent_config.running.suggestions.enabled,
-                agent is not None,
-                query[:50] if query else None,
-            )
+            # === 可插拔式 Q&A 内容提取钩子 ===
             if (
                 agent_config.running.suggestions.enabled
-                and not _was_cancelled
-                and agent is not None
-                and query
-                and chat
-                is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
+                and agent_config.running.suggestions.mode
+                == SuggestionMode.QA_EXTRACTION_ONLY
+                and chat is not None
             ):
                 # 提取助手响应文本
                 assistant_response = _extract_assistant_response(agent)
-                logger.debug(
-                    "Extracted assistant response: %s chars",
-                    len(assistant_response) if assistant_response else 0,
-                )
-                if assistant_response:
-                    # 使用 chat.id (UUID) 作为 session_id，与前端轮询时使用的 session_id 保持一致
-                    logger.info(
-                        "Starting suggestions generation task for chat %s (session_id=%s)",
-                        chat.id,
-                        session_id,
-                    )
-                    asyncio.create_task(
-                        _generate_and_store_suggestions(
-                            session_id=chat.id,  # 使用 chat.id (UUID)
-                            user_message=query,
-                            assistant_response=assistant_response,
-                            config=agent_config.running.suggestions,
+                user_message = query  # 用户原始问题
+
+                if assistant_response and user_message:
+                    from ..suggestions.service import extract_key_content
+                    from ..suggestions.store import store_qa_content
+
+                    # 提取关键内容
+                    config = agent_config.running.suggestions
+                    extracted_user = user_message[
+                        : config.user_message_max_length
+                    ]
+                    extracted_assistant = extract_key_content(
+                        assistant_response,
+                        max_length=min(
+                            config.qa_content_total_max_length
+                            - len(extracted_user),
+                            config.assistant_response_max_length,
                         ),
+                    )
+
+                    # 存储 Q&A 内容（按 chat_id + user_message_hash）
+                    await store_qa_content(
+                        chat_id=chat.id,
+                        user_message=extracted_user,
+                        assistant_response=extracted_assistant,
+                        tenant_id=self.tenant_id,
+                        # max_age_seconds=config.qa_content_max_age_seconds,
+                    )
+                    logger.info(
+                        "Stored Q&A content for suggestions: chat_id=%s, "
+                        "user_len=%d, assistant_len=%d",
+                        chat.id,
+                        len(extracted_user),
+                        len(extracted_assistant),
                     )
                 else:
                     logger.debug(
-                        "No assistant response to generate suggestions from",
+                        "No Q&A content to extract for suggestions: "
+                        "assistant_response=%s, user_message=%s",
+                        bool(assistant_response),
+                        bool(user_message),
                     )
 
     async def get_state_loaded(
@@ -979,6 +1162,12 @@ class AgentRunner(Runner):
             )
             # 获取当前 agent 状态
             current_agent_state = agent.state_dict()
+            existing_memory = (
+                existing_state.get("agent", {}).get("memory", {}) or {}
+            )
+            current_memory = current_agent_state.get("memory", {}) or {}
+            existing_content = list(existing_memory.get("content", []) or [])
+            current_content = list(current_memory.get("content", []) or [])
 
             # 深度合并：对于 agent.memory，需要追加内容而不是覆盖
             if (
@@ -1002,6 +1191,16 @@ class AgentRunner(Runner):
             # 构建最终状态
             merged_state = dict(existing_state)
             merged_state["agent"] = current_agent_state
+            task_run = _build_task_run_record(
+                current_content,
+                memory_start=len(existing_content),
+            )
+            if task_run is not None:
+                task_runs = list(
+                    existing_state.get(TASK_RUNS_STATE_KEY, []) or [],
+                )
+                task_runs.append(task_run)
+                merged_state[TASK_RUNS_STATE_KEY] = task_runs
 
             # 直接保存合并后的状态
             # pylint: disable=protected-access
@@ -1226,7 +1425,17 @@ class AgentRunner(Runner):
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
-            yield event
+            progress = None
+            channel_meta = getattr(request, "channel_meta", None) or {}
+            chat_id = channel_meta.get("chat_id")
+            if not chat_id and self._chat_manager is not None:
+                chat_id = await self._chat_manager.get_chat_id_by_session(
+                    getattr(request, "session_id", "") or "",
+                    getattr(request, "channel", DEFAULT_CHANNEL),
+                )
+            if chat_id and self._task_tracker is not None:
+                progress = await self._task_tracker.get_task_progress(chat_id)
+            yield attach_task_progress(event, progress)
 
     async def init_handler(self, *args, **kwargs):
         """

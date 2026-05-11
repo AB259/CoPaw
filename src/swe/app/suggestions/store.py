@@ -4,11 +4,14 @@
 基于 session_id 存储，前端在主响应完成后轮询获取建议。
 建议有过期时间，自动清理。
 """
+
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 # Per-session suggestion storage: session_id -> list of suggestions
@@ -16,6 +19,21 @@ _session_suggestions: Dict[str, List[Dict[str, Any]]] = {}
 _lock = asyncio.Lock()
 _MAX_AGE_SECONDS = 60  # 建议有效期60秒
 _MAX_SUGGESTIONS_PER_SESSION = 10  # 每个session最多存储的建议数
+
+# Q&A 内容存储：chat_id -> {user_message_hash: QAContentEntry}
+_qa_content_store: Dict[str, Dict[str, Any]] = {}
+_QA_MAX_AGE_SECONDS = 120  # Q&A 内容有效期120秒
+
+
+@dataclass
+class QAContentEntry:
+    """Q&A 内容条目."""
+
+    user_message: str  # 提取后的用户问题
+    user_message_hash: str  # 用户问题的 hash
+    assistant_response: str  # 提取后的助手回答
+    ts: float  # 存储时间戳
+    tenant_id: str  # 租户 ID
 
 
 async def store_suggestions(
@@ -125,3 +143,66 @@ def get_stats() -> Dict[str, Any]:
             for session_id, suggestions in _session_suggestions.items()
         },
     }
+
+
+async def store_qa_content(
+    chat_id: str,
+    user_message: str,
+    assistant_response: str,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """存储 Q&A 内容供后续建议生成使用.
+
+    Args:
+        chat_id: Chat/conversation identifier.
+        user_message: 用户问题内容.
+        assistant_response: 助手回答内容.
+        tenant_id: Tenant identifier for isolation.
+    """
+    if not chat_id or not user_message:
+        return
+
+    user_message_hash = hashlib.sha256(user_message.encode()).hexdigest()
+
+    async with _lock:
+        if chat_id not in _qa_content_store:
+            _qa_content_store[chat_id] = {}
+
+        _qa_content_store[chat_id][user_message_hash] = QAContentEntry(
+            user_message=user_message,
+            user_message_hash=user_message_hash,
+            assistant_response=assistant_response,
+            ts=time.time(),
+            tenant_id=tenant_id or "default",
+        )
+
+
+async def get_qa_content(
+    chat_id: str,
+    tenant_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """获取 chat_id 对应的 Q&A 内容.
+
+    Args:
+        chat_id: Chat/conversation identifier.
+        tenant_id: Tenant identifier for isolation.
+
+    Returns:
+        Q&A 内容列表，每个条目包含 user_message 和 assistant_response。
+    """
+    if not chat_id:
+        return []
+
+    async with _lock:
+        qa_entries = _qa_content_store.get(chat_id, {})
+        # 清理过期内容
+        cutoff = time.time() - _QA_MAX_AGE_SECONDS
+        valid_entries = [
+            {
+                "user_message": entry.user_message,
+                "assistant_response": entry.assistant_response,
+            }
+            for entry in qa_entries.values()
+            if entry.ts >= cutoff
+        ]
+        return valid_entries

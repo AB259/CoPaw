@@ -24,6 +24,7 @@
     "help": "Help",
     "close": "Close",
     "actions": "Actions",
+    "search": "Search",
     "total": "Total {{count}}"
   },
   "nav": {
@@ -54,11 +55,16 @@
     "analyticsSessions": "Session Analytics",
     "analyticsMessages": "User Messages",
     "analyticsTraces": "Conversation Analytics",
+    "analyticsBusinessOverview": "Business Overview",
+    "monitorCronOverview": "Cron Overview",
+    "monitor": "Monitor",
     "instance": "Instance",
     "instanceOverview": "Overview",
     "instanceInstances": "Instances",
     "instanceAllocations": "Allocations",
-    "instanceOperationLogs": "Operation Logs"
+    "instanceOperationLogs": "Operation Logs",
+    "harness": "Harness",
+    "continuousIteration": "Continuous Iteration"
   },
   "cases": {
     "title": "Cases Management",
@@ -166,7 +172,23 @@
     "configUpdateFailed": "Failed to update system prompt configuration",
     "attribution": "Workspace design partly inspired by the OpenClaw project — thank you! 🐾",
     "saveSuccess": "Saved successfully",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "broadcast": "Distribute Files",
+    "broadcastTitle": "Distribute Files to Tenants",
+    "broadcastHint": "Copy selected workspace files to each target tenant's default agent.",
+    "broadcastCurrentSource": "{{count}} file(s) selected",
+    "broadcastDefaultAgentWarning": "Files will be written to the target tenant's default agent workspace.",
+    "broadcastOverwriteWarning": "Files with the same name in target tenants will be overwritten.",
+    "broadcastSuccess": "Files distributed to {{count}} tenant(s) successfully",
+    "broadcastFailed": "File distribution failed",
+    "broadcastBootstrapped": "auto-initialized",
+    "broadcastResultTitle": "Distribution Results",
+    "broadcastSuccessList": "Updated tenants:",
+    "broadcastFailureHint": "Some tenants failed. Review the failure details.",
+    "broadcastPartialFailureTitle": "Some tenants failed to receive files",
+    "select": "Select",
+    "selected": "Selected",
+    "selectedCount": "{{count}} file(s) selected"
   },
   "agent": {
     "parent": "Settings",
@@ -400,7 +422,10 @@
     "statusConflict": "Conflict",
     "renameEntry": "New name for \"{{name}}\":",
     "builtin": "Built-in",
-    "custom": "Custom"
+    "custom": "Custom",
+    "resolveModeRename": "Rename to new name",
+    "resolveModeOverwrite": "Overwrite existing skills",
+    "overwriteWarning": "Will overwrite {{count}} existing skill(s). This action cannot be undone."
   },
   "mcp": {
     "title": "MCP Clients",
@@ -728,6 +753,8 @@
     "distributeSuccessList": "Updated tenants:",
     "distributeFailureInlineHint": "Some tenants failed. Review the failure dialog for details.",
     "distributePartialFailureTitle": "Some tenants failed",
+    "distributeDirtyTitle": "Unsaved changes",
+    "distributeDirtyHint": "You have unsaved provider configuration or active model changes. Please save before distributing.",
     "configureProvider": "Configure {{name}}",
     "baseURL": "Base URL",
     "apiKey": "API Key",
@@ -1069,6 +1096,9 @@
     "memorySummaryTitle": "Long-term Memory Config",
     "memorySummaryEnabled": "Activate Memory Summary",
     "memorySummaryEnabledTooltip": "Automatically generate and save memory summaries during context compaction",
+    "dreamCron": "Dream Optimization",
+    "dreamCronTooltip": "Cron expression for periodically optimizing long-term memories (leave empty to disable), default runs daily at 23:00",
+    "dreamCronPlaceholder": "0 23 * * *",
     "forceMemorySearch": "Force Memory Search (beta)",
     "forceMemorySearchTooltip": "Force memory search to run on every conversation turn. Each query will retrieve relevant memories, helping CoPaw understand you better — but this increases token consumption. Note: enabling force memory search will break the KV cache, reducing cache hit rate. Use with caution.",
     "forceMaxResults": "Force Search Max Results",
@@ -1450,7 +1480,14 @@
     "filterStatus": "Filter status",
     "exportExcel": "Export Excel",
     "search": "Search",
-    "totalItems": "Total {{total}} items"
+    "totalItems": "Total {{total}} items",
+    "sessionList": "Sessions",
+    "tracesFlow": "Conversation Flow",
+    "viewDetail": "View Details",
+    "collapseDetail": "Collapse",
+    "modelOutput": "Model Output",
+    "noSessionData": "No session data",
+    "noTraceData": "No conversation data"
   },
   "instance": {
     "overview": "Overview",
@@ -1523,5 +1560,112 @@
     "filterByAction": "Filter by action",
     "filterByTargetType": "Filter by target type",
     "searchTargetId": "Search target ID"
+  },
+  "dreamLogs": {
+    "title": "Governance Records",
+    "triggerNow": "Trigger Now",
+    "triggerType": "Trigger Type",
+    "trigger": {
+      "cron": "Scheduled",
+      "manual": "Manual"
+    },
+    "status": "Status",
+    "statusValue": {
+      "success": "Success",
+      "failed": "Failed",
+      "rollback": "Rolled Back"
+    },
+    "filesOptimized": "Files Changed",
+    "runTime": "Run Time",
+    "duration": "Duration",
+    "modelUsed": "Model Used",
+    "summary": "Governance Summary",
+    "stats": {
+      "title": "Governance Statistics",
+      "totalExecutions": "Total Executions",
+      "successRate": "Success Rate",
+      "spaceSaved": "Space Saved",
+      "filesChanged": "Files Changed",
+      "avgDuration": "Avg Duration",
+      "lastOptimization": "Last Governance"
+    },
+    "tabRecords": "Records",
+    "tabBackups": "Backups",
+    "backup": {
+      "title": "Backup Files List",
+      "filename": "Backup Filename",
+      "originalFile": "Original File",
+      "recordId": "Record ID",
+      "timestamp": "Backup Time",
+      "size": "File Size",
+      "createdAt": "Created At",
+      "totalFiles": "Total Backup Files",
+      "totalSize": "Total Size",
+      "deleteAll": "Delete All Backups",
+      "deleteConfirm": "Are you sure to delete this backup file?",
+      "deleteAllConfirm": "Confirm Delete All Backups",
+      "deleteAllMessage": "This will delete all backup files and cannot be undone. Are you sure?",
+      "deleteSuccess": "Deleted successfully",
+      "deleteFailed": "Delete failed",
+      "noFiles": "No backup files",
+      "previewTitle": "File Preview",
+      "previewFailed": "Failed to get file content"
+    },
+    "file": {
+      "filename": "Filename",
+      "sizeBefore": "Before",
+      "sizeAfter": "After",
+      "sizeSaved": "Saved",
+      "linesRemoved": "Lines Removed"
+    },
+    "diff": {
+      "title": "File Comparison",
+      "before": "Before",
+      "after": "After",
+      "noChanges": "No Changes"
+    },
+    "rollback": {
+      "confirm": "Confirm Rollback?",
+      "confirmMessage": "Are you sure you want to rollback selected files? This will restore content before governance.",
+      "confirmAllMessage": "Are you sure you want to rollback all files? This will restore content before governance.",
+      "success": "Rollback successful",
+      "failed": "Rollback failed",
+      "single": "Rollback this file",
+      "all": "Rollback all"
+    },
+    "viewDiff": "View Diff",
+    "noRecords": "No records yet",
+    "firstRecord": "Records will appear after first governance execution",
+    "filter": {
+      "startDate": "Start Date",
+      "endDate": "End Date",
+      "status": "Status",
+      "trigger": "Trigger",
+      "clear": "Clear Filters"
+    },
+    "tabCleanup": "File Cleanup",
+    "running": {
+      "title": "Governance task running...",
+      "autoTitle": "Scheduled governance task running...",
+      "elapsed": "Elapsed",
+      "triggering": "Running..."
+    },
+    "orphanFiles": {
+      "title": "Orphan Files List",
+      "workspaceDir": "Workspace Directory",
+      "filePath": "File Path",
+      "filename": "Filename",
+      "size": "File Size",
+      "createdAt": "Created At",
+      "modifiedAt": "Modified At",
+      "totalFiles": "Total Files",
+      "totalSize": "Total Size",
+      "deleteConfirm": "Are you sure to delete this file?",
+      "deleteSuccess": "Deleted successfully",
+      "deleteFailed": "Delete failed",
+      "noFiles": "No orphan files",
+      "previewTitle": "File Preview",
+      "previewFailed": "Failed to get file content"
+    }
   }
 }

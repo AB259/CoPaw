@@ -4,6 +4,7 @@
 Tests source-based template selection, mapping store, middleware source
 extraction, and ProviderManager source-aware initialization.
 """
+
 import json
 import sys
 from pathlib import Path
