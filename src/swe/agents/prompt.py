@@ -5,6 +5,7 @@
 This module provides utilities for building system prompts from
 markdown configuration files in the working directory.
 """
+
 import logging
 import re
 from pathlib import Path

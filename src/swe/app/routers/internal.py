@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Internal API for service-to-service communication."""
+
 import logging
 import os
 from typing import Optional

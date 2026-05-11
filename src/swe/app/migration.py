@@ -3,6 +3,7 @@
 
 Handles migration from legacy single-agent config to new multi-agent structure.
 """
+
 import json
 import logging
 import shutil

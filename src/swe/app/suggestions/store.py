@@ -4,6 +4,7 @@
 基于 session_id 存储，前端在主响应完成后轮询获取建议。
 建议有过期时间，自动清理。
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -694,6 +694,11 @@ async def get_growth_stats(
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
+    if start is None or end is None:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date and end_date are required",
+        )
 
     return await service.get_growth_stats(
         actual_source_id,

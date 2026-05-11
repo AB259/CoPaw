@@ -9,6 +9,7 @@ Each Workspace represents a standalone agent workspace with its own:
 
 All existing single-agent components are reused without modification.
 """
+
 import logging
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING

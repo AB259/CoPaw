@@ -641,7 +641,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def _dream_callback(self) -> None:
         """Run one dream-based memory optimization task."""
         # 延迟导入避免循环依赖
-        from ..routers.dream_logs import _set_running, _clear_running  # pylint: disable=import-outside-toplevel
+        from ..routers.dream_logs import (
+            _set_running,
+            _clear_running,
+        )  # pylint: disable=import-outside-toplevel
 
         _set_running("cron")
         try:
