@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal } from "antd";
+import { useNavigate } from "react-router-dom";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
 import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
@@ -13,6 +14,7 @@ import { useConflictRenameModal } from "../Agent/Skills/components";
 const { Title, Text } = Typography;
 
 export default function MySkillsPage() {
+  const navigate = useNavigate();
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
@@ -302,7 +304,7 @@ export default function MySkillsPage() {
 
   // Navigate to marketplace
   const goToMarketplace = () => {
-    message.info("跳转到应用市场功能开发中");
+    navigate("/market");
   };
 
   // Sync skill to market
@@ -716,18 +718,21 @@ export default function MySkillsPage() {
             >
               {isDisabled ? "已禁用" : "已启用"}
             </Button>
-            <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => {
-                if (window.confirm(`确定删除「${skill.skill_name}」？`)) {
-                  handleDelete(skill);
-                }
-              }}
+            <Popconfirm
+              title="删除技能"
+              description={`确定删除技能「${skill.skill_name}」？删除后不可恢复。`}
+              onConfirm={() => handleDelete(skill)}
+              okText="确定"
+              cancelText="取消"
             >
-              删除
-            </Button>
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+              >
+                删除
+              </Button>
+            </Popconfirm>
           </div>
         </div>
 
@@ -827,14 +832,16 @@ export default function MySkillsPage() {
             >
               上传技能
             </Button>
-            <Button
-              icon={<ShopOutlined />}
-              onClick={goToMarketplace}
-              style={{ flex: 1 }}
-            >
-              去应用市场
-              <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
-            </Button>
+            {isManager && (
+              <Button
+                icon={<ShopOutlined />}
+                onClick={goToMarketplace}
+                style={{ flex: 1 }}
+              >
+                去应用市场
+                <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
+              </Button>
+            )}
           </div>
         </div>
 
@@ -857,9 +864,17 @@ export default function MySkillsPage() {
               <Button size="small" onClick={handleBatchDisable} disabled={selectedForBatch.size === 0}>
                 批量禁用
               </Button>
-              <Button size="small" danger onClick={handleBatchDelete} disabled={selectedForBatch.size === 0}>
-                批量删除
-              </Button>
+              <Popconfirm
+                title="批量删除"
+                description={`确定删除选中的 ${selectedForBatch.size} 个技能？删除后不可恢复。`}
+                onConfirm={handleBatchDelete}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button size="small" danger disabled={selectedForBatch.size === 0}>
+                  批量删除
+                </Button>
+              </Popconfirm>
               <Text type="secondary" style={{ marginLeft: 8 }}>
                 已选择 {selectedForBatch.size} 个
               </Text>

@@ -257,6 +257,28 @@ def _get_existing_skill_names(skills_dir: Path) -> set[str]:
     return {p.name for p in skills_dir.iterdir() if p.is_dir()}
 
 
+def _parse_frontmatter_description(skill_md_path: Path) -> str:
+    """从 SKILL.md frontmatter 中提取 description."""
+    if not skill_md_path.exists():
+        return ""
+    try:
+        content = skill_md_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            return ""
+        end_idx = content.index("---", 3)
+        fm_text = content[3:end_idx].strip()
+        for line in fm_text.split("\n"):
+            if ":" in line:
+                key, val = line.split(":", 1)
+                key = key.strip().lower()
+                val = val.strip()
+                if key == "description":
+                    return val
+    except (ValueError, OSError):
+        pass
+    return ""
+
+
 def _update_skill_json(
     skill_json_path: Path,
     skill_name: str,
@@ -276,7 +298,16 @@ def _update_skill_json(
             pass
 
     skill_data["name"] = skill_data.get("name") or skill_name
-    skill_data.setdefault("description", "")
+
+    # 优先从 skill.json 获取 description，其次从 SKILL.md frontmatter
+    if not skill_data.get("description"):
+        skill_md_path = skill_json_path.parent / "SKILL.md"
+        desc_from_md = _parse_frontmatter_description(skill_md_path)
+        if desc_from_md:
+            skill_data["description"] = desc_from_md
+        else:
+            skill_data.setdefault("description", "")
+
     skill_data["source"] = "customized"
     skill_data["creator_id"] = user_id
     skill_data["creator_name"] = user_name
@@ -333,6 +364,7 @@ def _import_skill_from_zip(
     bbk_id: str,
     overwrite: bool = False,
     target_name: str = "",
+    rename_map: dict[str, str] | None = None,
     category_id: int | None = None,
 ) -> dict[str, Any]:
     """Import skill from zip data to user skills directory."""
@@ -347,7 +379,10 @@ def _import_skill_from_zip(
         existing_names = _get_existing_skill_names(skills_dir)
 
         for skill_dir, skill_name in found_skills:
-            if target_name and len(found_skills) == 1:
+            # 应用 rename_map 映射
+            if rename_map and skill_name in rename_map:
+                skill_name = rename_map[skill_name]
+            elif target_name and len(found_skills) == 1:
                 skill_name = target_name.strip()
 
             success, conflict = _process_single_skill(
@@ -471,6 +506,54 @@ async def get_skill_detail(
     return detail
 
 
+@router.get(
+    "/market/skills/{item_id}/files",
+    response_model=list[FileTreeNode],
+)
+async def list_market_skill_files(
+    item_id: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_bbk_id: Optional[str] = Header(default=None, alias="X-Bbk-Id"),
+):
+    """获取市场技能详情页文件树。"""
+    source_id = require_source_id(x_source_id)
+    user_bbk_id = x_bbk_id or "100"
+    svc = request.app.state.marketplace
+    files = svc.list_market_skill_files(source_id, item_id, user_bbk_id)
+    if files is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return files
+
+
+@router.get(
+    "/market/skills/{item_id}/files/{file_path:path}",
+    response_model=FileContentResponse,
+)
+async def read_market_skill_file(
+    item_id: str,
+    file_path: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_bbk_id: Optional[str] = Header(default=None, alias="X-Bbk-Id"),
+):
+    """读取市场技能详情页文件内容。"""
+    source_id = require_source_id(x_source_id)
+    user_bbk_id = x_bbk_id or "100"
+    svc = request.app.state.marketplace
+    content, file_type = svc.read_market_skill_file(
+        source_id,
+        item_id,
+        file_path,
+        user_bbk_id,
+    )
+    if file_type == "binary":
+        return FileContentResponse(content="", file_type=file_type)
+    if content is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileContentResponse(content=content, file_type=file_type)
+
+
 @router.post("/market/skills/upload", response_model=UploadSkillResponse)
 async def upload_skill_to_workspace(
     request: Request,
@@ -482,6 +565,7 @@ async def upload_skill_to_workspace(
     enable: bool = True,
     overwrite: bool = False,
     target_name: str = "",
+    rename_map: str = "",
     category_id: Optional[int] = None,
 ):
     """上传技能到工作区，记录 user_id, bbk_id, user_name。可选指定分类。"""
@@ -491,6 +575,14 @@ async def upload_skill_to_workspace(
             status_code=400,
             detail="X-User-Id header is required",
         )
+
+    # 解析 rename_map JSON
+    parsed_rename_map: dict[str, str] = {}
+    if rename_map:
+        try:
+            parsed_rename_map = json.loads(rename_map)
+        except json.JSONDecodeError:
+            logger.warning("Invalid rename_map JSON: %s", rename_map)
 
     svc = request.app.state.marketplace
     swe_root = svc.swe_root
@@ -515,6 +607,7 @@ async def upload_skill_to_workspace(
         bbk_id,
         overwrite=overwrite,
         target_name=target_name,
+        rename_map=parsed_rename_map,
         category_id=category_id,
     )
 
@@ -544,6 +637,17 @@ async def upload_skill_to_workspace(
             )
         except Exception as e:
             logger.warning("Failed to log upload operation: %s", e)
+
+    # 注册技能到 manifest
+    if result.get("imported"):
+        for skill_name in result["imported"]:
+            svc.register_skill_in_manifest(
+                x_user_id,
+                skill_name,
+                agent_id,
+                source_id,
+                enabled=enable,
+            )
 
     result["enabled"] = enable
     return result
