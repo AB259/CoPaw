@@ -448,9 +448,8 @@ def _strip_internal_follow_up_messages_from_state(
             if isinstance(msg_payload, dict)
             else None
         )
-        if (
-            isinstance(metadata, dict)
-            and metadata.get(_INTERNAL_FOLLOW_UP_METADATA_KEY)
+        if isinstance(metadata, dict) and metadata.get(
+            _INTERNAL_FOLLOW_UP_METADATA_KEY
         ):
             removed += 1
             continue
@@ -1021,6 +1020,7 @@ class AgentRunner(Runner):
                     ),
                     session_id=session_id,
                     agent=agent,
+                    run_key=chat.id if chat is not None else None,
                 ):
                     yield msg, last
 
@@ -1115,7 +1115,9 @@ class AgentRunner(Runner):
                         session_id,
                     )
 
-            suggestions_config = getattr(agent_config.running, "suggestions", None)
+            suggestions_config = getattr(
+                agent_config.running, "suggestions", None
+            )
             if (
                 task_completed
                 and suggestions_config is not None
@@ -1611,6 +1613,7 @@ class AgentRunner(Runner):
         session_id: str,
         agent=None,
         timeout_seconds: float = QUERY_TIMEOUT_SECONDS,
+        run_key: str | None = None,
     ):
         """Wrap an async message stream with global wall-clock timeout.
 
@@ -1640,6 +1643,22 @@ class AgentRunner(Runner):
                     timeout_seconds,
                     session_id,
                 )
+                if run_key and self._task_tracker is not None:
+                    mark_stopping = getattr(
+                        self._task_tracker,
+                        "mark_stopping",
+                        None,
+                    )
+                    if mark_stopping is not None:
+                        try:
+                            await mark_stopping(run_key)
+                        except Exception as status_err:
+                            logger.warning(
+                                "Failed to mark run stopping after query "
+                                "timeout: %s",
+                                status_err,
+                            )
+
                 # Interrupt the agent to stop it from continuing
                 if agent is not None:
                     try:
