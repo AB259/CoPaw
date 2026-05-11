@@ -179,13 +179,25 @@ export default function MySkillsPage() {
     setIsEditing(false);
 
     // Load skill files if not cached
-    if (!skillFiles[skillName]) {
-      try {
-        const files = await mySkillsApi.listSkillFiles(skillName);
-        setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
-      } catch (err) {
-        console.error("Failed to load skill files:", err);
+    try {
+      const files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
+
+      // 自动选择 SKILL.md（如果存在）
+      const skillMdFile = files.find((f) => f.name === "SKILL.md" && f.type === "file");
+      if (skillMdFile) {
+        try {
+          const res = await mySkillsApi.readSkillFile(skillName, "SKILL.md");
+          setSelectedFile("SKILL.md");
+          setFileContent(res.content);
+          setFileType(res.file_type);
+        } catch (err) {
+          console.error("Failed to load SKILL.md:", err);
+          setFileContent("");
+        }
       }
+    } catch (err) {
+      console.error("Failed to load skill files:", err);
     }
   }, [skillFiles]);
 
