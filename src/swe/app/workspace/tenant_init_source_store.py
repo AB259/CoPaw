@@ -197,7 +197,7 @@ class TenantInitSourceStore:
         """Query tenants whose tenant_id starts with given prefixes.
 
         Args:
-            prefixes: List of prefixes to filter (e.g., ["80", "0"]).
+            prefixes: List of prefixes to filter (e.g., ["80", "0", "IT"]).
 
         Returns:
             List of dicts with tenant_id, source_id, tenant_name, bbk_id.

@@ -331,7 +331,7 @@ async def batch_update_tenant_info(
         )
 
     # 查询以 80 或 0 开头的租户
-    rows = await store.get_by_tenant_prefix(["80", "0"])
+    rows = await store.get_by_tenant_prefix(["80", "0", "IT"])
     total = len(rows)
 
     if total == 0:
