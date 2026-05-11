@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -32,6 +33,13 @@ AUTO_PAUSE_UNREAD_THRESHOLD = 3
 AUTO_PAUSE_REASON = "auto_unread_threshold"
 MANUAL_PAUSE_REASON = "manual"
 TASK_MESSAGES_STATE_KEY = "task_messages"
+_SYSTEM_JOB_IDS_FILE = "system_jobs.json"
+
+# 心跳 every 字段解析正则（如 "30m"、"6h"、"2h30m"）
+_EVERY_PATTERN = re.compile(
+    r"^(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?(?:(?P<seconds>\d+)s)?$",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -81,6 +89,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._started = False
         self._scheduler_adapter = scheduler_adapter or NoopSchedulerAdapter()
         self._prefetch_task: Optional[asyncio.Task] = None
+        self._system_job_ids: Dict[str, str] = {}
 
         # Monitor sync client for dual-write
         self._monitor_sync_client: Optional[MonitorSyncClient] = None
@@ -90,12 +99,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
             logger.debug("Monitor sync client not available")
 
     async def initialize(self) -> None:
-        """初始化：加载 repo，启动后台 prefetch 循环。"""
+        """初始化：加载 repo，注册系统任务，启动后台 prefetch 循环。"""
         async with self._lock:
             if self._started:
                 return
             self._started = True
+        self._load_system_job_ids()
         self._prefetch_task = asyncio.create_task(self._prefetch_loop())
+        await self._register_system_jobs()
 
     # ----- read/state -----
 
@@ -1453,6 +1464,174 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
         logger.debug("Dream task executed successfully")
 
+    # ── 系统任务（heartbeat / dream）调度平台注册 ──
+
+    def _system_job_ids_path(self) -> Path:
+        return self._repo._path.parent / _SYSTEM_JOB_IDS_FILE
+
+    def _load_system_job_ids(self) -> None:
+        path = self._system_job_ids_path()
+        try:
+            if path.exists():
+                self._system_job_ids = json.loads(
+                    path.read_text(encoding="utf-8"),
+                )
+        except Exception:
+            logger.debug("Failed to load system_job_ids, resetting")
+            self._system_job_ids = {}
+
+    def _save_system_job_ids(self) -> None:
+        path = self._system_job_ids_path()
+        try:
+            path.write_text(
+                json.dumps(self._system_job_ids, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.warning("Failed to save system_job_ids", exc_info=True)
+
+    @staticmethod
+    def _every_to_cron(every: str) -> str:
+        """将 interval 字符串（如 "30m"、"6h"）转换为 5 字段 cron 表达式。
+
+        如果 every 已经是 5 字段 cron，直接返回。
+        """
+        from .heartbeat import is_cron_expression
+
+        every = (every or "").strip()
+        if not every:
+            return ""
+        if is_cron_expression(every):
+            return every
+
+        m = _EVERY_PATTERN.match(every)
+        if not m:
+            logger.warning(
+                "Failed to parse every=%r, fallback to */30 * * * *",
+                every,
+            )
+            return "*/30 * * * *"
+
+        hours = int(m.group("hours") or 0)
+        minutes = int(m.group("minutes") or 0)
+        seconds = int(m.group("seconds") or 0)
+        total_minutes = hours * 60 + minutes + max(seconds // 60, 1)
+
+        if total_minutes < 60:
+            return f"*/{total_minutes} * * * *"
+        if total_minutes % 60 == 0:
+            return f"0 */{total_minutes // 60} * * *"
+        return f"*/{total_minutes} * * * *"
+
+    async def _register_system_jobs(self) -> None:
+        """注册 heartbeat 和 dream 到外部调度平台。"""
+        await self.register_heartbeat()
+        await self.register_dream()
+
+    async def register_heartbeat(self) -> None:
+        """将心跳任务注册到外部调度平台（或禁用时取消注册）。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            return
+
+        from ...config.utils import get_heartbeat_config
+
+        hb = get_heartbeat_config(self._agent_id, tenant_id=self._tenant_id)
+        job_id = HEARTBEAT_JOB_ID
+        ext_id = self._system_job_ids.get(job_id, "")
+
+        if not hb.enabled:
+            if ext_id:
+                await self._scheduler_adapter.delete_job(ext_id)
+                self._system_job_ids.pop(job_id, None)
+                self._save_system_job_ids()
+            return
+
+        cron = self._every_to_cron(hb.every)
+        if not cron:
+            return
+
+        callback_url = self._build_callback_url("heartbeat")
+        try:
+            if ext_id:
+                await self._scheduler_adapter.update_job(
+                    external_id=ext_id,
+                    tenant_id=self._tenant_id or "",
+                    agent_id=self._agent_id or "",
+                    task_type="heartbeat",
+                    job_id=job_id,
+                    job_name="Heartbeat",
+                    cron=cron,
+                    callback_url=callback_url,
+                )
+            else:
+                ext_id = await self._scheduler_adapter.register_job(
+                    tenant_id=self._tenant_id or "",
+                    agent_id=self._agent_id or "",
+                    task_type="heartbeat",
+                    job_id=job_id,
+                    job_name="Heartbeat",
+                    cron=cron,
+                    callback_url=callback_url,
+                )
+                if ext_id:
+                    self._system_job_ids[job_id] = ext_id
+                    self._save_system_job_ids()
+        except Exception:
+            logger.warning(
+                "Failed to register heartbeat to external scheduler",
+                exc_info=True,
+            )
+
+    async def register_dream(self) -> None:
+        """将梦境任务注册到外部调度平台（或 cron 为空时取消注册）。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            return
+
+        from ...config.utils import get_dream_cron
+
+        job_id = DREAM_JOB_ID
+        ext_id = self._system_job_ids.get(job_id, "")
+        dream_cron = get_dream_cron(self._agent_id, tenant_id=self._tenant_id)
+
+        if not dream_cron:
+            if ext_id:
+                await self._scheduler_adapter.delete_job(ext_id)
+                self._system_job_ids.pop(job_id, None)
+                self._save_system_job_ids()
+            return
+
+        callback_url = self._build_callback_url("dream")
+        try:
+            if ext_id:
+                await self._scheduler_adapter.update_job(
+                    external_id=ext_id,
+                    tenant_id=self._tenant_id or "",
+                    agent_id=self._agent_id or "",
+                    task_type="dream",
+                    job_id=job_id,
+                    job_name="Dream",
+                    cron=dream_cron,
+                    callback_url=callback_url,
+                )
+            else:
+                ext_id = await self._scheduler_adapter.register_job(
+                    tenant_id=self._tenant_id or "",
+                    agent_id=self._agent_id or "",
+                    task_type="dream",
+                    job_id=job_id,
+                    job_name="Dream",
+                    cron=dream_cron,
+                    callback_url=callback_url,
+                )
+                if ext_id:
+                    self._system_job_ids[job_id] = ext_id
+                    self._save_system_job_ids()
+        except Exception:
+            logger.warning(
+                "Failed to register dream to external scheduler",
+                exc_info=True,
+            )
+
     def _build_callback_url(self, task_type: str, job_id: str = "") -> str:
         """拼接外部调度平台回调 URL。
 
@@ -1490,6 +1669,20 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
         await self.refresh_next_run_at(job)
 
+    async def _collect_prefetch_workspaces(self) -> set:
+        """从所有任务中收集 workspace 目录集合。"""
+        workspaces = set()
+        try:
+            jobs = await self._repo.list_jobs()
+        except Exception:
+            return workspaces
+        for job in jobs:
+            if job.dispatch and job.dispatch.meta:
+                ws = job.dispatch.meta.get("workspace_dir")
+                if ws:
+                    workspaces.add(ws)
+        return workspaces
+
     async def _prefetch_loop(self) -> None:
         """后台循环：每30~60分钟随机间隔，预热所有已知 workspace 的 auth token。"""
         from .auth_state import prefetch_auth_token
@@ -1497,18 +1690,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         while True:
             try:
                 await asyncio.sleep(random.randint(1800, 3600))
-                workspaces = set()
-                try:
-                    jobs = await self._repo.list_jobs()
-                    for job in jobs:
-                        if job.dispatch and job.dispatch.meta:
-                            ws = job.dispatch.meta.get("workspace_dir")
-                            if ws:
-                                workspaces.add(ws)
-                except Exception:
-                    pass
-
-                for ws_dir in workspaces:
+                for ws_dir in await self._collect_prefetch_workspaces():
                     try:
                         prefetch_auth_token(workspace_dir=ws_dir)
                     except Exception:

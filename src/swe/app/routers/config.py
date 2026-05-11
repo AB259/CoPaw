@@ -382,12 +382,10 @@ async def put_heartbeat(
         tenant_id=agent.tenant_id,
     )
 
-    # Heartbeat config update - scheduling is handled externally
-    import logging
-
-    logging.getLogger(__name__).debug(
-        f"Heartbeat config updated for agent {agent.agent_id}",
-    )
+    # 配置变更后重新注册到外部调度平台
+    cm = agent.cron_manager
+    if cm is not None:
+        await cm.register_heartbeat()
 
     return hb.model_dump(mode="json", by_alias=True)
 
