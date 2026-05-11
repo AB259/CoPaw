@@ -1429,9 +1429,16 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         "job_id=%s",
                         job.id,
                     )
-                await asyncio.shield(
-                    self._record_task_execution_success(job),
-                )
+                try:
+                    await asyncio.shield(
+                        self._record_task_execution_success(job),
+                    )
+                except asyncio.CancelledError:
+                    logger.info(
+                        "cron task notification/record cancelled but task succeeded: "
+                        "job_id=%s",
+                        job.id,
+                    )
                 # Get output preview from job meta
                 output_preview = str(
                     (job.meta or {}).get("task_last_scheduled_preview", "")
