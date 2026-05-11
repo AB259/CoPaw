@@ -152,7 +152,10 @@ def _extract_zip_entries(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
             target.write_bytes(zf.read(info))
 
 
-def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
+def _find_skill_directories(
+    tmp_dir: Path,
+    zip_filename: str | None = None,
+) -> list[tuple[Path, str]]:
     """Find valid skill directories in extracted path."""
     real_entries = [
         path
@@ -168,7 +171,7 @@ def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
     )
 
     if (extract_root / "SKILL.md").exists():
-        skill_name = _resolve_skill_name(extract_root)
+        skill_name = _resolve_skill_name(extract_root, zip_filename)
         return [(extract_root, skill_name)]
 
     return [
@@ -181,7 +184,10 @@ def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
     ]
 
 
-def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
+def _extract_zip_skills(
+    data: bytes,
+    zip_filename: str | None = None,
+) -> tuple[Path, list[tuple[Path, str]]]:
     """Extract and validate a skill zip.
 
     Returns ``(tmp_dir, found_skills)`` where each skill is ``(skill_dir, skill_name)``.
@@ -195,7 +201,7 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
             _validate_zip_paths(zf, tmp_dir)
             _extract_zip_entries(zf, tmp_dir)
 
-        found = _find_skill_directories(tmp_dir)
+        found = _find_skill_directories(tmp_dir, zip_filename)
         if not found:
             raise ValueError(
                 "No valid skills found in uploaded zip (missing SKILL.md)",
@@ -206,19 +212,43 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
         raise
 
 
-def _resolve_skill_name(skill_dir: Path) -> str:
-    """Resolve skill name from SKILL.md frontmatter or directory name."""
+def _infer_skill_name_from_zip_filename(filename: str) -> str:
+    """从 zip 文件名推导技能名（去掉 .zip 和版本号）。"""
+    if not filename:
+        return ""
+    # 去掉 .zip 后缀
+    name = filename.lower()
+    if name.endswith(".zip"):
+        name = name[:-4]
+    # 去掉版本号后缀（如 -1.0.0, -v1.0.0）
+    import re
+
+    name = re.sub(r"-v?\d+\.\d+\.\d+$", "", name)
+    name = re.sub(r"-v?\d+$", "", name)
+    return name or filename
+
+
+def _resolve_skill_name(
+    skill_dir: Path,
+    zip_filename: str | None = None,
+) -> str:
+    """Resolve skill name from SKILL.md frontmatter, zip filename, or directory name."""
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
-        return skill_dir.name
+        # 尝试使用 zip 文件名
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     try:
         content = skill_md.read_text(encoding="utf-8")
     except Exception:
-        return skill_dir.name
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     if not content.startswith("---"):
-        return skill_dir.name
+        # 没有 frontmatter，尝试使用 zip 文件名
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     # Parse YAML frontmatter
     for line in content.split("\n")[1:]:
@@ -229,7 +259,9 @@ def _resolve_skill_name(skill_dir: Path) -> str:
             if name:
                 return name
 
-    return skill_dir.name
+    # frontmatter 中没有 name 字段，尝试使用 zip 文件名
+    inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+    return inferred or skill_dir.name
 
 
 def _import_skill_dir(
@@ -366,6 +398,7 @@ def _import_skill_from_zip(
     target_name: str = "",
     rename_map: dict[str, str] | None = None,
     category_id: int | None = None,
+    zip_filename: str | None = None,
 ) -> dict[str, Any]:
     """Import skill from zip data to user skills directory."""
     imported: list[str] = []
@@ -375,7 +408,7 @@ def _import_skill_from_zip(
     parsed_description: str | None = None
 
     try:
-        tmp_dir, found_skills = _extract_zip_skills(data)
+        tmp_dir, found_skills = _extract_zip_skills(data, zip_filename)
         existing_names = _get_existing_skill_names(skills_dir)
 
         for skill_dir, skill_name in found_skills:
@@ -609,6 +642,7 @@ async def upload_skill_to_workspace(
         target_name=target_name,
         rename_map=parsed_rename_map,
         category_id=category_id,
+        zip_filename=file.filename,
     )
 
     # Log upload operation

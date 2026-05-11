@@ -846,7 +846,7 @@ export default function MySkillsPage() {
         </div>
 
         {/* Batch operation bar */}
-        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Button
             size="small"
             onClick={() => {
