@@ -12,6 +12,7 @@ import type {
   BackupContentResponse,
   OrphanFilesResponse,
   OrphanFileContentResponse,
+  GovernanceStatusResponse,
 } from "../types/dreamLogs";
 
 export const dreamLogsApi = {
@@ -37,6 +38,12 @@ export const dreamLogsApi = {
    */
   trigger: async (): Promise<TriggerResponse> =>
     request("/dream-logs/trigger", { method: "POST" }),
+
+  /**
+   * 查询治理任务运行状态
+   */
+  status: async (): Promise<GovernanceStatusResponse> =>
+    request("/dream-logs/status"),
 
   /**
    * Rollback files from a dream optimization

@@ -11,6 +11,10 @@ import { IAgentScopeRuntimeWebUIInputData } from "../../types";
 import { withResponseHeaderMeta } from "./headerMeta";
 import type { CurrentQARef } from "./currentQARef";
 import {
+  emitTaskProgressUpdate,
+  extractTaskProgress,
+} from "@/pages/Chat/taskProgressEvents";
+import {
   isActiveChatRequestOwner,
   type ChatRequestOwner,
 } from "./requestOwnership";
@@ -285,6 +289,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const responseParser =
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
+          const streamedTaskProgress = extractTaskProgress(chunkData);
+          if (streamedTaskProgress !== undefined) {
+            emitTaskProgressUpdate(streamedTaskProgress);
+          }
           const res = agentScopeRuntimeResponseBuilder.handle(chunkData);
           const isTerminalResponse =
             res.status === AgentScopeRuntimeRunStatus.Completed ||
@@ -319,7 +327,11 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
             currentQARef.current.response.cards = cards;
 
-            if (isTerminalResponse) {
+            if (
+              res.status === AgentScopeRuntimeRunStatus.Completed ||
+              res.status === AgentScopeRuntimeRunStatus.Failed
+            ) {
+              emitTaskProgressUpdate(null);
               onFinish(owner);
             } else {
               updateMessage(currentQARef.current.response);
@@ -493,6 +505,8 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
       updateMessage(currentQARef.current.response);
     }
+
+    emitTaskProgressUpdate(null);
   }, [currentQARef, getCurrentSessionId, getResponseHeaderTimestamp, updateMessage]);
 
   return { request, reconnect, mockRequest, cancelActiveRequest };

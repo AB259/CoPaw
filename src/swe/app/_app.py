@@ -40,6 +40,7 @@ from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
 from ..database import get_database_config
 from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
+from .crons.monitor_sync_client import get_monitor_sync_client
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -316,31 +317,6 @@ async def lifespan(
             traceback.format_exc(),
         )
 
-    # --- Initialize Elasticsearch client for model output storage ---
-    es_client = None
-    try:
-        from ..elasticsearch import get_elasticsearch_config, init_es_client
-
-        es_config = get_elasticsearch_config()
-        if es_config.host:
-            es_client = init_es_client(es_config)
-            if es_client:
-                await es_client.connect()
-                if es_client.is_connected:
-                    logger.info("Elasticsearch client connected")
-                else:
-                    logger.warning("Elasticsearch client failed to connect")
-        else:
-            logger.info("Elasticsearch is disabled (no host configured)")
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Failed to initialize Elasticsearch client: %s\n%s",
-            e,
-            traceback.format_exc(),
-        )
-
     # --- Initialize instance module config---
     # from .instance.router import init_instance_module
 
@@ -378,6 +354,12 @@ async def lifespan(
     # 启动服务心跳任务
     await start_service_heartbeat()
 
+    # SWE 重启后通知 Monitor 触发定时任务恢复预热；延迟执行是为了确保
+    # 当前服务已经开始接收 Monitor 对 /cron/jobs 的回调请求。
+    get_monitor_sync_client().schedule_swe_cron_warmup(
+        start_delay_seconds=5.0,
+    )
+
     try:
         yield
     finally:
@@ -395,14 +377,6 @@ async def lifespan(
                 logger.info("Database connection closed")
             except Exception as e:
                 logger.warning("Error closing database connection: %s", e)
-
-        # Close Elasticsearch client
-        if es_client:
-            try:
-                await es_client.close()
-                logger.info("Elasticsearch client closed")
-            except Exception as e:
-                logger.warning("Error closing Elasticsearch client: %s", e)
 
         # 停止服务心跳并发送关闭信号
         await stop_service_heartbeat()

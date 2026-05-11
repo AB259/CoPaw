@@ -3,26 +3,23 @@
  * 用于银行管理层查看平台使用情况和业务覆盖情况
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Row, Col, Tooltip, Select, DatePicker, message } from "antd";
-import {
-  Users,
-  Clock,
-  TrendingUp,
-  TrendingDown,
-} from "lucide-react";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { tracingApi } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
+import { useIframeStore } from "../../../stores/iframeStore";
 import {
   formatNumber,
   formatTokens,
   formatChange,
   truncateName,
+  getBbkDisplayName,
   type UserRow,
   type TimeRange,
 } from "./types";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 
 const { Option } = Select;
 
@@ -65,13 +62,35 @@ const BAR_COLORS = [
 ];
 
 // 指标卡片左边框颜色
-const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14"];
+const METRIC_BORDER_COLORS = ["#1890ff", "#52c41a", "#722ed1", "#faad14", "#13c2c2"];
 
 export default function BusinessOverviewPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
   const [startDate, setStartDate] = useState<dayjs.Dayjs>(dayjs());
   const [endDate, setEndDate] = useState<dayjs.Dayjs>(dayjs());
-  const [platform, setPlatform] = useState<string>("all");
+
+  // 获取用户权限和来源信息
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const userSource = useIframeStore((state) => state.source);
+
+  // 非超级管理员的平台初始值为用户所属平台，超级管理员默认为 "all"
+  const [platform, setPlatform] = useState<string>(() => {
+    // 初始化时从 sessionStorage 获取，避免闪烁
+    try {
+      const stored = sessionStorage.getItem("swe-iframe-context");
+      if (stored) {
+        const ctx = JSON.parse(stored);
+        if (ctx.state?.isSuperManager) {
+          return "all";
+        }
+        return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
+      }
+    } catch {
+      // ignore
+    }
+    // 非 iframe 模式下使用默认 source
+    return DEFAULT_SOURCE_ID || "all";
+  });
 
   // 平台列表（从API获取）
   const [sources, setSources] = useState<string[]>([]);
@@ -84,6 +103,7 @@ export default function BusinessOverviewPage() {
     sessionGrowth: 0,
     userGrowth: 0,
     platformGrowth: 0,
+    avgDurationGrowth: 0,
   });
   const [channelDistribution, setChannelDistribution] = useState<{
     platformUserDistribution: { name: string; value: number }[];
@@ -100,7 +120,24 @@ export default function BusinessOverviewPage() {
     tokens: number;
     users: number;
   }[]>([]);
-  const [topUsers, setTopUsers] = useState<UserRow[]>([]);
+
+  // 调用数排行榜分页状态
+  const [callsUsers, setCallsUsers] = useState<UserRow[]>([]);
+  const [callsPage, setCallsPage] = useState(1);
+  const [callsHasMore, setCallsHasMore] = useState(true);
+  const [callsLoading, setCallsLoading] = useState(false);
+  const callsLoadingRef = useRef(false);
+
+  // 最近活跃用户分页状态
+  const [activeUsers, setActiveUsers] = useState<UserRow[]>([]);
+  const [activePage, setActivePage] = useState(1);
+  const [activeHasMore, setActiveHasMore] = useState(true);
+  const [activeLoading, setActiveLoading] = useState(false);
+  const activeLoadingRef = useRef(false);
+
+  // 用户过滤类型：filtered(已过滤) / all(全部) - 分别控制
+  const [callsFilterType, setCallsFilterType] = useState<"filtered" | "all">("filtered");
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
 
   // 折线图悬浮 tooltip 状态
   const [lineChartTooltip, setLineChartTooltip] = useState<{
@@ -144,12 +181,23 @@ export default function BusinessOverviewPage() {
   // 获取平台列表
   const fetchSources = useCallback(async () => {
     try {
-      const res = await tracingApi.getSources();
-      setSources(res.sources || []);
+      // 超级管理员：加载所有平台选项
+      if (isSuperManager) {
+        const res = await tracingApi.getSources();
+        setSources(res.sources || []);
+      } else {
+        // 非超级管理员：只显示用户所属平台
+        const effectiveSource = userSource || DEFAULT_SOURCE_ID;
+        if (effectiveSource) {
+          setSources([effectiveSource]);
+        } else {
+          setSources([]);
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch sources:", error);
     }
-  }, []);
+  }, [isSuperManager, userSource]);
 
   // 初始加载平台列表
   useEffect(() => {
@@ -174,12 +222,11 @@ export default function BusinessOverviewPage() {
       // 核心运营指标、趋势、模型分布、用户分析等需要根据平台筛选
       // 平台用户分布和平台调用次数分布也受平台筛选影响
       // 趋势图始终使用近30天数据
-      const [overviewRes, growthRes, channelRes, trendRes, usersRes] = await Promise.allSettled([
+      const [overviewRes, growthRes, channelRes, trendRes] = await Promise.allSettled([
         tracingApi.getOverview(startStr, endStr, filterSourceId),
         tracingApi.getGrowthStats(startStr, endStr, timeRange, filterSourceId),
         tracingApi.getChannelDistribution(filterSourceId, startStr, endStr), // 受平台筛选影响
         tracingApi.getDailyTrend(trendStartStr, trendEndStr, filterSourceId), // 始终近30天
-        tracingApi.getUsers(1, 5, { start_date: startStr, end_date: endStr, source_id: filterSourceId }),
       ]);
 
       // 处理 overview stats
@@ -201,22 +248,6 @@ export default function BusinessOverviewPage() {
       if (trendRes.status === "fulfilled") {
         setTrendData(trendRes.value.trendData || []);
       }
-
-      // 处理 top users
-      if (usersRes.status === "fulfilled") {
-        const users = usersRes.value.items.map((u: any) => ({
-          userId: u.user_id,
-          userName: u.user_name,
-          bbkId: u.bbk_id,
-          name: u.user_name || u.user_id, // 优先使用 user_name，否则使用 user_id
-          calls: u.total_conversations,
-          tokens: u.total_tokens,
-          lastActive: u.last_active
-            ? dayjs(u.last_active).format("YYYY-MM-DD HH:mm")
-            : "-",
-        }));
-        setTopUsers(users);
-      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
       message.error("获取数据失败");
@@ -226,7 +257,141 @@ export default function BusinessOverviewPage() {
   // 初始加载和日期变化时获取数据
   useEffect(() => {
     fetchData();
+    // 分页状态的重置和用户数据加载由 fetchCallsUsers/fetchActiveUsers 的 useEffect 处理
   }, [fetchData]);
+
+  // 转换用户数据格式
+  const transformUserData = (items: any[]): UserRow[] => {
+    return items.map((u) => ({
+      userId: u.user_id,
+      userName: u.user_name,
+      bbkId: u.bbk_id,
+      name: u.user_name || u.user_id,
+      calls: u.total_conversations,
+      tokens: u.total_tokens,
+      lastActive: u.last_active
+        ? dayjs(u.last_active).format("YYYY-MM-DD HH:mm")
+        : "-",
+    }));
+  };
+
+  // 加载调用数排行榜
+  const fetchCallsUsers = useCallback(async (page: number, append: boolean = false) => {
+    if (callsLoadingRef.current) return;
+    callsLoadingRef.current = true;
+    setCallsLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getUsers(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+        sort_by: "conversations",
+        filter_user_type: callsFilterType,
+      });
+      const users = transformUserData(res.items);
+      if (append) {
+        // 追加数据时去重，避免重复
+        setCallsUsers((prev) => {
+          const existingIds = new Set(prev.map(u => u.userId));
+          const newUsers = users.filter(u => !existingIds.has(u.userId));
+          return [...prev, ...newUsers];
+        });
+      } else {
+        setCallsUsers(users);
+      }
+      setCallsHasMore(users.length === 10);
+    } catch (error) {
+      console.error("Failed to fetch calls users:", error);
+    } finally {
+      callsLoadingRef.current = false;
+      setCallsLoading(false);
+    }
+  }, [startDate, endDate, platform, callsFilterType]);
+
+  // 加载最近活跃用户
+  const fetchActiveUsers = useCallback(async (page: number, append: boolean = false) => {
+    if (activeLoadingRef.current) return;
+    activeLoadingRef.current = true;
+    setActiveLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getUsers(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+        sort_by: "last_active",
+        filter_user_type: activeFilterType,
+      });
+      const users = transformUserData(res.items);
+      if (append) {
+        // 追加数据时去重，避免重复
+        setActiveUsers((prev) => {
+          const existingIds = new Set(prev.map(u => u.userId));
+          const newUsers = users.filter(u => !existingIds.has(u.userId));
+          return [...prev, ...newUsers];
+        });
+      } else {
+        setActiveUsers(users);
+      }
+      setActiveHasMore(users.length === 10);
+    } catch (error) {
+      console.error("Failed to fetch active users:", error);
+    } finally {
+      activeLoadingRef.current = false;
+      setActiveLoading(false);
+    }
+  }, [startDate, endDate, platform, activeFilterType]);
+
+  // 调用数排行榜：筛选条件变化时重新加载
+  useEffect(() => {
+    setCallsPage(1);
+    setCallsHasMore(true);
+    setCallsUsers([]);
+    fetchCallsUsers(1, false);
+  }, [fetchCallsUsers]);
+
+  // 最近活跃用户：筛选条件变化时重新加载
+  useEffect(() => {
+    setActivePage(1);
+    setActiveHasMore(true);
+    setActiveUsers([]);
+    fetchActiveUsers(1, false);
+  }, [fetchActiveUsers]);
+
+  // 滚动加载更多调用数用户
+  const handleCallsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      callsHasMore &&
+      !callsLoadingRef.current
+    ) {
+      const nextPage = callsPage + 1;
+      setCallsPage(nextPage);
+      fetchCallsUsers(nextPage, true);
+    }
+  }, [callsHasMore, callsPage, fetchCallsUsers]);
+
+  // 滚动加载更多活跃用户
+  const handleActiveScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      activeHasMore &&
+      !activeLoadingRef.current
+    ) {
+      const nextPage = activePage + 1;
+      setActivePage(nextPage);
+      fetchActiveUsers(nextPage, true);
+    }
+  }, [activeHasMore, activePage, fetchActiveUsers]);
 
   // 处理开始日期变化
   const handleStartDateChange = (date: dayjs.Dayjs | null) => {
@@ -307,7 +472,7 @@ export default function BusinessOverviewPage() {
 
   // 趋势标题固定为近30天（趋势图始终显示近30天数据，不受顶部日期选择器影响）
   const getTrendTitle = () => {
-    return "近30天使用趋势";
+    return "近30天调用量趋势";
   };
 
   // 计算指标数据
@@ -370,6 +535,7 @@ export default function BusinessOverviewPage() {
       value: number;
       color: string;
       index: number;
+      isFullCircle: boolean;
     }> = [];
 
     let currentAngle = -90;
@@ -381,25 +547,37 @@ export default function BusinessOverviewPage() {
       const endAngle = currentAngle + angle;
       currentAngle = endAngle;
 
-      const startRad = (startAngle * Math.PI) / 180;
-      const endRad = (endAngle * Math.PI) / 180;
+      // 当只有一个数据点时（360度），需要特殊处理，否则 SVG arc 无法正确渲染
+      const isFullCircle = Math.abs(angle - 360) < 0.01;
 
-      // 正常路径
-      const x1 = cx + radius * Math.cos(startRad);
-      const y1 = cy + radius * Math.sin(startRad);
-      const x2 = cx + radius * Math.cos(endRad);
-      const y2 = cy + radius * Math.sin(endRad);
+      let pathD: string;
+      let hoverPathD: string;
 
-      // 悬浮时放大的路径
-      const hx1 = cx + hoverRadius * Math.cos(startRad);
-      const hy1 = cy + hoverRadius * Math.sin(startRad);
-      const hx2 = cx + hoverRadius * Math.cos(endRad);
-      const hy2 = cy + hoverRadius * Math.sin(endRad);
+      if (isFullCircle) {
+        // 完整圆：直接用 circle 元素渲染
+        pathD = `M ${cx} ${cy} m -${radius}, 0 a ${radius},${radius} 0 1,0 ${radius * 2},0 a ${radius},${radius} 0 1,0 -${radius * 2},0 Z`;
+        hoverPathD = `M ${cx} ${cy} m -${hoverRadius}, 0 a ${hoverRadius},${hoverRadius} 0 1,0 ${hoverRadius * 2},0 a ${hoverRadius},${hoverRadius} 0 1,0 -${hoverRadius * 2},0 Z`;
+      } else {
+        const startRad = (startAngle * Math.PI) / 180;
+        const endRad = (endAngle * Math.PI) / 180;
 
-      const largeArc = angle > 180 ? 1 : 0;
+        // 正常路径
+        const x1 = cx + radius * Math.cos(startRad);
+        const y1 = cy + radius * Math.sin(startRad);
+        const x2 = cx + radius * Math.cos(endRad);
+        const y2 = cy + radius * Math.sin(endRad);
 
-      const pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
-      const hoverPathD = `M ${cx} ${cy} L ${hx1} ${hy1} A ${hoverRadius} ${hoverRadius} 0 ${largeArc} 1 ${hx2} ${hy2} Z`;
+        // 悬浮时放大的路径
+        const hx1 = cx + hoverRadius * Math.cos(startRad);
+        const hy1 = cy + hoverRadius * Math.sin(startRad);
+        const hx2 = cx + hoverRadius * Math.cos(endRad);
+        const hy2 = cy + hoverRadius * Math.sin(endRad);
+
+        const largeArc = angle > 180 ? 1 : 0;
+
+        pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+        hoverPathD = `M ${cx} ${cy} L ${hx1} ${hy1} A ${hoverRadius} ${hoverRadius} 0 ${largeArc} 1 ${hx2} ${hy2} Z`;
+      }
 
       slices.push({
         path: pathD,
@@ -410,6 +588,7 @@ export default function BusinessOverviewPage() {
         value: item.value,
         color: CHART_COLORS[index % CHART_COLORS.length],
         index,
+        isFullCircle,
       });
     });
 
@@ -495,8 +674,8 @@ export default function BusinessOverviewPage() {
       );
     }
 
-    const padding = { top: 20, right: 30, bottom: 60, left: 50 };
-    const width = 1000;
+    const padding = { top: 20, right: 10, bottom: 60, left: 40 };
+    const width = 1400; // 增大宽度以更好地填充容器
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
 
@@ -533,28 +712,33 @@ export default function BusinessOverviewPage() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // SVG 使用 preserveAspectRatio="xMidYMid meet" 会居中显示
-      // 需要计算实际的缩放比例和偏移量
-      const viewBoxAspect = width / height;
-      const containerAspect = rect.width / rect.height;
+      // 容器有124px 左右 padding
+      const containerPadding = 12;
+      const svgWidth = rect.width - containerPadding * 2;
 
-      let actualScaleX: number;
+      // SVG 保持宽高比，计算实际渲染尺寸
+      const svgAspect = width / height;
+      const containerAspect = svgWidth / height;
+
+      let actualSvgWidth: number;
       let offsetX: number;
 
-      if (containerAspect > viewBoxAspect) {
-        // 容器更宽，SVG 按高度缩放，左右留白
-        actualScaleX = rect.height / height;
-        offsetX = (rect.width - width * actualScaleX) / 2;
+      if (containerAspect >= svgAspect) {
+        // 容器更宽，SVG 高度撑满，左右留白
+        actualSvgWidth = height * svgAspect;
+        offsetX = containerPadding + (svgWidth - actualSvgWidth) / 2;
       } else {
-        // 容器更高，SVG 按宽度缩放，上下留白
-        actualScaleX = rect.width / width;
-        offsetX = 0;
+        // 容器更窄，SVG 宽度撑满
+        actualSvgWidth = svgWidth;
+        offsetX = containerPadding;
       }
 
-      // 计算每个数据点在 DOM 中的实际 X 位置（考虑居中偏移）
+      const scaleX = actualSvgWidth / width;
+
+      // 计算每个数据点在 DOM 中的实际 X 位置
       const dataPoints = chartData.map((d, i) => ({
         index: i,
-        x: xScale(i) * actualScaleX + offsetX,
+        x: offsetX + xScale(i) * scaleX,
         data: d,
       }));
 
@@ -571,7 +755,7 @@ export default function BusinessOverviewPage() {
       }
 
       // 计算实际图表宽度的一半作为阈值
-      const actualChartWidth = chartWidth * actualScaleX;
+      const actualChartWidth = chartWidth * scaleX;
       const threshold = actualChartWidth / chartData.length / 2;
 
       if (minDistance <= threshold) {
@@ -604,7 +788,7 @@ export default function BusinessOverviewPage() {
           width="100%"
           height={height}
           viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio="xMidYMin meet"
         >
           {/* Y轴 */}
           {yTicks.map((tick, i) => (
@@ -850,40 +1034,56 @@ export default function BusinessOverviewPage() {
           {metric === "calls" ? "调用次数" : "最后活跃"}
         </span>
       </div>
-      {users.map((user, index) => (
-        <div
-          key={user.userId}
-          className={styles.userItem}
-          onClick={() => {
-            setSelectedUserId(user.userId);
-            setModalOpen(true);
-          }}
-          style={{ cursor: "pointer" }}
-        >
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
+      {users.map((user, index) => {
+        // 格式化显示：机构名称/用户姓名(用户ID)
+        const displayParts: string[] = [];
+        if (user.bbkId) {
+          const bbkName = getBbkDisplayName(user.bbkId);
+          if (bbkName && bbkName !== "-") {
+            displayParts.push(bbkName);
+          }
+        }
+        if (user.userName) {
+          displayParts.push(user.userName);
+        }
+        const displayName = displayParts.length > 0
+          ? `${displayParts.join("/")}(${user.userId})`
+          : user.userId;
+
+        return (
+          <div
+            key={user.userId}
+            className={styles.userItem}
+            onClick={() => {
+              setSelectedUserId(user.userId);
+              setModalOpen(true);
+            }}
+            style={{ cursor: "pointer" }}
           >
-            {index + 1}
-          </span>
-          <span className={styles.userName}>
-            {user.name}
-            {user.bbkId && <span className={styles.bbkId}> ({user.bbkId})</span>}
-          </span>
-          <span className={styles.userValue}>
-            {metric === "calls"
-              ? formatNumber(user.calls)
-              : user.lastActive}
-          </span>
-        </div>
-      ))}
+            <span
+              className={`${styles.rank} ${
+                index === 0
+                  ? styles.top1
+                  : index === 1
+                  ? styles.top2
+                  : index === 2
+                  ? styles.top3
+                  : styles.normal
+              }`}
+            >
+              {index + 1}
+            </span>
+            <span className={styles.userName}>
+              {displayName}
+            </span>
+            <span className={styles.userValue}>
+              {metric === "calls"
+                ? formatNumber(user.calls)
+                : user.lastActive}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -946,8 +1146,9 @@ export default function BusinessOverviewPage() {
           style={{ width: 180 }}
           value={platform}
           onChange={(v) => setPlatform(v)}
+          disabled={!isSuperManager}
         >
-          <Option value="all">全部平台</Option>
+          {isSuperManager && <Option value="all">全部平台</Option>}
           {sources.map((source) => (
             <Option key={source} value={source}>
               {getPlatformDisplayName(source)}
@@ -962,16 +1163,20 @@ export default function BusinessOverviewPage() {
       </div>
       <div className={styles.metricsRow}>
         <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[0] }}>
-          <div className={styles.metricLabel}>总调用次数</div>
+          <div className={styles.metricLabel}>用户数</div>
           <div className={styles.metricValue}>
-            {formatNumber(metricData.totalCalls)}
+            {formatNumber(platformData.totalUsers)}
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.callsGrowth > 0 ? styles.positive : styles.negative
+              platformData.userGrowth > 0
+                ? styles.negative
+                : platformData.userGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
-            {formatChange(metricData.callsGrowth)} 环比
+            {formatChange(platformData.userGrowth)} 环比
           </div>
         </div>
         <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[1] }}>
@@ -979,38 +1184,76 @@ export default function BusinessOverviewPage() {
           <div className={styles.metricValue}>
             {formatTokens(metricData.totalTokens)}
           </div>
+          <div className={styles.metricSubRow}>
+            <span className={styles.metricSubItem}>
+              输入 {formatTokens(overviewStats?.input_tokens || 0)}
+            </span>
+            <span className={styles.metricSubItem}>
+              输出 {formatTokens(overviewStats?.output_tokens || 0)}
+            </span>
+          </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.tokensGrowth > 0 ? styles.positive : styles.negative
+              metricData.tokensGrowth > 0
+                ? styles.negative
+                : metricData.tokensGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(metricData.tokensGrowth)} 环比
           </div>
         </div>
         <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[2] }}>
-          <div className={styles.metricLabel}>总使用用户</div>
+          <div className={styles.metricLabel}>总会话数</div>
           <div className={styles.metricValue}>
-            {formatNumber(platformData.totalUsers)}
+            {formatNumber(metricData.sessionCount)}
           </div>
           <div
             className={`${styles.metricChange} ${
-              platformData.userGrowth > 0 ? styles.positive : styles.negative
+              metricData.sessionGrowth > 0
+                ? styles.negative
+                : metricData.sessionGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
-            {formatChange(platformData.userGrowth)} 环比
+            {formatChange(metricData.sessionGrowth)} 环比
           </div>
         </div>
         <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[3] }}>
-          <div className={styles.metricLabel}>接入平台数</div>
+          <div className={styles.metricLabel}>总对话数</div>
           <div className={styles.metricValue}>
-            {formatNumber(platformData.totalPlatforms)}
+            {formatNumber(metricData.totalCalls)}
           </div>
           <div
             className={`${styles.metricChange} ${
-              platformData.platformGrowth > 0 ? styles.positive : styles.negative
+              metricData.callsGrowth > 0
+                ? styles.negative
+                : metricData.callsGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
-            {formatChange(platformData.platformGrowth)} 环比
+            {formatChange(metricData.callsGrowth)} 环比
+          </div>
+        </div>
+        <div className={styles.metricCard} style={{ borderLeftColor: METRIC_BORDER_COLORS[4] || METRIC_BORDER_COLORS[0] }}>
+          <div className={styles.metricLabel}>平均对话时长</div>
+          <div className={styles.metricValue}>
+            {Number(metricData.avgDuration).toFixed(1)}
+            <span className={styles.metricUnit}>s</span>
+          </div>
+          <div
+            className={`${styles.metricChange} ${
+              growthStats.avgDurationGrowth > 0
+                ? styles.negative
+                : growthStats.avgDurationGrowth < 0
+                ? styles.positive
+                : styles.neutral
+            }`}
+          >
+            {formatChange(growthStats.avgDurationGrowth)} 环比
           </div>
         </div>
       </div>
@@ -1044,6 +1287,104 @@ export default function BusinessOverviewPage() {
         </div>
         {renderLineChart(trendData)}
       </div>
+
+      {/* 用户排行榜 */}
+      <Row gutter={[16, 16]} className={styles.userRow}>
+        <Col xs={24} lg={12}>
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>调用数排行榜</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={callsFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "filtered") {
+                      setCallsFilterType("filtered");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={callsFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "all") {
+                      setCallsFilterType("all");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleCallsScroll}
+            >
+              {renderUserList(callsUsers, "calls")}
+              {callsLoading && callsHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!callsLoading && !callsHasMore && callsUsers.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
+          </div>
+        </Col>
+        <Col xs={24} lg={12}>
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>最近活跃用户</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "filtered") {
+                      setActiveFilterType("filtered");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "all") {
+                      setActiveFilterType("all");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleActiveScroll}
+            >
+              {renderUserList(activeUsers, "lastActive")}
+              {activeLoading && activeHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!activeLoading && !activeHasMore && activeUsers.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
+          </div>
+        </Col>
+      </Row>
 
       {/* 热门技能和工具 */}
       <Row gutter={[16, 16]} className={styles.skillRow}>
@@ -1110,49 +1451,7 @@ export default function BusinessOverviewPage() {
       </Row>
 
       {/* ==================== 第二屏：用户分析 ==================== */}
-      <div className={styles.sectionTitle}>
-        <span>用户分析</span>
-      </div>
-
-      {/* 核心指标卡片 */}
-      <Row gutter={[16, 16]} className={styles.statCardRow}>
-        <Col xs={24} sm={12} lg={12}>
-          <div className={styles.statCard}>
-            <div className={styles.statLabel}>
-              <span className={styles.icon} style={{ background: "#1890ff15", color: "#1890ff" }}>
-                <Users size={18} />
-              </span>
-              <span>总会话数</span>
-            </div>
-            <div className={styles.statValue}>{formatNumber(metricData.sessionCount)}</div>
-            <div
-              className={`${styles.statChange} ${
-                metricData.sessionGrowth > 0 ? styles.positive : styles.negative
-              }`}
-            >
-              {metricData.sessionGrowth > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-              <span>{formatChange(metricData.sessionGrowth)}</span>
-              <span style={{ marginLeft: 4, color: "#999", fontWeight: 400 }}>环比</span>
-            </div>
-          </div>
-        </Col>
-        <Col xs={24} sm={12} lg={12}>
-          <div className={styles.statCard}>
-            <div className={styles.statLabel}>
-              <span className={styles.icon} style={{ background: "#52c41a15", color: "#52c41a" }}>
-                <Clock size={18} />
-              </span>
-              <span>平均会话时长</span>
-            </div>
-            <div className={styles.statValue}>
-              {Number(metricData.avgDuration).toFixed(1)}
-              <span className={styles.suffix}>s</span>
-            </div>
-          </div>
-        </Col>
-      </Row>
-
-      {/* 分布图 + 用户排行榜 */}
+      {/* 分布图 */}
       <Row gutter={[16, 16]} className={styles.distributionRow}>
         <Col xs={24} lg={12}>
           <div className={styles.distributionCard}>
@@ -1186,37 +1485,13 @@ export default function BusinessOverviewPage() {
         </Col>
       </Row>
 
-      {/* 用户排行榜 */}
-      <Row gutter={[16, 16]} className={styles.userRow}>
-        <Col xs={24} lg={12}>
-          <div className={styles.userCard}>
-            <div className={styles.cardTitle}>调用数 Top5</div>
-            {renderUserList(
-              [...topUsers].sort((a, b) => b.calls - a.calls).slice(0, 5),
-              "calls",
-            )}
-          </div>
-        </Col>
-        <Col xs={24} lg={12}>
-          <div className={styles.userCard}>
-            <div className={styles.cardTitle}>最近活跃 Top5</div>
-            {renderUserList(
-              [...topUsers]
-                .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())
-                .slice(0, 5),
-              "lastActive",
-            )}
-          </div>
-        </Col>
-      </Row>
-
       {/* 用户详情弹窗 */}
       <UserDetailModal
         open={modalOpen}
         userId={selectedUserId}
         startDate={startDate.format("YYYY-MM-DD")}
         endDate={calculatedEndDate.format("YYYY-MM-DD")}
-        sourceId={platform !== "all" ? platform : undefined}
+        sourceId={platform}
         onClose={() => {
           setModalOpen(false);
           setSelectedUserId(null);

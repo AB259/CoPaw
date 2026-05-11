@@ -120,3 +120,10 @@ export interface OrphanFileContentResponse {
   is_loadable: boolean;
   error_message?: string;
 }
+
+// 持续治理运行状态
+export interface GovernanceStatusResponse {
+  running: boolean;
+  started_at?: string;
+  trigger?: "cron" | "manual";
+}

@@ -258,12 +258,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     //   label: t("nav.voiceTranscription"),
     // },
     {
-      key: "analytics-overview",
-      icon: <SparkBarChartLine size={18} />,
-      path: "/analytics/overview",
-      label: t("nav.analyticsOverview", "Overview"),
-    },
-    {
       key: "analytics-users",
       icon: <SparkUserGroupLine size={18} />,
       path: "/analytics/users",
@@ -469,11 +463,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       key: "analytics-group",
       label: collapsed ? null : t("nav.analytics", "Analytics"),
       children: [
-        // {
-        //   key: "analytics-overview",
-        //   label: collapsed ? null : t("nav.analyticsOverview", "Overview"),
-        //   icon: <SparkBarChartLine size={16} />,
-        // },
         {
           key: "analytics-business-overview",
           label: collapsed
