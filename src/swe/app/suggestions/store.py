@@ -146,7 +146,12 @@ def get_stats() -> Dict[str, Any]:
 
 
 def _hash_user_message(user_message: str) -> str:
-    return hashlib.sha256(user_message.encode("utf-8")).hexdigest()
+    """生成稳定的问题匹配键，和前端查询时的原始问题保持可匹配。"""
+    normalized = user_message.strip().lower()[:200]
+    return hashlib.md5(
+        normalized.encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()
 
 
 def _prune_expired_qa_content(
