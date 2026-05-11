@@ -77,6 +77,7 @@ export interface UserStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
 }
 
 export interface UserListItem {
@@ -257,8 +258,6 @@ export interface UserMessageItem {
   session_id: string;
   channel: string;
   user_message: string | null;
-  input_tokens: number;
-  output_tokens: number;
   model_name: string | null;
   start_time: string;
   duration_ms: number | null;
@@ -287,6 +286,8 @@ export const tracingApi = {
       end_date?: string;
       source_id?: string;
       sort_by?: string;
+      filter_user_type?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -299,7 +300,13 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== "all") params.append(key, value);
+        // filter_user_type 需要传递 "all" 或 "filtered"
+        // source_id 使用 "all" 表示查询全部
+        if (key === "filter_user_type") {
+          if (value) params.append(key, value);
+        } else if (value && value !== "all") {
+          params.append(key, value);
+        }
       });
     }
     return request(`/monitor/tracing/users?${params.toString()}`);
@@ -329,6 +336,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -386,6 +394,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -429,7 +438,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -455,7 +465,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {

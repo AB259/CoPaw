@@ -5,11 +5,14 @@
 提供运营看板的数据查询和导出 API 端点。
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from ..models.tracing import (
     OverviewStats,
@@ -17,8 +20,10 @@ from ..models.tracing import (
     TraceDetailWithTimeline,
     SessionStats,
     UserStats,
+    ModelOutputRequest,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
+from ..database import get_es_client
 
 
 def _get_source_id(
@@ -146,6 +151,11 @@ async def get_users(
         None,
         description="排序字段: conversations, last_active",
     ),
+    filter_user_type: Optional[str] = Query(
+        "filtered",
+        description="用户过滤类型: filtered(过滤80/IT开头用户), all(仅过滤default用户)",
+    ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户列表及其统计信息.
 
@@ -157,6 +167,7 @@ async def get_users(
         start_date: 开始日期筛选
         end_date: 结束日期筛选
         sort_by: 排序字段（conversations, last_active）
+        filter_user_type: 用户过滤类型（filtered/all）
 
     Returns:
         分页的用户列表及统计信息
@@ -175,6 +186,8 @@ async def get_users(
         start,
         end,
         sort_by,
+        filter_user_type,
+        bbk_id,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -235,6 +248,7 @@ async def get_traces(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取对话列表.
 
@@ -266,6 +280,7 @@ async def get_traces(
         status=status,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [t.model_dump() for t in traces],
@@ -361,6 +376,7 @@ async def get_sessions(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取会话列表及其统计信息.
 
@@ -390,6 +406,7 @@ async def get_sessions(
         session_id=session_id,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [s.model_dump() for s in sessions],
@@ -458,6 +475,7 @@ async def get_user_messages(
         None,
         description="搜索用户消息内容",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户消息列表（含 Token 信息）.
 
@@ -492,6 +510,7 @@ async def get_user_messages(
         end_date=end,
         query_text=query,
         export=False,
+        bbk_id=bbk_id,
     )
     return {
         "items": [m.model_dump() for m in messages],
@@ -524,6 +543,7 @@ async def export_user_messages(
         description="导出格式: csv, json 或 xlsx",
         alias="format",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> StreamingResponse:
     """导出用户消息.
 
@@ -553,6 +573,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     if export_format == "xlsx":
         return await export_service.export_user_messages_xlsx(
@@ -562,6 +583,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     return await export_service.export_user_messages_csv(
         source_id=actual_source_id,
@@ -570,6 +592,7 @@ async def export_user_messages(
         start_date=start,
         end_date=end,
         query_text=query,
+        bbk_id=bbk_id,
     )
 
 
@@ -849,3 +872,41 @@ async def get_mcp_usage(
         "mcp_tools": [t.model_dump() for t in stats.top_mcp_tools],
         "mcp_servers": [s.model_dump() for s in stats.mcp_servers],
     }
+
+
+# ===== Model Output 写入 =====
+
+
+@router.post("/model-output")
+async def index_model_output(
+    request: Request,
+    body: ModelOutputRequest,
+):
+    """写入 model_output 到 ES.
+
+    由 SWE 服务调用，将 model_output 写入 Elasticsearch。
+
+    Args:
+        body: 包含 trace_id 和 model_output
+
+    Returns:
+        写入结果
+    """
+    es_client = get_es_client()
+    if es_client is None or not es_client.is_connected:
+        # ES 未配置，静默跳过（与原 SWE 行为一致）
+        logger.info("ES not configured, skipping model_output write")
+        return {"status": "skipped", "reason": "ES not configured"}
+
+    try:
+        success = await es_client.index_message(
+            body.trace_id,
+            body.model_output,
+        )
+        if success:
+            return {"status": "success"}
+        else:
+            return {"status": "failed"}
+    except Exception as e:
+        logger.warning("Failed to write model_output: %s", e)
+        return {"status": "failed", "error": str(e)}

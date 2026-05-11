@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Market 服务启动入口.
+"""Monitor 服务启动入口.
 
-使用独立虚拟环境 venv_market 运行，避免与其他服务包冲突。
+使用独立虚拟环境 venv_monitor 运行，避免与其他服务包冲突。
 """
 
 import os
@@ -9,9 +9,9 @@ import subprocess
 import sys
 
 # 服务配置
-SERVICE_NAME = "market"
-VENV_DIR = "venv_market"
-PORT = 8091
+SERVICE_NAME = "monitor"
+VENV_DIR = "venv_monitor"
+PORT = 9090
 
 
 def get_venv_python():
@@ -33,17 +33,17 @@ def ensure_venv():
     # 安装依赖
     print(f"[{SERVICE_NAME}] 安装依赖...")
     subprocess.check_call(
-        [venv_python, "-m", "pip", "install", "-e", "./market", "--quiet"],
+        [venv_python, "-m", "pip", "install", "-e", "./monitor", "--quiet"],
     )
     print(f"[{SERVICE_NAME}] 依赖安装完成")
 
 
 def run_in_venv():
     """在虚拟环境中启动服务."""
-    # 添加 market/src 目录到 PYTHONPATH
+    # 添加 monitor/src 目录到 PYTHONPATH
     src_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "market",
+        "monitor",
         "src",
     )
     env = os.environ.copy()
@@ -57,7 +57,7 @@ def run_in_venv():
             venv_python,
             "-m",
             "uvicorn",
-            "market.app._app:app",
+            "monitor.app._app:app",
             "--host",
             "127.0.0.1",
             "--port",
