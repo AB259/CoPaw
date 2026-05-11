@@ -316,7 +316,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
                 )
                 payload["id"] = int(external_id)
                 payload["jobDesc"] = _truncate(
-                    f"[已删除] {job_name}",
+                    f"[已删除] [SWE] {tenant_id}/{agent_id}/{task_type} - {job_name}",
                     _MAX_JOBDESC_CHARS,
                 )
                 await self._post("/job-admin/v2/update-job", payload)
