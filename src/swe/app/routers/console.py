@@ -735,6 +735,7 @@ async def get_suggestions_qa_content(
 
     entry = await get_qa_content(
         chat_id=body.chat_id,
+        user_message=body.user_message,
         tenant_id=tenant_id,
     )
 
