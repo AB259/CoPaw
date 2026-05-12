@@ -39,6 +39,15 @@ from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
+from ...agents.hook_runtime import HookRuntime
+from ...agents.hook_runtime.models import (
+    HookConfig,
+    HookContext,
+    HookDecision,
+    HookEventName,
+    HookSessionOverlay,
+    MergedHookResult,
+)
 from ...security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ...config.config import (
     MCPClientConfig,
@@ -187,6 +196,178 @@ def _is_denial(text: str) -> bool:
     """Return True only when *text* is an explicit deny command."""
     normalized = " ".join(text.split()).lower()
     return normalized in _DENY_EXACT
+
+
+def _load_tenant_hook_config(tenant_id: str | None) -> HookConfig:
+    try:
+        from ...config.utils import get_tenant_config_path, load_config
+
+        config_path = get_tenant_config_path(tenant_id) if tenant_id else None
+        return load_config(config_path).hooks
+    except Exception:
+        logger.debug("Failed to load tenant hook config", exc_info=True)
+        return HookConfig()
+
+
+def _hook_config_enabled(
+    tenant_hooks: HookConfig | None,
+    agent_config: Any,
+) -> bool:
+    agent_hooks = getattr(agent_config, "hooks", None)
+    return bool(
+        (tenant_hooks is not None and tenant_hooks.enabled)
+        or (agent_hooks is not None and agent_hooks.enabled),
+    )
+
+
+async def _load_session_hook_overlay(
+    session: Any,
+    *,
+    session_id: str,
+    user_id: str,
+) -> HookSessionOverlay:
+    if session is None or not session_id:
+        return HookSessionOverlay()
+    try:
+        state = await session.get_session_state_dict(
+            session_id=session_id,
+            user_id=user_id,
+            allow_not_exist=True,
+        )
+    except Exception:
+        logger.debug("Failed to load hook overlay from session", exc_info=True)
+        return HookSessionOverlay()
+    raw_overlay = (
+        state.get("hook_overlay") if isinstance(state, dict) else None
+    )
+    if not isinstance(raw_overlay, dict):
+        return HookSessionOverlay()
+    try:
+        return HookSessionOverlay.model_validate(raw_overlay)
+    except Exception:
+        logger.warning("Invalid hook_overlay session state", exc_info=True)
+        return HookSessionOverlay()
+
+
+def _build_runner_hook_context(
+    event_name: HookEventName,
+    *,
+    request: Any,
+    runner: "AgentRunner",
+    prompt: str | None = None,
+    source: str | None = None,
+    model: str | None = None,
+) -> HookContext:
+    session_id = str(getattr(request, "session_id", "") or "")
+    user_id = str(getattr(request, "user_id", "") or "")
+    channel = str(
+        getattr(request, "channel", DEFAULT_CHANNEL) or DEFAULT_CHANNEL,
+    )
+    channel_meta = getattr(request, "channel_meta", {}) or {}
+    workspace_dir = Path(runner.workspace_dir or WORKING_DIR)
+    transcript_path = ""
+    session_obj = getattr(runner, "session", None)
+    if session_obj is not None and hasattr(session_obj, "_get_save_path"):
+        try:
+            transcript_path = str(
+                session_obj._get_save_path(session_id, user_id),
+            )
+        except Exception:
+            transcript_path = ""
+
+    effective_tenant_id = runner.tenant_id or "default"
+    try:
+        from ...config.context import get_current_effective_tenant_id
+
+        effective_tenant_id = (
+            get_current_effective_tenant_id() or effective_tenant_id
+        )
+    except Exception:
+        pass
+
+    return HookContext(
+        session_id=session_id,
+        transcript_path=transcript_path,
+        cwd=str(workspace_dir),
+        hook_event_name=event_name,
+        tenant_id=runner.tenant_id or effective_tenant_id,
+        effective_tenant_id=effective_tenant_id,
+        user_id=user_id,
+        agent_id=runner.agent_id,
+        channel=channel,
+        source_id=getattr(request, "source_id", None)
+        or channel_meta.get("source_id"),
+        workspace_dir=str(workspace_dir),
+        chat_id=channel_meta.get("chat_id"),
+        turn_id=channel_meta.get("turn_id"),
+        prompt=prompt,
+        source=source,
+        model=model,
+    )
+
+
+async def _emit_runner_hook(
+    event_name: HookEventName,
+    *,
+    request: Any,
+    runner: "AgentRunner",
+    tenant_hooks: HookConfig,
+    agent_config: Any,
+    overlay: HookSessionOverlay,
+    prompt: str | None = None,
+    source: str | None = None,
+    model: str | None = None,
+) -> MergedHookResult:
+    agent_hooks = getattr(agent_config, "hooks", None)
+    if not isinstance(agent_hooks, HookConfig):
+        agent_hooks = HookConfig()
+    runtime = HookRuntime(
+        tenant_config=tenant_hooks,
+        agent_config=agent_hooks,
+        session_overlay=overlay,
+    )
+    context = _build_runner_hook_context(
+        event_name,
+        request=request,
+        runner=runner,
+        prompt=prompt,
+        source=source,
+        model=model,
+    )
+    return await runtime.emit(
+        context,
+        workspace_dir=Path(runner.workspace_dir or WORKING_DIR),
+    )
+
+
+def _format_hook_additional_context(result: MergedHookResult) -> str:
+    if not result.additional_context:
+        return ""
+    lines = []
+    for item in result.additional_context:
+        lines.append(f"[{item.handler_id}] {item.context}")
+    return "\n".join(lines)
+
+
+def _hook_block_message(result: MergedHookResult) -> Msg:
+    reason = result.reason or "Hook blocked this request."
+    return Msg(name="Friday", role="assistant", content=reason)
+
+
+def _resolve_active_model_label(tenant_id: str | None) -> str | None:
+    try:
+        from ...providers.provider_manager import ProviderManager
+
+        manager = ProviderManager.get_instance(tenant_id)
+        active = manager.get_active_model()
+        if active and active.provider_id and active.model:
+            return f"{active.provider_id}/{active.model}"
+    except Exception:
+        logger.debug(
+            "Failed to resolve active model for hook context",
+            exc_info=True,
+        )
+    return None
 
 
 async def _build_and_connect_mcp_clients(
@@ -449,7 +630,7 @@ def _strip_internal_follow_up_messages_from_state(
             else None
         )
         if isinstance(metadata, dict) and metadata.get(
-            _INTERNAL_FOLLOW_UP_METADATA_KEY
+            _INTERNAL_FOLLOW_UP_METADATA_KEY,
         ):
             removed += 1
             continue
@@ -700,7 +881,7 @@ class AgentRunner(Runner):
             None,
         )
 
-    async def query_handler(
+    async def query_handler(  # noqa: C901
         self,
         msgs,
         request: AgentRequest = None,
@@ -715,6 +896,10 @@ class AgentRunner(Runner):
         )
         query = _get_last_user_text(msgs)
         session_id = getattr(request, "session_id", "") or ""
+        user_id = getattr(request, "user_id", "") or ""
+        agent_config = None
+        hook_additional_context = ""
+        hook_overlay = HookSessionOverlay()
 
         (
             approval_response,
@@ -730,6 +915,42 @@ class AgentRunner(Runner):
                 denial_response=approval_response,
             )
             return
+
+        agent_config = load_agent_config(
+            self.agent_id,
+            tenant_id=self.tenant_id,
+        )
+        tenant_hooks = _load_tenant_hook_config(self.tenant_id)
+        if query and _hook_config_enabled(tenant_hooks, agent_config):
+            hook_overlay = await _load_session_hook_overlay(
+                getattr(self, "session", None),
+                session_id=session_id,
+                user_id=user_id,
+            )
+            prompt_hook_result = await _emit_runner_hook(
+                HookEventName.USER_PROMPT_SUBMIT,
+                request=request,
+                runner=self,
+                tenant_hooks=tenant_hooks,
+                agent_config=agent_config,
+                overlay=hook_overlay,
+                prompt=query,
+            )
+            if prompt_hook_result.decision in {
+                HookDecision.BLOCK,
+                HookDecision.DENY,
+                HookDecision.STOP,
+            }:
+                yield _hook_block_message(prompt_hook_result), True
+                return
+            if prompt_hook_result.session_title:
+                request.channel_meta = {
+                    **(getattr(request, "channel_meta", None) or {}),
+                    "session_title": prompt_hook_result.session_title,
+                }
+            hook_additional_context = _format_hook_additional_context(
+                prompt_hook_result,
+            )
 
         if not approval_consumed and query and _is_command(query):
             logger.info("Command path: %s", query.strip()[:50])
@@ -751,7 +972,6 @@ class AgentRunner(Runner):
         chat = None
         session_state_loaded = False
         trace_id = None
-        agent_config = None
         task_completed = True
 
         # Initialize tracing context
@@ -846,12 +1066,19 @@ class AgentRunner(Runner):
                     else str(WORKING_DIR)
                 ),
             )
+            if hook_additional_context:
+                env_context = (
+                    f"{env_context}\n\n"
+                    "[Hook additional context]\n"
+                    f"{hook_additional_context}"
+                )
 
             # Load agent-specific configuration FIRST (needed for MCP config)
-            agent_config = load_agent_config(
-                self.agent_id,
-                tenant_id=self.tenant_id,
-            )
+            if agent_config is None:
+                agent_config = load_agent_config(
+                    self.agent_id,
+                    tenant_id=self.tenant_id,
+                )
 
             # Create MCP clients directly from agent config for this request
             auth_token = getattr(request, "auth_token", None)
@@ -907,6 +1134,34 @@ class AgentRunner(Runner):
                     f"session_id={session_id}",
                 )
 
+            if _hook_config_enabled(tenant_hooks, agent_config):
+                session_start_result = await _emit_runner_hook(
+                    HookEventName.SESSION_START,
+                    request=request,
+                    runner=self,
+                    tenant_hooks=tenant_hooks,
+                    agent_config=agent_config,
+                    overlay=hook_overlay,
+                    source="resume" if not skip_history else "startup",
+                    model=_resolve_active_model_label(self.tenant_id),
+                )
+                if session_start_result.decision in {
+                    HookDecision.BLOCK,
+                    HookDecision.DENY,
+                    HookDecision.STOP,
+                }:
+                    yield _hook_block_message(session_start_result), True
+                    return
+                session_start_context = _format_hook_additional_context(
+                    session_start_result,
+                )
+                if session_start_context:
+                    env_context = (
+                        f"{env_context}\n\n"
+                        "[Hook additional context]\n"
+                        f"{session_start_context}"
+                    )
+
             agent = SWEAgent(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -919,6 +1174,16 @@ class AgentRunner(Runner):
                     "chat_id": chat.id if chat is not None else "",
                     "turn_id": turn_id,
                     "agent_id": self.agent_id,
+                    "tenant_id": self.tenant_id or "",
+                    "transcript_path": (
+                        self.session._get_save_path(session_id, user_id)
+                        if hasattr(self.session, "_get_save_path")
+                        else ""
+                    ),
+                    "hook_overlay": hook_overlay.model_dump(
+                        mode="json",
+                        by_alias=True,
+                    ),
                     **(
                         {
                             "auth_token": auth_token,
@@ -1078,6 +1343,38 @@ class AgentRunner(Runner):
 
                 break
 
+            if _hook_config_enabled(tenant_hooks, agent_config):
+                stop_hook_result = await _emit_runner_hook(
+                    HookEventName.STOP,
+                    request=request,
+                    runner=self,
+                    tenant_hooks=tenant_hooks,
+                    agent_config=agent_config,
+                    overlay=hook_overlay,
+                    prompt=original_user_message,
+                )
+                stop_context = _format_hook_additional_context(
+                    stop_hook_result,
+                )
+                if stop_context and agent is not None:
+                    await agent.memory.add(
+                        Msg(
+                            name="system",
+                            role="system",
+                            content=(
+                                "[Hook additional context]\n" f"{stop_context}"
+                            ),
+                        ),
+                    )
+                if stop_hook_result.decision in {
+                    HookDecision.BLOCK,
+                    HookDecision.DENY,
+                    HookDecision.STOP,
+                }:
+                    task_completed = False
+                    yield _hook_block_message(stop_hook_result), True
+                    return
+
             if (
                 not task_completed
                 and last_validation_result is not None
@@ -1116,7 +1413,9 @@ class AgentRunner(Runner):
                     )
 
             suggestions_config = getattr(
-                agent_config.running, "suggestions", None
+                agent_config.running,
+                "suggestions",
+                None,
             )
             if (
                 task_completed

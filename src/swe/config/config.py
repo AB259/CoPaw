@@ -40,6 +40,7 @@ from ..constant import (
 )
 from ..providers.models import ModelSlotConfig
 from ..tracing.config import TracingConfig
+from ..agents.hook_runtime.models import HookConfig
 
 LEGACY_DEFAULT_SYSTEM_PROMPT_FILES = (
     "AGENTS.md",
@@ -878,6 +879,10 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Security configuration for this agent",
     )
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Agent-scoped lifecycle hook configuration",
+    )
 
     @model_validator(mode="after")
     def _normalize_system_prompt_files(self):
@@ -1531,6 +1536,10 @@ class Config(BaseModel):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     last_dispatch: Optional[LastDispatchConfig] = None
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Tenant-scoped lifecycle hook configuration",
+    )
     service_heartbeat: ServiceHeartbeatConfig = Field(
         default_factory=ServiceHeartbeatConfig,
         description="服务心跳配置",

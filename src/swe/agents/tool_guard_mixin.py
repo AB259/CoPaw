@@ -16,6 +16,7 @@ from contextlib import nullcontext
 import json as _json
 import logging
 import os
+from pathlib import Path
 import time
 import uuid as _uuid
 from typing import Any, Literal
@@ -23,6 +24,15 @@ from typing import Any, Literal
 from agentscope.message import Msg, ToolResultBlock
 
 from ..constant import AGENT_WATCHDOG_TIMEOUT, QUERY_TIMEOUT_SECONDS
+from .hook_runtime import HookRuntime
+from .hook_runtime.models import (
+    HookConfig,
+    HookContext,
+    HookDecision,
+    HookEventName,
+    HookSessionOverlay,
+    MergedHookResult,
+)
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ..tracing import has_trace_manager, get_trace_manager, get_current_trace
 
@@ -505,6 +515,194 @@ class ToolGuardMixin:
         except Exception as e:
             logger.debug("Failed to emit tool end event: %s", e)
 
+    def _load_tenant_hook_config(self) -> HookConfig:
+        try:
+            from swe.config.utils import get_tenant_config_path, load_config
+
+            tenant_id = self._request_context.get("tenant_id")
+            config_path = (
+                get_tenant_config_path(tenant_id) if tenant_id else None
+            )
+            return load_config(config_path).hooks
+        except Exception:
+            logger.debug(
+                "Tool hook: failed to load tenant config",
+                exc_info=True,
+            )
+            return HookConfig()
+
+    def _tool_hooks_enabled(self, tenant_hooks: HookConfig) -> bool:
+        agent_hooks = getattr(self._agent_config, "hooks", None)
+        return bool(
+            tenant_hooks.enabled
+            or (agent_hooks is not None and agent_hooks.enabled),
+        )
+
+    def _build_tool_hook_context(
+        self,
+        event_name: HookEventName,
+        *,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_use_id: str | None = None,
+        tool_response: Any = None,
+        error: str | None = None,
+    ) -> HookContext:
+        from pathlib import Path
+
+        from swe.config.context import get_current_effective_tenant_id
+        from swe.constant import WORKING_DIR
+
+        request_context = getattr(self, "_request_context", {}) or {}
+        workspace_dir = Path(
+            getattr(self, "_workspace_dir", None) or WORKING_DIR,
+        )
+        effective_tenant_id = (
+            get_current_effective_tenant_id()
+            or request_context.get("tenant_id")
+            or "default"
+        )
+        return HookContext(
+            session_id=str(request_context.get("session_id") or ""),
+            transcript_path=str(request_context.get("transcript_path") or ""),
+            cwd=str(workspace_dir),
+            hook_event_name=event_name,
+            tenant_id=str(
+                request_context.get("tenant_id") or effective_tenant_id,
+            ),
+            effective_tenant_id=str(effective_tenant_id),
+            user_id=str(request_context.get("user_id") or ""),
+            agent_id=str(request_context.get("agent_id") or ""),
+            channel=str(request_context.get("channel") or ""),
+            workspace_dir=str(workspace_dir),
+            chat_id=request_context.get("chat_id"),
+            turn_id=request_context.get("turn_id"),
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_use_id=tool_use_id,
+            tool_response=tool_response,
+            error=error,
+        )
+
+    async def _emit_tool_hook(
+        self,
+        event_name: HookEventName,
+        *,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_use_id: str | None = None,
+        tool_response: Any = None,
+        error: str | None = None,
+    ) -> MergedHookResult:
+        tenant_hooks = self._load_tenant_hook_config()
+        if not self._tool_hooks_enabled(tenant_hooks):
+            return MergedHookResult()
+        try:
+            overlay = HookSessionOverlay.model_validate(
+                self._request_context.get("hook_overlay") or {},
+            )
+        except Exception:
+            overlay = HookSessionOverlay()
+        agent_hooks = getattr(self._agent_config, "hooks", None)
+        if not isinstance(agent_hooks, HookConfig):
+            agent_hooks = HookConfig()
+        runtime = HookRuntime(
+            tenant_config=tenant_hooks,
+            agent_config=agent_hooks,
+            session_overlay=overlay,
+        )
+        context = self._build_tool_hook_context(
+            event_name,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_use_id=tool_use_id,
+            tool_response=tool_response,
+            error=error,
+        )
+        return await runtime.emit(
+            context,
+            workspace_dir=Path(getattr(self, "_workspace_dir", None) or "."),
+        )
+
+    async def _acting_hook_denied(
+        self,
+        tool_call: dict[str, Any],
+        tool_name: str,
+        reason: str,
+    ) -> dict | None:
+        from agentscope.message import ToolResultBlock
+
+        denied_text = (
+            f"Tool `{tool_name}` blocked by hook runtime.\n"
+            f"{reason or 'Hook denied tool execution.'}"
+        )
+        tool_res_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call["id"],
+                    name=tool_name,
+                    output=[{"type": "text", "text": denied_text}],
+                ),
+            ],
+            "system",
+        )
+        await self.print(tool_res_msg, True)
+        await self.memory.add(tool_res_msg, marks=TOOL_GUARD_DENIED_MARK)
+        return None
+
+    async def _record_tool_hook_result(
+        self,
+        result: MergedHookResult,
+        *,
+        event_name: HookEventName,
+    ) -> None:
+        lines = [
+            f"[{item.handler_id}] {item.context}"
+            for item in result.additional_context
+        ]
+        if result.blocked and result.reason:
+            lines.append(f"[{event_name.value}] {result.reason}")
+        if not lines:
+            return
+        msg = Msg(
+            "system",
+            "[Hook additional context]\n" + "\n".join(lines),
+            "system",
+        )
+        await self.memory.add(msg)
+
+    @staticmethod
+    def _hook_guard_result(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        reason: str,
+    ):
+        from swe.security.tool_guard.models import (
+            GuardFinding,
+            GuardSeverity,
+            GuardThreatCategory,
+            ToolGuardResult,
+        )
+
+        finding = GuardFinding(
+            id=f"hook-{_uuid.uuid4().hex[:12]}",
+            rule_id="unified_hook_runtime",
+            category=GuardThreatCategory.CODE_EXECUTION,
+            severity=GuardSeverity.HIGH,
+            title="Hook approval requested",
+            description=reason or "Hook requested approval before tool use.",
+            tool_name=tool_name,
+            guardian="unified_hook_runtime",
+        )
+        return ToolGuardResult(
+            tool_name=tool_name,
+            params=tool_input,
+            findings=[finding],
+            guardians_used=["unified_hook_runtime"],
+        )
+
     async def _acting(self, tool_call) -> dict | None:  # noqa: C901
         """Intercept sensitive tool calls before execution.
 
@@ -530,6 +728,37 @@ class ToolGuardMixin:
         # Resolve mcp_server from toolkit registration since tool_call dict
         # (agentscope ToolUseBlock) does not carry mcp_server.
         mcp_server = self._resolve_mcp_server(tool_name)
+
+        pre_hook_result = await self._emit_tool_hook(
+            HookEventName.PRE_TOOL_USE,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_use_id=str(tool_call.get("id") or ""),
+        )
+        if pre_hook_result.updated_input is not None:
+            tool_call = dict(tool_call)
+            tool_call["input"] = pre_hook_result.updated_input
+            tool_input = pre_hook_result.updated_input
+        if pre_hook_result.decision in {
+            HookDecision.BLOCK,
+            HookDecision.DENY,
+            HookDecision.STOP,
+        }:
+            return await self._acting_hook_denied(
+                tool_call,
+                tool_name,
+                pre_hook_result.reason,
+            )
+        if pre_hook_result.decision == HookDecision.ASK:
+            return await self._acting_with_approval(
+                tool_call,
+                tool_name,
+                self._hook_guard_result(
+                    tool_name,
+                    tool_input,
+                    pre_hook_result.reason,
+                ),
+            )
 
         span_id = await self._emit_tool_trace_start(
             tool_name,
@@ -565,6 +794,17 @@ class ToolGuardMixin:
                 tool_name,
                 tool_input,
             )
+            post_hook_result = await self._emit_tool_hook(
+                HookEventName.POST_TOOL_USE,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_use_id=str(tool_call.get("id") or ""),
+                tool_response=result,
+            )
+            await self._record_tool_hook_result(
+                post_hook_result,
+                event_name=HookEventName.POST_TOOL_USE,
+            )
             await self._emit_tool_trace_end(span_id, result)
 
             if getattr(self, "_tool_guard_forced_replay_active", False):
@@ -581,6 +821,17 @@ class ToolGuardMixin:
             return result
 
         except Exception as e:
+            failure_hook_result = await self._emit_tool_hook(
+                HookEventName.POST_TOOL_USE_FAILURE,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_use_id=str(tool_call.get("id") or ""),
+                error=str(e),
+            )
+            await self._record_tool_hook_result(
+                failure_hook_result,
+                event_name=HookEventName.POST_TOOL_USE_FAILURE,
+            )
             await self._emit_tool_trace_end(span_id, None, error=str(e))
             raise
 

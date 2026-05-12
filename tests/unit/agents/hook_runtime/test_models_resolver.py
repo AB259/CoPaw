@@ -1,0 +1,204 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from swe.agents.hook_runtime.models import (
+    CommandHookHandlerConfig,
+    EffectiveHookPlan,
+    HookConfig,
+    HookContext,
+    HookEventName,
+    HookMatcherConfig,
+    HookMatcherGroupConfig,
+    HookOverlayEntry,
+    HookSessionOverlay,
+)
+from swe.agents.hook_runtime.resolver import HookResolver
+
+
+def _handler(handler_id: str, **kwargs) -> CommandHookHandlerConfig:
+    return CommandHookHandlerConfig(
+        id=handler_id,
+        command="python -c 'print({})'",
+        **kwargs,
+    )
+
+
+def _context(event: HookEventName, **kwargs) -> HookContext:
+    return HookContext(
+        session_id="session-1",
+        transcript_path="/tmp/transcript.json",
+        cwd="/tmp/tenant/workspace",
+        hook_event_name=event,
+        tenant_id="tenant-a",
+        effective_tenant_id="tenant-a",
+        user_id="user-1",
+        agent_id="agent-1",
+        channel="console",
+        **kwargs,
+    )
+
+
+def test_hook_context_rejects_unbounded_permission_and_effort() -> None:
+    with pytest.raises(ValidationError):
+        HookContext(
+            session_id="session-1",
+            transcript_path="/tmp/transcript.json",
+            cwd="/tmp/tenant/workspace",
+            hook_event_name=HookEventName.USER_PROMPT_SUBMIT,
+            tenant_id="tenant-a",
+            effective_tenant_id="tenant-a",
+            user_id="user-1",
+            agent_id="agent-1",
+            channel="console",
+            permission_mode="root",
+        )
+
+    with pytest.raises(ValidationError):
+        HookContext(
+            session_id="session-1",
+            transcript_path="/tmp/transcript.json",
+            cwd="/tmp/tenant/workspace",
+            hook_event_name=HookEventName.USER_PROMPT_SUBMIT,
+            tenant_id="tenant-a",
+            effective_tenant_id="tenant-a",
+            user_id="user-1",
+            agent_id="agent-1",
+            channel="console",
+            effort={"level": "extreme"},
+        )
+
+
+def test_unsupported_handler_type_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        HookConfig.model_validate(
+            {
+                "enabled": True,
+                "events": {
+                    "UserPromptSubmit": [
+                        {
+                            "matcher": {},
+                            "hooks": [
+                                {
+                                    "id": "bad",
+                                    "type": "mcp_tool",
+                                    "command": "echo nope",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        )
+
+
+def test_resolver_returns_empty_plan_when_hooks_disabled() -> None:
+    plan = HookResolver(
+        tenant_config=HookConfig(enabled=False),
+    ).resolve_event_plan(
+        _context(HookEventName.USER_PROMPT_SUBMIT, prompt="hello"),
+    )
+
+    assert isinstance(plan, EffectiveHookPlan)
+    assert plan.event_name == HookEventName.USER_PROMPT_SUBMIT
+    assert plan.handlers == ()
+
+
+def test_resolver_filters_by_tool_matcher_if_condition_and_deduplicates() -> (
+    None
+):
+    duplicate = _handler("audit")
+    config = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.PRE_TOOL_USE: [
+                HookMatcherGroupConfig(
+                    id="shells",
+                    matcher=HookMatcherConfig(tools=["execute_shell_command"]),
+                    hooks=[
+                        duplicate,
+                        duplicate,
+                        _handler("skipped-tool"),
+                    ],
+                ),
+                HookMatcherGroupConfig(
+                    id="prompt-only",
+                    matcher=HookMatcherConfig(),
+                    hooks=[
+                        _handler(
+                            "conditional",
+                            if_condition="tool_name == 'execute_shell_command'",
+                        ),
+                        _handler(
+                            "falsey",
+                            if_condition="tool_name == 'read_file'",
+                        ),
+                    ],
+                ),
+            ],
+        },
+    )
+
+    plan = HookResolver(tenant_config=config).resolve_event_plan(
+        _context(
+            HookEventName.PRE_TOOL_USE,
+            tool_name="execute_shell_command",
+            tool_input={"cmd": "pwd"},
+        ),
+    )
+
+    assert [item.handler.id for item in plan.handlers] == [
+        "audit",
+        "skipped-tool",
+        "conditional",
+    ]
+
+
+def test_resolver_applies_overlay_disable_expiration_and_once_scope() -> None:
+    config = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.USER_PROMPT_SUBMIT: [
+                HookMatcherGroupConfig(
+                    id="prompts",
+                    hooks=[
+                        _handler("enabled"),
+                        _handler("disabled"),
+                        _handler("expired"),
+                        _handler("once", once=True),
+                    ],
+                ),
+            ],
+        },
+    )
+    now = datetime.now(timezone.utc)
+    overlay = HookSessionOverlay(
+        entries=[
+            HookOverlayEntry(hook_id="disabled", enabled=False),
+            HookOverlayEntry(
+                hook_id="expired",
+                enabled=False,
+                expires_at=now - timedelta(seconds=1),
+            ),
+        ],
+        once_executed={
+            "tenant-a:user-1:session-1:UserPromptSubmit:once": True,
+        },
+    )
+
+    plan = HookResolver(
+        tenant_config=config,
+        session_overlay=overlay,
+        now=now,
+    ).resolve_event_plan(
+        _context(HookEventName.USER_PROMPT_SUBMIT, prompt="hello"),
+    )
+
+    assert [item.handler.id for item in plan.handlers] == [
+        "enabled",
+        "expired",
+    ]
