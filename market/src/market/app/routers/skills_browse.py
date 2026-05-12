@@ -130,13 +130,35 @@ def _check_zip_size(zf: zipfile.ZipFile) -> None:
 
 
 def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
-    """Security check for path traversal in zip entries."""
+    """Security check for path traversal and invalid characters in zip entries.
+
+    Windows 文件系统不允许路径段包含空格、斜杠等特殊字符，
+    需要在解压前检测并拒绝此类 zip 文件。
+    """
+    import re
+
     root_path = tmp_dir.resolve()
+    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
     for info in zf.infolist():
         decoded_name = _decode_zip_filename(info.filename, info)
         target = (tmp_dir / decoded_name).resolve()
+
+        # 检查路径遍历
         if not target.is_relative_to(root_path):
             raise ValueError(f"Unsafe path in zip: {info.filename}")
+
+        # 检查路径段是否只包含安全字符（Windows 文件系统兼容）
+        # 仅检查目录部分，不检查文件名（文件名可以有扩展名中的特殊字符）
+        path_parts = decoded_name.split("/")
+        for i, part in enumerate(
+            path_parts[:-1],
+        ):  # 检查所有目录段，不检查最后一段（可能是文件名）
+            if part and not _SAFE_SEGMENT_RE.match(part):
+                raise ValueError(
+                    f"Zip 文件中的目录名 '{part}' 包含非法字符（空格、斜杠等）。"
+                    "Windows 文件系统不支持此类路径。请修改 zip 文件中的目录名。",
+                )
 
 
 def _extract_zip_entries(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
@@ -271,6 +293,15 @@ def _import_skill_dir(
     overwrite: bool,
 ) -> bool:
     """Import a skill directory to the user skills folder."""
+    # 验证技能名是否合法（Windows 文件系统兼容）
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", skill_name):
+        raise ValueError(
+            f"技能名 '{skill_name}' 包含非法字符，"
+            "仅允许字母、数字、下划线、连字符和点号。请修改 SKILL.md 中的 name 字段或 zip 文件名。",
+        )
+
     target_dir = skills_root / skill_name
     if target_dir.exists() and not overwrite:
         return False
