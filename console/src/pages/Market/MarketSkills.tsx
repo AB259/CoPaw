@@ -269,7 +269,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             {activeResourceType === "mcp" && (
-              <Button icon={<UploadOutlined />} onClick={() => setMcpUploadModalOpen(true)}>
+              <Button type="primary" icon={<UploadOutlined />} onClick={() => setMcpUploadModalOpen(true)}>
                 上传连接器
               </Button>
             )}

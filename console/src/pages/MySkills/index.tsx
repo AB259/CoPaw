@@ -490,9 +490,6 @@ export default function MySkillsPage() {
           >
             {skill.skill_name}
           </Text>
-          {skill.version && (
-            <Tag style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>v{skill.version}</Tag>
-          )}
           {skill.is_received && (
             <Tag color="orange" style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>接收的</Tag>
           )}
@@ -672,9 +669,6 @@ export default function MySkillsPage() {
               <Text strong style={{ fontSize: 16, color: "#262626" }}>
                 {skill.skill_name}
               </Text>
-              {skill.version && (
-                <Tag style={{ fontSize: 11, borderRadius: 4 }}>v{skill.version}</Tag>
-              )}
               {skill.source === "customized" && (
                 <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
               )}
