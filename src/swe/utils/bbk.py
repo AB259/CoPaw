@@ -25,6 +25,9 @@ _BBK_ID_TO_NAME: dict[str, str] = {
     item["value"]: item["label"] for item in BBK_MAP
 }
 
+# 导出供外部使用
+BBK_ID_TO_NAME_MAP = _BBK_ID_TO_NAME
+
 
 def get_bbk_id_by_name(name: str) -> Optional[str]:
     """通过机构名称获取机构 ID。

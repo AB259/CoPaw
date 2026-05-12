@@ -1614,8 +1614,13 @@ class TracingQueryService:
     ) -> tuple[list[SessionListItem], int]:
         """获取会话列表."""
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
@@ -1638,11 +1643,22 @@ class TracingQueryService:
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
+        # 构建技能统计子查询的日期筛选条件
+        skill_date_conditions = "s.event_type = 'skill_invocation'"
+        skill_params: list[Any] = []
+        if start_date:
+            skill_date_conditions += " AND s.start_time >= %s"
+            skill_params.append(start_date)
+        if end_date:
+            skill_date_conditions += " AND s.start_time <= %s"
+            skill_params.append(end_date)
+
         count_query = f"SELECT COUNT(DISTINCT session_id) as total FROM swe_tracing_traces WHERE {where_sql}"
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
         offset = (page - 1) * page_size
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
         if source_id == "all":
             query = f"""
                 SELECT t.session_id,
@@ -1654,12 +1670,15 @@ class TracingQueryService:
                        MAX(t.start_time) as last_active,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND s.source_id NOT IN ({exclude_placeholders})
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        AND t2.source_id NOT IN ({exclude_placeholders})
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        AND t3.source_id NOT IN ({exclude_placeholders})
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
@@ -1667,7 +1686,13 @@ class TracingQueryService:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend([page_size, offset])
+            params.extend(
+                list(EXCLUDED_SOURCE_IDS)
+                + skill_params
+                + list(EXCLUDED_SOURCE_IDS)
+                + list(EXCLUDED_SOURCE_IDS)
+                + [page_size, offset],
+            )
         else:
             query = f"""
                 SELECT t.session_id,
@@ -1680,7 +1705,7 @@ class TracingQueryService:
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.source_id = %s
                         AND s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
@@ -1694,7 +1719,9 @@ class TracingQueryService:
                 LIMIT %s OFFSET %s
             """
             params = (
-                [source_id, source_id, source_id]
+                [source_id]
+                + skill_params
+                + [source_id, source_id]
                 + params
                 + [page_size, offset]
             )
@@ -1996,8 +2023,13 @@ class TracingQueryService:
     ) -> tuple[list[TraceListItem], int]:
         """获取对话列表."""
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
@@ -2028,27 +2060,57 @@ class TracingQueryService:
         total = count_row["total"] if count_row else 0
 
         offset = (page - 1) * page_size
-        query = f"""
-            SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
-                   t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
-                   t.model_name, t.status,
-                   JSON_LENGTH(t.skills_used) as skills_count,
-                   COALESCE(t.user_name, (
-                       SELECT t2.user_name FROM swe_tracing_traces t2
-                       WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
-                       ORDER BY t2.start_time DESC LIMIT 1
-                   )) as user_name,
-                   COALESCE(t.bbk_id, (
-                       SELECT t3.bbk_id FROM swe_tracing_traces t3
-                       WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                       ORDER BY t3.start_time DESC LIMIT 1
-                   )) as bbk_id
-            FROM swe_tracing_traces t
-            WHERE {where_sql}
-            ORDER BY t.start_time DESC
-            LIMIT %s OFFSET %s
-        """
-        params.extend([page_size, offset])
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+        if source_id == "all":
+            query = f"""
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
+                       t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
+                       t.model_name, t.status,
+                       JSON_LENGTH(t.skills_used) as skills_count,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           AND t2.source_id NOT IN ({exclude_placeholders})
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           AND t3.source_id NOT IN ({exclude_placeholders})
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                ORDER BY t.start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend(
+                list(EXCLUDED_SOURCE_IDS)
+                + list(EXCLUDED_SOURCE_IDS)
+                + [page_size, offset],
+            )
+        else:
+            query = f"""
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
+                       t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
+                       t.model_name, t.status,
+                       JSON_LENGTH(t.skills_used) as skills_count,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.source_id = %s AND t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.source_id = %s AND t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                ORDER BY t.start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params = [source_id, source_id] + params + [page_size, offset]
         rows = await self._db.fetch_all(query, tuple(params))
         traces = [
             TraceListItem(
