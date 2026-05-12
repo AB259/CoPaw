@@ -32,10 +32,11 @@ const { Title, Paragraph, Text } = Typography;
 
 interface MCPDetailDrawerProps {
   mcp: MarketMCPDetail | null;
-  onDistribute: () => void;
+  onDistribute?: () => void;
   onEdit?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   canEdit?: boolean;
+  isManager?: boolean;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -65,6 +66,7 @@ export function MCPDetailDrawer({
   onEdit,
   onDelete,
   canEdit = false,
+  isManager = false,
 }: MCPDetailDrawerProps) {
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<MCPTestResult | null>(null);
@@ -287,16 +289,18 @@ export function MCPDetailDrawer({
               </div>
 
               <Space wrap size={8}>
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={onDistribute}
-                  style={{ ...footerButtonStyle }}
-                >
-                  <Send size={12} />
-                  分发
-                </Button>
-                {canEdit ? (
+                {isManager && onDistribute && (
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={onDistribute}
+                    style={{ ...footerButtonStyle }}
+                  >
+                    <Send size={12} />
+                    分发
+                  </Button>
+                )}
+                {canEdit && onEdit && (
                   <Button
                     size="small"
                     onClick={onEdit}
@@ -310,20 +314,22 @@ export function MCPDetailDrawer({
                     <Pencil size={12} />
                     编辑
                   </Button>
-                ) : null}
-                <Popconfirm
-                  title="确认删除此 MCP？删除后不影响已分发用户"
-                  onConfirm={onDelete}
-                >
-                  <Button
-                    size="small"
-                    danger
-                    style={{ ...footerButtonStyle }}
+                )}
+                {isManager && onDelete && (
+                  <Popconfirm
+                    title="确认删除此 MCP？删除后不影响已分发用户"
+                    onConfirm={onDelete}
                   >
-                    <Trash2 size={12} />
-                    删除
-                  </Button>
-                </Popconfirm>
+                    <Button
+                      size="small"
+                      danger
+                      style={{ ...footerButtonStyle }}
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </Button>
+                  </Popconfirm>
+                )}
               </Space>
             </div>
           </div>

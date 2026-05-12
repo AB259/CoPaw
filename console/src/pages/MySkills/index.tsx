@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined } from "@ant-design/icons";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, RocketOutlined } from "@ant-design/icons";
 import { Power, Trash2, Pencil } from "lucide-react";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
@@ -694,6 +694,22 @@ export default function MySkillsPage() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <Popconfirm
+              title="删除技能"
+              description={`确定删除技能「${skill.display_name || skill.skill_name}」？删除后不可恢复。`}
+              onConfirm={() => handleDelete(skill)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                icon={<Trash2 style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              >
+                删除
+              </Button>
+            </Popconfirm>
             {canEdit && fileContent !== null && !isEditing && (
               <Button
                 size="small"
@@ -704,10 +720,27 @@ export default function MySkillsPage() {
                 编辑
               </Button>
             )}
+            <Button
+              size="small"
+              type={skill.enabled ? "primary" : "default"}
+              icon={<Power style={{ width: 12, height: 12 }} />}
+              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              onClick={() => handleToggleEnabled(skill)}
+            >
+              {skill.enabled ? "已启用" : "已禁用"}
+            </Button>
             {isManager && canEdit && (
               <Button
                 size="small"
-                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                icon={<RocketOutlined style={{ fontSize: 12 }} />}
+                style={{
+                  height: 28,
+                  fontSize: 12,
+                  borderRadius: 8,
+                  background: "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
+                  border: "none",
+                  color: "#fff",
+                }}
                 onClick={() => handleSyncToMarket(skill)}
               >
                 同步到市场
@@ -734,31 +767,6 @@ export default function MySkillsPage() {
                 </Button>
               </>
             )}
-            <Button
-              size="small"
-              type={skill.enabled ? "primary" : "default"}
-              icon={<Power style={{ width: 12, height: 12 }} />}
-              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-              onClick={() => handleToggleEnabled(skill)}
-            >
-              {skill.enabled ? "已启用" : "已禁用"}
-            </Button>
-            <Popconfirm
-              title="删除技能"
-              description={`确定删除技能「${skill.display_name || skill.skill_name}」？删除后不可恢复。`}
-              onConfirm={() => handleDelete(skill)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button
-                size="small"
-                danger
-                icon={<Trash2 style={{ width: 12, height: 12 }} />}
-                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-              >
-                删除
-              </Button>
-            </Popconfirm>
           </div>
         </div>
 

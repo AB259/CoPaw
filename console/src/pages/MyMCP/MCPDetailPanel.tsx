@@ -320,12 +320,18 @@ export function MCPDetailPanel({
           {isManager && !isDistributed && (
             <Button
               size="small"
-              type="primary"
               icon={<RocketOutlined style={{ fontSize: 12 }} />}
-              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              style={{
+                height: 28,
+                fontSize: 12,
+                borderRadius: 8,
+                background: "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
+                border: "none",
+                color: "#fff",
+              }}
               onClick={() => onPublish(mcp.client_key)}
             >
-              上架
+              同步到市场
             </Button>
           )}
         </div>

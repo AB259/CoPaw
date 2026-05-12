@@ -454,7 +454,7 @@ export function SkillDetailDrawer({
                   paddingInline: 12,
                 }}
               >
-                {skill.status === "active" ? "上架中" : "已下架"}
+                {skill.status === "active" ? "已发布" : "已删除"}
               </Tag>
               <Tag
                 bordered={false}

@@ -321,7 +321,11 @@ async def publish_skill_upload(
     data = await _read_validated_zip_upload(file)
 
     # 解压 zip 文件
-    tmp_dir, found_skills = await asyncio.to_thread(_extract_zip_skills, data)
+    tmp_dir, found_skills = await asyncio.to_thread(
+        _extract_zip_skills,
+        data,
+        file.filename,
+    )
     if not found_skills:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)

@@ -197,7 +197,7 @@ def _find_skill_directories(
         return [(extract_root, skill_name)]
 
     return [
-        (path, _resolve_skill_name(path))
+        (path, _resolve_skill_name(path, zip_filename))
         for path in sorted(extract_root.iterdir())
         if not path.name.startswith(".")
         and not path.name.startswith("_")

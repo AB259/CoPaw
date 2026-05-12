@@ -12,10 +12,11 @@ import type { MarketMCPItem } from "../../api/types";
 interface MCPCardProps {
   mcp: MarketMCPItem;
   onOpenDetail: () => void;
-  onDistribute: () => void;
+  onDistribute?: () => void;
   onEdit?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   canEdit?: boolean;
+  isManager?: boolean;
 }
 
 const footerButtonStyle = {
@@ -43,6 +44,7 @@ export function MCPCard({
   onEdit,
   onDelete,
   canEdit = false,
+  isManager = false,
 }: MCPCardProps) {
   return (
     <div
@@ -192,18 +194,20 @@ export function MCPCard({
             <Eye size={12} />
             详情
           </Button>
-          <Button
-            size="small"
-            type="primary"
-            onClick={onDistribute}
-            style={{
-              ...footerButtonStyle,
-            }}
-          >
-            <Send size={12} />
-            分发
-          </Button>
-          {canEdit ? (
+          {isManager && onDistribute && (
+            <Button
+              size="small"
+              type="primary"
+              onClick={onDistribute}
+              style={{
+                ...footerButtonStyle,
+              }}
+            >
+              <Send size={12} />
+              分发
+            </Button>
+          )}
+          {canEdit && onEdit && (
             <Button
               size="small"
               onClick={onEdit}
@@ -217,18 +221,20 @@ export function MCPCard({
               <Pencil size={12} />
               编辑
             </Button>
-          ) : null}
-          <Button
-            size="small"
-            danger
-            onClick={onDelete}
-            style={{
-              ...footerButtonStyle,
-            }}
-          >
-            <Trash2 size={12} />
-            删除
-          </Button>
+          )}
+          {isManager && onDelete && (
+            <Button
+              size="small"
+              danger
+              onClick={onDelete}
+              style={{
+                ...footerButtonStyle,
+              }}
+            >
+              <Trash2 size={12} />
+              删除
+            </Button>
+          )}
         </div>
       </div>
     </div>
