@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined } from "@ant-design/icons";
+import { Power, Trash2, Pencil } from "lucide-react";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
@@ -488,7 +489,7 @@ export default function MySkillsPage() {
               textDecoration: isDisabled ? "line-through" : "none",
             }}
           >
-            {skill.skill_name}
+            {skill.display_name || skill.skill_name}
           </Text>
           {skill.is_received && (
             <Tag color="orange" style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>接收的</Tag>
@@ -667,7 +668,7 @@ export default function MySkillsPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
               <Text strong style={{ fontSize: 16, color: "#262626" }}>
-                {skill.skill_name}
+                {skill.display_name || skill.skill_name}
               </Text>
               {skill.source === "customized" && (
                 <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
@@ -694,14 +695,19 @@ export default function MySkillsPage() {
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             {canEdit && fileContent !== null && !isEditing && (
-              <Button size="small" icon={<EditOutlined />} onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}>
+              <Button
+                size="small"
+                icon={<Pencil style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}
+              >
                 编辑
               </Button>
             )}
             {isManager && canEdit && (
               <Button
                 size="small"
-                icon={<CloudUploadOutlined />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
                 onClick={() => handleSyncToMarket(skill)}
               >
                 同步到市场
@@ -709,24 +715,37 @@ export default function MySkillsPage() {
             )}
             {isEditing && (
               <>
-                <Button size="small" onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }} disabled={isSaving}>
+                <Button
+                  size="small"
+                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                  onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }}
+                  disabled={isSaving}
+                >
                   取消
                 </Button>
-                <Button size="small" type="primary" onClick={handleSaveContent} loading={isSaving}>
+                <Button
+                  size="small"
+                  type="primary"
+                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                  onClick={handleSaveContent}
+                  loading={isSaving}
+                >
                   保存
                 </Button>
               </>
             )}
             <Button
               size="small"
-              icon={isDisabled ? <CheckCircleOutlined /> : <StopOutlined />}
+              type={skill.enabled ? "primary" : "default"}
+              icon={<Power style={{ width: 12, height: 12 }} />}
+              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={() => handleToggleEnabled(skill)}
             >
-              {isDisabled ? "已禁用" : "已启用"}
+              {skill.enabled ? "已启用" : "已禁用"}
             </Button>
             <Popconfirm
               title="删除技能"
-              description={`确定删除技能「${skill.skill_name}」？删除后不可恢复。`}
+              description={`确定删除技能「${skill.display_name || skill.skill_name}」？删除后不可恢复。`}
               onConfirm={() => handleDelete(skill)}
               okText="确定"
               cancelText="取消"
@@ -734,7 +753,8 @@ export default function MySkillsPage() {
               <Button
                 size="small"
                 danger
-                icon={<DeleteOutlined />}
+                icon={<Trash2 style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               >
                 删除
               </Button>
@@ -750,7 +770,7 @@ export default function MySkillsPage() {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
+        <div style={{ flex: "1 1 0", padding: 16, overflow: "auto", minHeight: 0 }}>
           {isLoading ? (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 100 }}>
               <Spin />
@@ -762,13 +782,13 @@ export default function MySkillsPage() {
               style={{
                 width: "100%",
                 height: "100%",
-                minHeight: 300,
                 fontFamily: "monospace",
                 fontSize: 13,
                 padding: 12,
                 borderRadius: 8,
                 border: "1px solid #d9d9d9",
                 resize: "none",
+                boxSizing: "border-box",
               }}
             />
           ) : fileContent === null ? (
@@ -778,10 +798,11 @@ export default function MySkillsPage() {
                 border: "1px solid #f0f0f0",
                 backgroundColor: "#f5f5f5",
                 padding: 16,
-                minHeight: 200,
+                height: "100%",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                boxSizing: "border-box",
               }}
             >
               <Text type="secondary">选择文件查看内容</Text>
@@ -797,7 +818,8 @@ export default function MySkillsPage() {
                 overflow: "auto",
                 fontSize: 12,
                 fontFamily: "monospace",
-                maxHeight: "calc(100vh - 300px)",
+                height: "100%",
+                boxSizing: "border-box",
               }}
             >
               {fileContent}

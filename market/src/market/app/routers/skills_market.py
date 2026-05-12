@@ -150,11 +150,14 @@ def _copy_skill_to_market(
     if skill_md:
         (market_skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
-    # 复制其他文件
+    # 复制其他文件（处理已存在的目录）
     for f in skill_dir.iterdir():
         if f.name not in ("skill.json", "SKILL.md"):
             target = market_skill_dir / f.name
             if f.is_dir():
+                # 目标目录已存在时先删除，再复制
+                if target.exists():
+                    shutil.rmtree(target)
                 shutil.copytree(f, target)
             else:
                 shutil.copy2(f, target)

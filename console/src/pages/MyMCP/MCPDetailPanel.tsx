@@ -4,7 +4,7 @@
 import { useMemo } from "react";
 import { Button, Popconfirm, Tag } from "antd";
 import { RocketOutlined } from "@ant-design/icons";
-import { Database, Plug, Power, Trash2 } from "lucide-react";
+import { Database, Plug, Power, Trash2, Pencil } from "lucide-react";
 import type { MyMCPDetail, MCPTestResult } from "../../api/types";
 
 function getConnectorSummary(mcp: MyMCPDetail): string {
@@ -301,6 +301,7 @@ export function MCPDetailPanel({
           {!isDistributed && (
             <Button
               size="small"
+              icon={<Pencil style={{ width: 12, height: 12 }} />}
               style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={() => onEdit(mcp.client_key)}
             >

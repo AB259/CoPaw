@@ -21,7 +21,7 @@ from fastapi import (
     UploadFile,
 )
 
-from ...marketplace.fs import get_user_skills_dir
+from ...marketplace.fs import get_user_skills_dir, sanitize_skill_name
 from ...marketplace.schemas import (
     BatchOperationRequest,
     BatchOperationResponse,
@@ -290,16 +290,22 @@ def _import_skill_dir(
     skill_dir: Path,
     skills_root: Path,
     skill_name: str,
+    original_name: str,
     overwrite: bool,
 ) -> bool:
-    """Import a skill directory to the user skills folder."""
-    # 验证技能名是否合法（Windows 文件系统兼容）
+    """Import a skill directory to the user skills folder.
+
+    Args:
+        skill_name: 安全的目录名（sanitize 后）
+        original_name: 原始技能名称（用于 skill.json 的 name 字段）
+    """
+    # 验证目录名是否合法（Windows 文件系统兼容）
     import re
 
     if not re.match(r"^[a-zA-Z0-9_\-\.]+$", skill_name):
         raise ValueError(
-            f"技能名 '{skill_name}' 包含非法字符，"
-            "仅允许字母、数字、下划线、连字符和点号。请修改 SKILL.md 中的 name 字段或 zip 文件名。",
+            f"技能目录名 '{skill_name}' 包含非法字符，"
+            "仅允许字母、数字、下划线、连字符和点号。",
         )
 
     target_dir = skills_root / skill_name
@@ -345,12 +351,18 @@ def _parse_frontmatter_description(skill_md_path: Path) -> str:
 def _update_skill_json(
     skill_json_path: Path,
     skill_name: str,
+    original_name: str,
     user_id: str,
     user_name: str,
     bbk_id: str,
     category_id: int | None,
 ) -> dict[str, Any]:
-    """Update skill.json with metadata, return parsed data."""
+    """Update skill.json with metadata, return parsed data.
+
+    Args:
+        skill_name: 安全的目录名
+        original_name: 原始技能名称（用于前端展示）
+    """
     skill_data: dict[str, Any] = {}
     if skill_json_path.exists():
         try:
@@ -360,7 +372,8 @@ def _update_skill_json(
         except (json.JSONDecodeError, OSError):
             pass
 
-    skill_data["name"] = skill_data.get("name") or skill_name
+    # name 字段优先使用原始名称（用于前端展示）
+    skill_data["name"] = skill_data.get("name") or original_name or skill_name
 
     # 优先从 skill.json 获取 description，其次从 SKILL.md frontmatter
     if not skill_data.get("description"):
@@ -389,6 +402,7 @@ def _process_single_skill(
     skill_dir: Path,
     skills_dir: Path,
     skill_name: str,
+    original_name: str,
     existing_names: set[str],
     user_id: str,
     user_name: str,
@@ -396,7 +410,12 @@ def _process_single_skill(
     overwrite: bool,
     category_id: int | None,
 ) -> tuple[bool, dict[str, str] | None]:
-    """Process single skill import. Returns (imported, conflict_or_none)."""
+    """Process single skill import. Returns (imported, conflict_or_none).
+
+    Args:
+        skill_name: 安全的目录名
+        original_name: 原始技能名称
+    """
     if skill_name in existing_names and not overwrite:
         return False, {
             "reason": "already_exists",
@@ -404,13 +423,20 @@ def _process_single_skill(
             "suggested_name": f"{skill_name}_1",
         }
 
-    if not _import_skill_dir(skill_dir, skills_dir, skill_name, overwrite):
+    if not _import_skill_dir(
+        skill_dir,
+        skills_dir,
+        skill_name,
+        original_name,
+        overwrite,
+    ):
         return False, None
 
     skill_json_path = skills_dir / skill_name / "skill.json"
     _update_skill_json(
         skill_json_path,
         skill_name,
+        original_name,
         user_id,
         user_name,
         bbk_id,
@@ -442,17 +468,24 @@ def _import_skill_from_zip(
         tmp_dir, found_skills = _extract_zip_skills(data, zip_filename)
         existing_names = _get_existing_skill_names(skills_dir)
 
-        for skill_dir, skill_name in found_skills:
-            # 应用 rename_map 映射
-            if rename_map and skill_name in rename_map:
-                skill_name = rename_map[skill_name]
+        for skill_dir, original_name in found_skills:
+            # original_name 来自 SKILL.md frontmatter 或 zip 文件名
+            # 将原始名称转换为安全的目录名（处理中文、空格、斜杠等）
+            safe_skill_name = sanitize_skill_name(original_name)
+
+            # 应用 rename_map 映射（用户手动指定的重命名）
+            if rename_map and original_name in rename_map:
+                safe_skill_name = sanitize_skill_name(
+                    rename_map[original_name],
+                )
             elif target_name and len(found_skills) == 1:
-                skill_name = target_name.strip()
+                safe_skill_name = sanitize_skill_name(target_name.strip())
 
             success, conflict = _process_single_skill(
                 skill_dir,
                 skills_dir,
-                skill_name,
+                safe_skill_name,
+                original_name,
                 existing_names,
                 user_id,
                 user_name,
@@ -466,9 +499,11 @@ def _import_skill_from_zip(
                 continue
 
             if success:
-                imported.append(skill_name)
+                imported.append(safe_skill_name)
                 if parsed_name is None:
-                    skill_json_path = skills_dir / skill_name / "skill.json"
+                    skill_json_path = (
+                        skills_dir / safe_skill_name / "skill.json"
+                    )
                     skill_data = json.loads(
                         skill_json_path.read_text(encoding="utf-8"),
                     )

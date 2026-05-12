@@ -120,8 +120,16 @@ export function DistributeTargetModal({
           target_type: "user_id",
           target_values: finalTenantIds,
         };
-        await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
-        message.success(`分发成功，共 ${finalTenantIds.length} 个用户`);
+        const result = await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
+        const distributedCount = result.distributed_count ?? 0;
+
+        if (distributedCount === 0) {
+          message.warning("分发未生效，无用户实际收到该技能");
+        } else if (distributedCount < finalTenantIds.length) {
+          message.warning(`部分分发成功，实际分发 ${distributedCount} 个用户（预期 ${finalTenantIds.length} 个）`);
+        } else {
+          message.success(`分发成功，共 ${distributedCount} 个用户`);
+        }
       } else {
         const result = await marketMcpApi.distributeMCP(
           (item as MarketMCPItem).item_id,
