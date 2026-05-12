@@ -319,3 +319,54 @@ async def test_query_handler_stop_hook_blocks_completion(
         "agent reply",
         "stop blocked",
     ]
+
+
+@pytest.mark.asyncio
+async def test_query_handler_persists_mutated_hook_overlay(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+
+    async def fake_emit_runner_hook(*args, **kwargs):
+        kwargs["overlay"].once_executed[
+            "default:user-1:session-1:PreToolUse:once"
+        ] = True
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+    state = await runner.session.get_session_state_dict(
+        session_id="session-1",
+        user_id="user-1",
+    )
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert state["hook_overlay"]["once_executed"] == {
+        "default:user-1:session-1:PreToolUse:once": True,
+    }

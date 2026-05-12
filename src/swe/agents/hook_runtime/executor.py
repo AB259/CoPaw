@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -77,14 +78,27 @@ async def _execute_command_handler(
             env=env,
         )
     else:
-        proc = await asyncio.create_subprocess_shell(
-            handler.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(cwd),
-            env=env,
-        )
+        _validate_shell_command_boundaries(handler.command, cwd)
+        shell_executable = _resolve_shell_executable(handler.shell)
+        if shell_executable:
+            proc = await asyncio.create_subprocess_shell(
+                handler.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(cwd),
+                env=env,
+                executable=shell_executable,
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                handler.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(cwd),
+                env=env,
+            )
 
     stdout, stderr = await asyncio.wait_for(
         proc.communicate(payload),
@@ -215,9 +229,9 @@ def _resolve_hook_cwd(raw_cwd: str, workspace_dir: Path) -> Path:
 
 def _validate_argv_boundaries(argv: list[str], workspace_dir: Path) -> None:
     root = workspace_dir.expanduser().resolve()
-    for item in argv[1:]:
+    for item in argv:
         path = Path(item).expanduser()
-        if not path.is_absolute() or not path.exists():
+        if not path.is_absolute():
             continue
         try:
             path.resolve().relative_to(root)
@@ -225,6 +239,32 @@ def _validate_argv_boundaries(argv: list[str], workspace_dir: Path) -> None:
             raise ValueError(
                 "Hook command path is outside tenant workspace",
             ) from exc
+
+
+def _validate_shell_command_boundaries(command: str, cwd: Path) -> None:
+    try:
+        from swe.agents.tools.shell import _validate_shell_paths
+    except Exception as exc:
+        raise ValueError(
+            "Hook command path validation is unavailable",
+        ) from exc
+
+    path_error = _validate_shell_paths(command, base_dir=cwd)
+    if path_error:
+        raise ValueError(path_error)
+
+
+def _resolve_shell_executable(shell: str | None) -> str | None:
+    if not shell:
+        return None
+    if os.name == "nt" and shell == "cmd":
+        return os.environ.get("COMSPEC") or "cmd.exe"
+    command = (
+        "powershell.exe"
+        if os.name == "nt" and shell == "powershell"
+        else shell
+    )
+    return shutil.which(command) or command
 
 
 def _build_http_headers(

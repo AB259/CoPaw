@@ -1184,6 +1184,7 @@ class AgentRunner(Runner):
                         mode="json",
                         by_alias=True,
                     ),
+                    "_hook_overlay_model": hook_overlay,
                     **(
                         {
                             "auth_token": auth_token,
@@ -1543,6 +1544,18 @@ class AgentRunner(Runner):
                                 session_id,
                                 skip_history,
                                 user_id,
+                                hook_overlay=(
+                                    hook_overlay
+                                    if (
+                                        agent_config is not None
+                                        and "tenant_hooks" in locals()
+                                        and _hook_config_enabled(
+                                            tenant_hooks,
+                                            agent_config,
+                                        )
+                                    )
+                                    else None
+                                ),
                             ),
                             timeout=QUERY_CLEANUP_TIMEOUT,
                         )
@@ -1690,6 +1703,7 @@ class AgentRunner(Runner):
         session_id: str | None | Any,
         skip_history: bool | Any,
         user_id: str | None,
+        hook_overlay: HookSessionOverlay | None = None,
     ):
         if skip_history:
             # 对于 cron 任务：合并保存，保留旧历史 + 新消息
@@ -1732,6 +1746,11 @@ class AgentRunner(Runner):
             # 构建最终状态
             merged_state = dict(existing_state)
             merged_state["agent"] = current_agent_state
+            if hook_overlay is not None:
+                merged_state["hook_overlay"] = hook_overlay.model_dump(
+                    mode="json",
+                    by_alias=True,
+                )
             task_run = _build_task_run_record(
                 current_content,
                 memory_start=len(existing_content),
@@ -1776,11 +1795,26 @@ class AgentRunner(Runner):
                     user_id=user_id,
                     agent=agent,
                 )
+                if hook_overlay is not None and hasattr(
+                    self.session,
+                    "update_session_state",
+                ):
+                    await self.session.update_session_state(
+                        session_id,
+                        "hook_overlay",
+                        hook_overlay.model_dump(mode="json", by_alias=True),
+                        user_id=user_id,
+                    )
                 return
 
             state_modules = {
                 "agent": agent.state_dict(),
             }
+            if hook_overlay is not None:
+                state_modules["hook_overlay"] = hook_overlay.model_dump(
+                    mode="json",
+                    by_alias=True,
+                )
             stripped_count = _strip_internal_follow_up_messages_from_state(
                 state_modules["agent"],
             )

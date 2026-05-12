@@ -138,6 +138,112 @@ async def test_command_cwd_escape_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_command_argv_executable_escape_is_rejected(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "outside-hook"
+    outside.write_text("#!/bin/sh\n", encoding="utf-8")
+    handler = CommandHookHandlerConfig(
+        id="escape",
+        argv=[str(outside)],
+        fail_policy=FailPolicy.BLOCK,
+    )
+
+    result = await execute_handler(
+        handler,
+        _context(),
+        workspace_dir=tmp_path,
+    )
+
+    assert result.failed is True
+    assert result.decision == HookDecision.BLOCK
+    assert "outside tenant workspace" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_command_argv_nonexistent_absolute_escape_is_rejected(
+    tmp_path: Path,
+) -> None:
+    handler = CommandHookHandlerConfig(
+        id="escape",
+        argv=["python", str(tmp_path.parent / "missing.py")],
+        fail_policy=FailPolicy.BLOCK,
+    )
+
+    result = await execute_handler(
+        handler,
+        _context(),
+        workspace_dir=tmp_path,
+    )
+
+    assert result.failed is True
+    assert result.decision == HookDecision.BLOCK
+    assert "outside tenant workspace" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_command_shell_path_escape_is_rejected(tmp_path: Path) -> None:
+    handler = CommandHookHandlerConfig(
+        id="escape",
+        command=f"cat {tmp_path.parent / 'secret.txt'}",
+        fail_policy=FailPolicy.BLOCK,
+    )
+
+    result = await execute_handler(
+        handler,
+        _context(),
+        workspace_dir=tmp_path,
+    )
+
+    assert result.failed is True
+    assert result.decision == HookDecision.BLOCK
+    assert "outside the allowed workspace" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_command_shell_field_selects_requested_shell(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    observed = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self, payload):
+            del payload
+            return b"{}", b""
+
+    async def fake_create_subprocess_shell(*args, **kwargs):
+        observed["args"] = args
+        observed["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.asyncio.create_subprocess_shell",
+        fake_create_subprocess_shell,
+    )
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.shutil.which",
+        lambda shell: f"/tenant/bin/{shell}",
+    )
+    handler = CommandHookHandlerConfig(
+        id="shell",
+        command="echo {}",
+        shell="bash",
+    )
+
+    result = await execute_handler(
+        handler,
+        _context(),
+        workspace_dir=tmp_path,
+    )
+
+    assert result.failed is False
+    assert observed["kwargs"]["executable"] == "/tenant/bin/bash"
+
+
+@pytest.mark.asyncio
 async def test_http_handler_maps_2xx_json_and_409_block(monkeypatch) -> None:
     responses = [
         httpx.Response(

@@ -10,7 +10,12 @@ import pytest
 
 from swe.agents.hook_runtime.models import (
     AdditionalContext,
+    CommandHookHandlerConfig,
+    HookConfig,
     HookDecision,
+    HookEventName,
+    HookHandlerResult,
+    HookMatcherGroupConfig,
     MergedHookResult,
 )
 from swe.agents.tool_guard_mixin import ToolGuardMixin
@@ -195,3 +200,62 @@ async def test_tool_failure_hook_block_reason_is_added_to_memory(
         )
 
     assert "failure context" in agent.memory.content[-1][0].content
+
+
+@pytest.mark.asyncio
+async def test_tool_hook_once_state_is_written_back_to_request_context(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    tenant_hooks = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.PRE_TOOL_USE: [
+                HookMatcherGroupConfig(
+                    hooks=[
+                        CommandHookHandlerConfig(
+                            id="once",
+                            command="echo {}",
+                            once=True,
+                        ),
+                    ],
+                ),
+            ],
+        },
+    )
+    calls = []
+
+    async def fake_execute_handler(handler, context, *, workspace_dir):
+        calls.append((handler.id, context.hook_event_name, workspace_dir))
+        return HookHandlerResult(handler_id=handler.id, order=0)
+
+    monkeypatch.setattr(
+        "swe.agents.tool_guard_mixin.ToolGuardMixin._load_tenant_hook_config",
+        lambda self: tenant_hooks,
+    )
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.runtime.execute_handler",
+        fake_execute_handler,
+    )
+
+    await agent._emit_tool_hook(
+        HookEventName.PRE_TOOL_USE,
+        tool_name="execute_shell_command",
+        tool_input={"cmd": "echo one"},
+        tool_use_id="tool-1",
+    )
+    await agent._emit_tool_hook(
+        HookEventName.PRE_TOOL_USE,
+        tool_name="execute_shell_command",
+        tool_input={"cmd": "echo two"},
+        tool_use_id="tool-2",
+    )
+
+    assert [call[0] for call in calls] == ["once"]
+    hook_overlay = agent._request_context["hook_overlay"]
+    assert isinstance(hook_overlay, dict)
+    once_executed = hook_overlay["once_executed"]
+    assert once_executed == {
+        "default:user-1:session-1:PreToolUse:once": True,
+    }

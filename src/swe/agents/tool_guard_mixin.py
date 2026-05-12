@@ -597,12 +597,16 @@ class ToolGuardMixin:
         tenant_hooks = self._load_tenant_hook_config()
         if not self._tool_hooks_enabled(tenant_hooks):
             return MergedHookResult()
-        try:
-            overlay = HookSessionOverlay.model_validate(
-                self._request_context.get("hook_overlay") or {},
-            )
-        except Exception:
-            overlay = HookSessionOverlay()
+        overlay_ref = self._request_context.get("_hook_overlay_model")
+        if isinstance(overlay_ref, HookSessionOverlay):
+            overlay = overlay_ref
+        else:
+            try:
+                overlay = HookSessionOverlay.model_validate(
+                    self._request_context.get("hook_overlay") or {},
+                )
+            except Exception:
+                overlay = HookSessionOverlay()
         agent_hooks = getattr(self._agent_config, "hooks", None)
         if not isinstance(agent_hooks, HookConfig):
             agent_hooks = HookConfig()
@@ -619,10 +623,15 @@ class ToolGuardMixin:
             tool_response=tool_response,
             error=error,
         )
-        return await runtime.emit(
+        result = await runtime.emit(
             context,
             workspace_dir=Path(getattr(self, "_workspace_dir", None) or "."),
         )
+        self._request_context["hook_overlay"] = overlay.model_dump(
+            mode="json",
+            by_alias=True,
+        )
+        return result
 
     async def _acting_hook_denied(
         self,
