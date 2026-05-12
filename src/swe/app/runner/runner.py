@@ -1115,22 +1115,10 @@ class AgentRunner(Runner):
                         session_id,
                     )
 
-            suggestions_config = getattr(agent_config.running, "suggestions", None)
-            if (
-                task_completed
-                and suggestions_config is not None
-                and getattr(suggestions_config, "enabled", False)
-                and getattr(suggestions_config, "mode", None)
-                == SuggestionMode.BACKEND_GENERATE
-            ):
-                assistant_response = _extract_assistant_response(agent)
-                if assistant_response and original_user_message:
-                    await _generate_and_store_suggestions(
-                        session_id,
-                        original_user_message,
-                        assistant_response,
-                        suggestions_config,
-                    )
+            logger.debug(
+                "Suggestions generation handled by frontend external API; "
+                "backend does not schedule duplicate generation."
+            )
 
             # 通过 Monitor API 写入 model_output 到 ES
             if trace_id and agent is not None:

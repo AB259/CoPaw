@@ -1,14 +1,9 @@
-import {
-  fetchBackendSuggestions,
-  fetchGeneratedSuggestions,
-  fetchQAContent,
-  type QAContentResponse,
-} from "@/api/modules/suggestions";
+import { fetchSuggestions } from "@/api/modules/suggestions";
 import {
   extractCopyableText,
   extractUserMessageText,
 } from "@/pages/Chat/utils";
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useContextSelector } from "use-context-selector";
 import { ChatAnywhereSessionsContext } from "../../Context/ChatAnywhereSessionsContext";
 import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
@@ -16,7 +11,7 @@ import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext
 /**
  * 猜你想问建议获取 Hook
  *
- * 在响应完成后优先请求后端建议，空结果时回退到 Q&A 提取和 mock 生成。
+ * 在响应完成后请求前端 external/mock suggestions API，并更新到当前响应中。
  */
 export default function useSuggestionsPolling(options: {
   currentQARef: React.MutableRefObject<{
@@ -33,9 +28,9 @@ export default function useSuggestionsPolling(options: {
     (v) => v.currentSessionId,
   );
 
+  const sessionApi = useChatAnywhereOptions((v) => v.session?.api);
   const sessionIdRef = useRef(currentSessionId);
   const activePollResponseIdRef = useRef<string | null>(null);
-  const sessionApi = useChatAnywhereOptions((v) => v.session?.api);
 
   useEffect(() => {
     sessionIdRef.current = currentSessionId;
@@ -48,6 +43,7 @@ export default function useSuggestionsPolling(options: {
       return;
     }
 
+    const currentRequest = currentQARef.current.request;
     const currentResponse = currentQARef.current.response;
     const turnId = currentResponse?.id;
     if (!turnId) {
@@ -58,57 +54,40 @@ export default function useSuggestionsPolling(options: {
     activePollResponseIdRef.current = turnId;
 
     try {
-      let suggestions = await fetchBackendSuggestions({ sessionId });
+      await (sessionApi as any)?.getSessionList?.();
+    } catch (error) {
+      console.debug("[Suggestions] getSessionList failed:", error);
+    }
 
-      if (!suggestions.length) {
-        try {
-          await (sessionApi as any)?.getSessionList?.();
-        } catch (error) {
-          console.debug("[Suggestions] getSessionList failed:", error);
-        }
+    const chatId =
+      (sessionApi as any)?.getRealIdForSession?.(sessionId) ?? sessionId;
+    const userMessage = extractUserMessageText(
+      currentRequest?.cards?.[0]?.data?.input?.[0] ?? {},
+    ).trim();
+    const assistantMessage = extractCopyableText(
+      currentResponse?.cards?.[0]?.data ?? {},
+    ).trim();
 
-        const chatId =
-          (sessionApi as any)?.getChatIdForSession?.(sessionId) ??
-          (sessionApi as any)?.getRealIdForSession?.(sessionId) ??
-          sessionId;
-        const currentRequest = currentQARef.current.request;
-        const userMessage = extractUserMessageText(
-          currentRequest?.cards?.[0]?.data?.input?.[0] ?? {},
-        ).trim();
+    if (!userMessage || !assistantMessage) {
+      console.debug("[Suggestions] Missing request or response text");
+      return;
+    }
 
-        if (!userMessage) {
-          console.debug("[Suggestions] No user message available");
-          return;
-        }
+    console.debug(
+      "[Suggestions] Fetching suggestions for chatId:",
+      chatId,
+      "turnId:",
+      turnId,
+    );
 
-        const qaResponse = await fetchQAContent({ chatId, userMessage });
-        let qaContent: QAContentResponse["qa_content"] = qaResponse.qa_content;
+    try {
+      const suggestions = await fetchSuggestions({
+        chatId,
+        turnId,
+        userMessage,
+        assistantMessage,
+      });
 
-        if (!qaContent) {
-          const assistantMessage = extractCopyableText(
-            currentResponse?.cards?.[0]?.data ?? {},
-          ).trim();
-
-          if (!assistantMessage) {
-            console.debug("[Suggestions] Missing assistant response text");
-            return;
-          }
-
-          qaContent = {
-            user_message: userMessage,
-            assistant_response: assistantMessage,
-          };
-        }
-
-        suggestions = await fetchGeneratedSuggestions({
-          chatId,
-          turnId,
-          userMessage: qaContent.user_message,
-          assistantMessage: qaContent.assistant_response,
-        });
-      }
-
-      // 检查是否已被新的请求覆盖
       if (activePollResponseIdRef.current !== turnId) {
         console.debug(
           "[Suggestions] Request cancelled, responseId mismatch. Expected:",
@@ -134,7 +113,6 @@ export default function useSuggestionsPolling(options: {
         return;
       }
 
-      // 更新响应
       if (latestResponse?.cards?.[0]?.data) {
         const updatedCards = [
           {
