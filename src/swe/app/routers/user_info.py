@@ -189,6 +189,82 @@ async def list_tenants_by_source(
 
 
 # =============================================================================
+# 按来源查询机构列表
+# =============================================================================
+
+
+class BbkInfo(BaseModel):
+    """机构信息。"""
+
+    bbk_id: str = Field(..., description="BBK标识")
+    bbk_name: Optional[str] = Field(default=None, description="机构名称")
+
+
+class BbkListResponse(BaseModel):
+    """机构列表响应。"""
+
+    items: List[BbkInfo] = Field(default_factory=list)
+
+
+@router.get(
+    "/bbk/by-source",
+    response_model=BbkListResponse,
+    summary="按来源查询机构列表",
+    description="查询指定source_id下所有不重复的bbk_id",
+)
+async def list_bbk_by_source(
+    request: Request,
+    source_id: Optional[str] = None,
+) -> BbkListResponse:
+    """按来源查询机构列表。
+
+    Args:
+        request: FastAPI请求对象
+        source_id: 来源标识，如果不传则使用请求头中的X-Source-Id
+
+    Returns:
+        机构信息列表
+
+    Raises:
+        HTTPException: 如果数据库不可用或source_id为空
+    """
+    from ..workspace.tenant_init_source_store import (
+        get_tenant_init_source_store,
+    )
+    from ...utils.bbk import BBK_ID_TO_NAME_MAP
+
+    # 如果未传source_id，从请求头获取
+    if source_id is None:
+        source_id = getattr(request.state, "source_id", None)
+
+    if not source_id:
+        raise HTTPException(
+            status_code=400,
+            detail="source_id is required",
+        )
+
+    store = get_tenant_init_source_store()
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database not available",
+        )
+
+    # 查询同一来源下所有不重复的 bbk_id
+    rows = await store.get_bbk_by_source(source_id)
+    items = [
+        BbkInfo(
+            bbk_id=row["bbk_id"],
+            bbk_name=BBK_ID_TO_NAME_MAP.get(row["bbk_id"], row["bbk_id"]),
+        )
+        for row in rows
+        if row.get("bbk_id")
+    ]
+
+    return BbkListResponse(items=items)
+
+
+# =============================================================================
 # 批量更新历史数据接口（运维模式使用）
 # =============================================================================
 
