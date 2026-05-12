@@ -51,19 +51,19 @@ export function MCPCard({
         padding: 20,
         borderRadius: 20,
         border: "1px solid #f0eee6",
-        background: "#faf9f5",
+        background: "#fff",
         cursor: "pointer",
         transition: "all 0.2s ease",
         boxShadow: "rgba(0, 0, 0, 0) 0px 0px 0px",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = "#ffffff";
+        event.currentTarget.style.background = "#faf9f5";
         event.currentTarget.style.borderColor = "#e8e6dc";
         event.currentTarget.style.boxShadow =
           "rgba(0, 0, 0, 0.06) 0px 4px 20px";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = "#faf9f5";
+        event.currentTarget.style.background = "#fff";
         event.currentTarget.style.borderColor = "#f0eee6";
         event.currentTarget.style.boxShadow =
           "rgba(0, 0, 0, 0) 0px 0px 0px";

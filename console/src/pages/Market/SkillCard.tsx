@@ -31,18 +31,18 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
         padding: 20,
         borderRadius: 16,
         border: "1px solid #f0eee6",
-        backgroundColor: "#faf9f5",
+        backgroundColor: "#fff",
         cursor: "pointer",
         transition: "all 0.2s ease",
       }}
       onClick={onClick}
       onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "#fff";
+        e.currentTarget.style.backgroundColor = "#faf9f5";
         e.currentTarget.style.borderColor = "#e8e6dc";
         e.currentTarget.style.boxShadow = "rgba(0,0,0,0.06) 0px 4px 20px";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "#faf9f5";
+        e.currentTarget.style.backgroundColor = "#fff";
         e.currentTarget.style.borderColor = "#f0eee6";
         e.currentTarget.style.boxShadow = "none";
       }}

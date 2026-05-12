@@ -6,10 +6,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, message, Radio, Select, Spin, Button } from "antd";
 import { CheckOutlined } from "@ant-design/icons";
-import api from "../../api";
 import { marketApi, DistributeRequest } from "../../api/modules/market";
 import { marketMcpApi } from "../../api/modules/marketMcp";
-import { fetchBbkBySource, fetchTenantsBySource, BbkInfo, TenantSourceInfo } from "../../api/modules/userInfo";
+import { fetchTenantsBySource, TenantSourceInfo } from "../../api/modules/userInfo";
+import { BBK_ID_MAP } from "../../constants/bbk";
 import { useIframeStore } from "../../stores/iframeStore";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import type { MarketSkill } from "../../api/modules/market";
@@ -37,7 +37,7 @@ export function DistributeTargetModal({
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [targetMode, setTargetMode] = useState<"bbk_id" | "user_id">("bbk_id");
-  const [bbkOptions, setBbkOptions] = useState<BbkInfo[]>([]);
+  const [bbkOptions, setBbkOptions] = useState<{ label: string; value: string }[]>([]);
   const [tenantOptions, setTenantOptions] = useState<TenantSourceInfo[]>([]);
   const [selectedBbkIds, setSelectedBbkIds] = useState<string[]>([]);
   const [selectedTenantIds, setSelectedTenantIds] = useState<string[]>([]);
@@ -45,19 +45,17 @@ export function DistributeTargetModal({
 
   const resolvedSourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID || sourceId;
 
-  // 加载机构/用户列表
+  // 加载用户列表（机构列表使用本地 BBK_ID_MAP）
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setSelectedBbkIds([]);
     setSelectedTenantIds([]);
     setManualTenantIdsText("");
-    Promise.all([
-      fetchBbkBySource(resolvedSourceId),
-      fetchTenantsBySource(resolvedSourceId),
-    ])
-      .then(([bbkList, tenantList]) => {
-        setBbkOptions(bbkList);
+    // 直接使用本地 BBK_ID_MAP 作为机构选项
+    setBbkOptions(BBK_ID_MAP);
+    fetchTenantsBySource(resolvedSourceId)
+      .then((tenantList) => {
         setTenantOptions(tenantList);
       })
       .catch(console.error)
@@ -231,10 +229,7 @@ export function DistributeTargetModal({
                   placeholder="选择机构"
                   value={selectedBbkIds}
                   onChange={setSelectedBbkIds}
-                  options={bbkOptions.map((b) => ({
-                    label: b.bbk_name || b.bbk_id,
-                    value: b.bbk_id,
-                  }))}
+                  options={bbkOptions}
                   style={{ width: "100%" }}
                 />
                 <div style={{ color: "#666", fontSize: 12 }}>
