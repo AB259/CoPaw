@@ -663,13 +663,13 @@ class AgentsRunningConfig(BaseModel):
 
         normalized = dict(data)
         if normalized.get("llm_chat_max_concurrent") is None:
-            normalized[
-                "llm_chat_max_concurrent"
-            ] = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            normalized["llm_chat_max_concurrent"] = (
+                DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            )
         if normalized.get("llm_cron_max_concurrent") is None:
-            normalized[
-                "llm_cron_max_concurrent"
-            ] = DEFAULT_LLM_CRON_MAX_CONCURRENT
+            normalized["llm_cron_max_concurrent"] = (
+                DEFAULT_LLM_CRON_MAX_CONCURRENT
+            )
         return normalized
 
     @model_validator(mode="after")
@@ -1775,9 +1775,11 @@ def migrate_legacy_config_to_multi_agent() -> bool:
             else AgentsLLMRoutingConfig()
         ),
         system_prompt_files=normalize_system_prompt_files(
-            legacy_agents.system_prompt_files
-            if legacy_agents.system_prompt_files
-            else None,
+            (
+                legacy_agents.system_prompt_files
+                if legacy_agents.system_prompt_files
+                else None
+            ),
         ),
         tools=config.tools if config.tools else None,
         security=config.security if config.security else None,
