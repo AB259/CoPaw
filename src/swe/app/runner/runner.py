@@ -1002,12 +1002,11 @@ class AgentRunner(Runner):
             tenant_id=self.tenant_id,
         )
         tenant_hooks = _load_tenant_hook_config(self.tenant_id)
-        if query:
-            hook_overlay = await _load_session_hook_overlay(
-                getattr(self, "session", None),
-                session_id=session_id,
-                user_id=user_id,
-            )
+        hook_overlay = await _load_session_hook_overlay(
+            getattr(self, "session", None),
+            session_id=session_id,
+            user_id=user_id,
+        )
         if query and _hook_config_enabled(
             tenant_hooks,
             agent_config,
@@ -1059,6 +1058,7 @@ class AgentRunner(Runner):
         session_state_loaded = False
         trace_id = None
         task_completed = True
+        session_skill_detector = None
 
         # Initialize tracing context
         if has_trace_manager():
@@ -1317,7 +1317,7 @@ class AgentRunner(Runner):
                 or channel_meta.get("source_id")
                 or "default"
             )
-            skill_detector = _create_session_skill_detector(
+            session_skill_detector = _create_session_skill_detector(
                 workspace_dir=Path(self.workspace_dir or WORKING_DIR),
                 tenant_id=self.tenant_id,
                 user_id=user_id,
@@ -1335,15 +1335,17 @@ class AgentRunner(Runner):
             if not hasattr(agent, "_request_context"):
                 agent._request_context = {}
             agent._request_context["_skill_invocation_detector"] = (
-                skill_detector
+                session_skill_detector
             )
             user_message_for_skill = query or _get_last_user_text(msgs) or ""
             if user_message_for_skill:
-                skill, confidence = skill_detector.detect_from_user_message(
-                    user_message_for_skill,
+                skill, confidence = (
+                    session_skill_detector.detect_from_user_message(
+                        user_message_for_skill,
+                    )
                 )
                 if skill and confidence >= 0.7:
-                    await skill_detector.start_skill(
+                    await session_skill_detector.start_skill(
                         skill_name=skill,
                         trigger_tool="user_message",
                         trigger_reason="declared",
@@ -1749,6 +1751,25 @@ class AgentRunner(Runner):
                 except asyncio.CancelledError:
                     logger.debug(
                         "Runner finally: MCP cleanup cancelled (session_id=%s)",
+                        session_id,
+                    )
+                try:
+                    if session_skill_detector is not None:
+                        await asyncio.wait_for(
+                            session_skill_detector.on_reasoning_end(),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: skill detector cleanup timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: skill detector cleanup cancelled "
+                        "(session_id=%s)",
                         session_id,
                     )
 

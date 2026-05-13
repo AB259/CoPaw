@@ -314,6 +314,95 @@ async def test_query_handler_no_config_does_not_emit_hook(
 
 
 @pytest.mark.asyncio
+async def test_query_handler_loads_session_skill_hooks_for_media_message(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._resolve_active_model_label",
+        lambda *args, **kwargs: "openai/gpt-test",
+    )
+    emit_hook = AsyncMock(return_value=MergedHookResult())
+    monkeypatch.setattr("swe.app.runner.runner._emit_runner_hook", emit_hook)
+
+    persisted_overlay = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root=str(tmp_path / "skills" / "xlsx"),
+                source_path=str(
+                    tmp_path / "skills" / "xlsx" / "hooks" / "hooks.json",
+                ),
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.STOP: [
+                            HookMatcherGroupConfig(
+                                hooks=[
+                                    CommandHookHandlerConfig(
+                                        id="skill:xlsx:stop",
+                                        command="unused",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+    )
+    await runner.session.save_merged_state(
+        session_id="session-1",
+        user_id="user-1",
+        state={
+            "hook_overlay": persisted_overlay.model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+        },
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [
+        Msg(
+            name="user",
+            role="user",
+            content=[{"type": "image", "url": "file:///tmp/image.png"}],
+        ),
+    ]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    emitted_events = [call.args[0] for call in emit_hook.await_args_list]
+    assert HookEventName.USER_PROMPT_SUBMIT not in emitted_events
+    assert emitted_events == [
+        HookEventName.SESSION_START,
+        HookEventName.STOP,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_query_handler_injects_prompt_additional_context(
     monkeypatch,
     tmp_path,
@@ -476,3 +565,48 @@ async def test_query_handler_persists_mutated_hook_overlay(
     assert state["hook_overlay"]["once_executed"] == {
         "default:user-1:session-1:PreToolUse:once": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_query_handler_ends_request_skill_detector_in_finally(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(),
+    )
+
+    detector = SimpleNamespace(
+        detect_from_user_message=lambda _message: ("xlsx", 0.9),
+        start_skill=AsyncMock(),
+        on_reasoning_end=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._create_session_skill_detector",
+        lambda **kwargs: detector,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="use xlsx")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    detector.start_skill.assert_awaited_once()
+    detector.on_reasoning_end.assert_awaited_once()
