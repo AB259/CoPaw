@@ -62,7 +62,7 @@ from .rate_limiter import (
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
+RETRYABLE_STATUS_CODES = {429, 432, 433, 500, 502, 503, 504, 529}
 
 _openai_retryable: tuple[type[Exception], ...] | None = None
 _anthropic_retryable: tuple[type[Exception], ...] | None = None
