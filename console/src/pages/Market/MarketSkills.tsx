@@ -484,7 +484,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                 ) : displayedSkills.length === 0 ? (
                   <Empty description={searchQuery ? "未找到匹配的技能" : "暂无技能"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {displayedSkills.map((skill) => {
                       const catName = skill.category_id
                         ? categories.find((c) => String(c.id) === String(skill.category_id))?.name
@@ -534,7 +534,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                 ) : displayedMCP.length === 0 ? (
                   <Empty description={searchQuery ? "未找到匹配的 MCP" : "暂无 MCP"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ) : (
-                  <div style={{ display: "grid", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {displayedMCP.map((mcp) => (
                       <MCPCard
                         key={mcp.item_id}
