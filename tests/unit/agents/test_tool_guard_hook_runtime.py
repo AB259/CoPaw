@@ -179,6 +179,176 @@ async def test_pre_tool_hook_ask_uses_existing_approval_path(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_approved_pre_tool_hook_ask_replay_executes_once(
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._tool_guard_replay_approval = {
+        "request_id": "approval-1",
+        "approval_kind": "hook_pre_tool_use",
+        "tool_call_id": "tool-1",
+        "tool_name": "execute_shell_command",
+        "tool_input": {"cmd": "echo original"},
+        "hook_ask_handler_ids": ["hook-a"],
+    }
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.ASK,
+            reason="review shell",
+            permission_decisions=[
+                {
+                    "handler_id": "hook-a",
+                    "decision": HookDecision.ASK,
+                    "reason": "review shell",
+                },
+            ],
+        ),
+    )
+    agent._acting_with_approval = AsyncMock(return_value=None)
+
+    result = await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+
+    assert result == {"content": {"cmd": "echo original"}}
+    agent._acting_with_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_approved_pre_tool_hook_ask_replay_does_not_cover_new_ask_handler(
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._tool_guard_replay_approval = {
+        "request_id": "approval-1",
+        "approval_kind": "hook_pre_tool_use",
+        "tool_call_id": "tool-1",
+        "tool_name": "execute_shell_command",
+        "tool_input": {"cmd": "echo original"},
+        "hook_ask_handler_ids": ["hook-a"],
+    }
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.ASK,
+            reason="review shell",
+            permission_decisions=[
+                {
+                    "handler_id": "hook-a",
+                    "decision": HookDecision.ASK,
+                    "reason": "review shell",
+                },
+                {
+                    "handler_id": "hook-b",
+                    "decision": HookDecision.ASK,
+                    "reason": "new policy",
+                },
+            ],
+        ),
+    )
+    agent._acting_with_approval = AsyncMock(return_value=None)
+
+    result = await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+
+    assert result is None
+    agent._acting_with_approval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_approved_pre_tool_hook_ask_replay_does_not_bypass_deny(
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._tool_guard_replay_approval = {
+        "request_id": "approval-1",
+        "approval_kind": "hook_pre_tool_use",
+        "tool_call_id": "tool-1",
+        "tool_name": "execute_shell_command",
+        "tool_input": {"cmd": "echo original"},
+        "hook_ask_handler_ids": ["hook-a"],
+    }
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.DENY,
+            reason="blocked now",
+            permission_decisions=[
+                {
+                    "handler_id": "hook-a",
+                    "decision": HookDecision.ASK,
+                    "reason": "review shell",
+                },
+            ],
+        ),
+    )
+    agent._acting_with_approval = AsyncMock(return_value=None)
+
+    result = await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+
+    assert result is None
+    assert "blocked now" in str(agent.printed[0].content)
+    agent._acting_with_approval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_approved_pre_tool_hook_ask_replay_reasks_when_input_changes(
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._tool_guard_replay_approval = {
+        "request_id": "approval-1",
+        "approval_kind": "hook_pre_tool_use",
+        "tool_call_id": "tool-1",
+        "tool_name": "execute_shell_command",
+        "tool_input": {"cmd": "echo original"},
+        "hook_ask_handler_ids": ["hook-a"],
+    }
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.ASK,
+            reason="review shell",
+            updated_input={"cmd": "echo changed"},
+            permission_decisions=[
+                {
+                    "handler_id": "hook-a",
+                    "decision": HookDecision.ASK,
+                    "reason": "review shell",
+                },
+            ],
+        ),
+    )
+    agent._acting_with_approval = AsyncMock(return_value=None)
+
+    result = await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+
+    assert result is None
+    agent._acting_with_approval.assert_awaited_once()
+    assert agent._acting_with_approval.await_args.args[0]["input"] == {
+        "cmd": "echo changed",
+    }
+
+
+@pytest.mark.asyncio
 async def test_post_tool_hook_additional_context_is_added_to_memory(
     tmp_path,
 ) -> None:

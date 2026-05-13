@@ -125,12 +125,23 @@ class HookHandlerResult(BaseModel):
     failure_type: str = ""
 
 
+class HookPermissionDecision(BaseModel):
+    """Permission decision emitted by a single hook handler."""
+
+    handler_id: str
+    decision: HookDecision
+    reason: str = ""
+
+
 class MergedHookResult(BaseModel):
     decision: HookDecision = HookDecision.NONE
     reason: str = ""
     additional_context: list[AdditionalContext] = Field(default_factory=list)
     hook_specific_outputs: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
+    )
+    permission_decisions: list[HookPermissionDecision] = Field(
+        default_factory=list,
     )
     updated_input: dict[str, Any] | None = None
     session_title: str | None = None

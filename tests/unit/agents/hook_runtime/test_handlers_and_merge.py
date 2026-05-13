@@ -388,6 +388,13 @@ def test_merge_priority_additional_context_and_updated_input_conflict() -> (
         "third",
     ]
     assert list(merged.hook_specific_outputs) == ["first", "second", "third"]
+    assert [
+        (item.handler_id, item.decision, item.reason)
+        for item in merged.permission_decisions
+    ] == [
+        ("second", HookDecision.DENY, "no"),
+        ("third", HookDecision.ALLOW, ""),
+    ]
 
 
 def test_merge_continue_false_overrides_other_decisions() -> None:

@@ -8,6 +8,7 @@ from .models import (
     EffectiveHookPlan,
     HookDecision,
     HookHandlerResult,
+    HookPermissionDecision,
     MergedHookResult,
 )
 
@@ -39,6 +40,20 @@ def merge_hook_results(  # noqa: C901
         specific = result.output.hook_specific_output or {}
         if specific:
             merged.hook_specific_outputs[result.handler_id] = dict(specific)
+
+        permission_decision = specific.get("permissionDecision")
+        if permission_decision in {"allow", "ask", "deny"}:
+            merged.permission_decisions.append(
+                HookPermissionDecision(
+                    handler_id=result.handler_id,
+                    decision=HookDecision(permission_decision),
+                    reason=str(
+                        specific.get("permissionDecisionReason")
+                        or result.reason
+                        or "",
+                    ),
+                ),
+            )
 
         additional = specific.get("additionalContext")
         if additional:

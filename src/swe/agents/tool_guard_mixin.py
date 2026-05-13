@@ -62,6 +62,8 @@ _TOOLS_WITH_SPECIFIC_TIMEOUTS = {
     "grep_search",
     "glob_search",
 }
+_APPROVAL_KIND_TOOL_GUARD = "tool_guard"
+_APPROVAL_KIND_HOOK_PRE_TOOL_USE = "hook_pre_tool_use"
 
 
 class _GuardAction:
@@ -254,6 +256,15 @@ class ToolGuardMixin:
                     return True
         return False
 
+    def _set_forced_tool_replay_approval(
+        self,
+        replay_approval: Any,
+    ) -> None:
+        if isinstance(replay_approval, dict):
+            self._tool_guard_replay_approval = dict(replay_approval)
+        elif hasattr(self, "_tool_guard_replay_approval"):
+            self._tool_guard_replay_approval = None
+
     def _pop_forced_tool_call(  # pylint: disable=too-many-branches
         self,
     ) -> dict[str, Any] | None:
@@ -298,6 +309,8 @@ class ToolGuardMixin:
         siblings = tool_call.pop("_sibling_tool_calls", None)
         remaining = tool_call.pop("_remaining_queue", None)
         thinking_blocks = tool_call.pop("_thinking_blocks", None)
+        replay_approval = tool_call.pop("_approval_replay", None)
+        self._set_forced_tool_replay_approval(replay_approval)
 
         if remaining is not None and isinstance(remaining, list):
             self._tool_guard_replay_queue = remaining
@@ -655,6 +668,47 @@ class ToolGuardMixin:
         except Exception as exc:
             logger.debug("Skill detector tool notification failed: %s", exc)
 
+    @staticmethod
+    def _hook_ask_handler_ids(result: MergedHookResult) -> list[str]:
+        return [
+            item.handler_id
+            for item in result.permission_decisions
+            if item.decision == HookDecision.ASK
+        ]
+
+    def _approved_hook_ask_replay_matches(
+        self,
+        tool_call: dict[str, Any],
+        tool_name: str,
+        tool_input: dict[str, Any],
+        result: MergedHookResult,
+    ) -> bool:
+        replay = getattr(self, "_tool_guard_replay_approval", None)
+        if not isinstance(replay, dict):
+            return False
+        if replay.get("approval_kind") != _APPROVAL_KIND_HOOK_PRE_TOOL_USE:
+            return False
+        current_ask_ids = set(self._hook_ask_handler_ids(result))
+        approved_ask_ids = set(replay.get("hook_ask_handler_ids") or [])
+        if not current_ask_ids or not current_ask_ids.issubset(
+            approved_ask_ids,
+        ):
+            return False
+        if replay.get("tool_call_id") != tool_call.get("id"):
+            return False
+        if replay.get("tool_name") != tool_name:
+            return False
+        if replay.get("tool_input") != tool_input:
+            return False
+        self._tool_guard_replay_approval = None
+        logger.info(
+            "Tool hook approval: replaying approved ask for tool %s "
+            "(request %s)",
+            tool_name,
+            str(replay.get("request_id") or "")[:8],
+        )
+        return True
+
     async def _acting_hook_denied(
         self,
         tool_call: dict[str, Any],
@@ -781,15 +835,30 @@ class ToolGuardMixin:
                 pre_hook_result.reason,
             )
         if pre_hook_result.decision == HookDecision.ASK:
-            return await self._acting_with_approval(
+            if self._approved_hook_ask_replay_matches(
                 tool_call,
                 tool_name,
-                self._hook_guard_result(
+                tool_input,
+                pre_hook_result,
+            ):
+                await self._record_tool_hook_result(
+                    pre_hook_result,
+                    event_name=HookEventName.PRE_TOOL_USE,
+                )
+            else:
+                return await self._acting_with_approval(
+                    tool_call,
                     tool_name,
-                    tool_input,
-                    pre_hook_result.reason,
-                ),
-            )
+                    self._hook_guard_result(
+                        tool_name,
+                        tool_input,
+                        pre_hook_result.reason,
+                    ),
+                    approval_kind=_APPROVAL_KIND_HOOK_PRE_TOOL_USE,
+                    hook_ask_handler_ids=self._hook_ask_handler_ids(
+                        pre_hook_result,
+                    ),
+                )
 
         await self._notify_skill_detector_tool_call(
             tool_name,
@@ -969,6 +1038,7 @@ class ToolGuardMixin:
             session_id,
             tool_name,
             tool_params=tool_input,
+            approval_kind=_APPROVAL_KIND_TOOL_GUARD,
         )
         if consumed:
             logger.info(
@@ -1062,6 +1132,9 @@ class ToolGuardMixin:
         tool_call: dict[str, Any],
         tool_name: str,
         guard_result,
+        *,
+        approval_kind: str = _APPROVAL_KIND_TOOL_GUARD,
+        hook_ask_handler_ids: list[str] | None = None,
     ) -> dict | None:
         """Deny the tool call and record a pending approval."""
         from agentscope.message import ToolResultBlock
@@ -1080,7 +1153,12 @@ class ToolGuardMixin:
                 original_msg = msg
                 break
 
-        extra: dict[str, Any] = {"tool_call": tool_call}
+        extra: dict[str, Any] = {
+            "approval_kind": approval_kind,
+            "tool_call": tool_call,
+        }
+        if hook_ask_handler_ids:
+            extra["hook_ask_handler_ids"] = list(hook_ask_handler_ids)
 
         # Preserve thinking blocks from the original message
         if original_msg is not None:
@@ -1421,6 +1499,11 @@ class ToolGuardMixin:
                 "denyCommand": "/deny",
             },
         }
+        if request_id:
+            metadata["approval_action"][
+                "approveCommand"
+            ] = f"/approve {request_id}"
+            metadata["approval_action"]["denyCommand"] = f"/deny {request_id}"
         self._tool_guard_pending_message_metadata = metadata
         return await self._emit_assistant_msg(
             f"⏳ `{tool_name}`调用需要审批\n" f"```json\n{params_text}\n```\n",

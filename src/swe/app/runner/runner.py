@@ -110,6 +110,22 @@ _DENY_EXACT = frozenset(
 )
 
 
+def _match_command_with_optional_id(
+    text: str,
+    commands: frozenset[str],
+) -> tuple[bool, str | None]:
+    normalized = " ".join(text.split()).lower()
+    for command in sorted(commands, key=len, reverse=True):
+        if normalized == command:
+            return True, None
+        prefix = f"{command} "
+        if normalized.startswith(prefix):
+            request_id = normalized[len(prefix) :].strip()
+            if request_id:
+                return True, request_id
+    return False, None
+
+
 def _extract_memory_entry_payload(entry: Any) -> dict[str, Any] | None:
     """提取内存条目里的消息载荷。"""
     if isinstance(entry, list) and entry and isinstance(entry[0], dict):
@@ -189,20 +205,73 @@ def _build_task_run_record(
 
 
 def _is_approval(text: str) -> bool:
-    """Return True only when *text* is exactly ``approve``,
-    ``/approve``, or ``/daemon approve`` (case-insensitive).
+    """Return True when *text* is an approve command.
 
-    Leading/trailing whitespace and blank lines are stripped before
-    comparison.  Everything else is treated as denial.
+    The command may optionally include an approval request id.
     """
-    normalized = " ".join(text.split()).lower()
-    return normalized in _APPROVE_EXACT
+    matched, _request_id = _match_command_with_optional_id(
+        text,
+        _APPROVE_EXACT,
+    )
+    return matched
 
 
 def _is_denial(text: str) -> bool:
     """Return True only when *text* is an explicit deny command."""
-    normalized = " ".join(text.split()).lower()
-    return normalized in _DENY_EXACT
+    matched, _request_id = _match_command_with_optional_id(text, _DENY_EXACT)
+    return matched
+
+
+def _approval_request_id(text: str) -> str | None:
+    matched, request_id = _match_command_with_optional_id(
+        text,
+        _APPROVE_EXACT,
+    )
+    return request_id if matched else None
+
+
+def _denial_request_id(text: str) -> str | None:
+    matched, request_id = _match_command_with_optional_id(text, _DENY_EXACT)
+    return request_id if matched else None
+
+
+def _approval_replay_metadata(record) -> dict[str, Any] | None:
+    if not isinstance(record.extra, dict):
+        return None
+    approval_kind = record.extra.get("approval_kind", "tool_guard")
+    if approval_kind != "hook_pre_tool_use":
+        return None
+    tool_call = record.extra.get("tool_call")
+    if not isinstance(tool_call, dict):
+        return None
+    return {
+        "request_id": record.request_id,
+        "approval_kind": approval_kind,
+        "tool_call_id": tool_call.get("id", ""),
+        "tool_name": tool_call.get("name") or record.tool_name,
+        "tool_input": tool_call.get("input", {}),
+        "hook_ask_handler_ids": list(
+            record.extra.get("hook_ask_handler_ids") or [],
+        ),
+    }
+
+
+async def _select_pending_approval(
+    svc,
+    *,
+    session_id: str,
+    request_id: str | None,
+):
+    if request_id:
+        pending = await svc.get_request(request_id)
+        if (
+            pending is not None
+            and pending.session_id == session_id
+            and pending.status == "pending"
+        ):
+            return pending
+        return None
+    return await svc.get_pending_by_session(session_id)
 
 
 def _load_tenant_hook_config(tenant_id: str | None) -> HookConfig:
@@ -879,7 +948,15 @@ class AgentRunner(Runner):
         from ..approvals import get_approval_service
 
         svc = get_approval_service()
-        pending = await svc.get_pending_by_session(session_id)
+        normalized = (query or "").strip().lower()
+        request_id = _approval_request_id(normalized) or _denial_request_id(
+            normalized,
+        )
+        pending = await _select_pending_approval(
+            svc,
+            session_id=session_id,
+            request_id=request_id,
+        )
         if pending is None:
             return None, False, None
 
@@ -909,7 +986,6 @@ class AgentRunner(Runner):
                 None,
             )
 
-        normalized = (query or "").strip().lower()
         if _is_approval(normalized):
             resolved = await svc.resolve_request(
                 pending.request_id,
@@ -931,6 +1007,11 @@ class AgentRunner(Runner):
                     if isinstance(thinking_blocks, list):
                         approved_tool_call["_thinking_blocks"] = (
                             thinking_blocks
+                        )
+                    replay_metadata = _approval_replay_metadata(record)
+                    if replay_metadata is not None:
+                        approved_tool_call["_approval_replay"] = (
+                            replay_metadata
                         )
             return None, True, approved_tool_call
 
