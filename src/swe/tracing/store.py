@@ -122,17 +122,18 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_traces (
-                trace_id, source_id, user_id, session_id, channel, start_time,
+                trace_id, source_id, user_id, session_id, session_name, channel, start_time,
                 end_time, duration_ms, model_name, total_input_tokens,
                 total_output_tokens, total_tokens, tools_used, skills_used,
                 status, error, user_message, user_name, bbk_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             trace.trace_id,
             trace.source_id,
             trace.user_id,
             trace.session_id,
+            trace.session_name,
             trace.channel,
             trace.start_time,
             trace.end_time,
@@ -1663,7 +1664,7 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get sessions with skill counts from spans
-        # 同时获取 user_name 和 bbk_id（取最近一条有值的记录）
+        # 同时获取 user_name、bbk_id 和 session_name（取最近一条有值的记录）
         offset = (page - 1) * page_size
         if source_id == "all":
             query = f"""
@@ -1682,7 +1683,10 @@ class TraceStore:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       (SELECT t4.session_name FROM swe_tracing_traces t4
+                        WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                        ORDER BY t4.start_time DESC LIMIT 1) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
@@ -1708,7 +1712,11 @@ class TraceStore:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       (SELECT t4.session_name FROM swe_tracing_traces t4
+                        WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                        AND t4.source_id = %s
+                        ORDER BY t4.start_time DESC LIMIT 1) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
@@ -1717,7 +1725,7 @@ class TraceStore:
             """
             # 子查询的 source_id 参数必须在最前面，因为 SQL 中子查询先出现
             params = (
-                [source_id, source_id, source_id]
+                [source_id, source_id, source_id, source_id]
                 + params
                 + [page_size, offset]
             )
@@ -1725,6 +1733,7 @@ class TraceStore:
         sessions = [
             SessionListItem(
                 session_id=row["session_id"],
+                session_name=row.get("session_name"),
                 user_id=row["user_id"],
                 user_name=row["user_name"],
                 bbk_id=row["bbk_id"],
@@ -2698,6 +2707,7 @@ class TraceStore:
             source_id=row["source_id"],
             user_id=row["user_id"],
             session_id=row["session_id"],
+            session_name=row.get("session_name"),
             channel=row["channel"],
             start_time=row["start_time"],
             end_time=row["end_time"],

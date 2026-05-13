@@ -183,6 +183,7 @@ class CronExecutor:
                         user_message=None,  # text 任务无用户输入
                         user_name=job.tenant_name,
                         bbk_id=job.bbk_id,
+                        session_name=job.name,  # 使用任务名称作为会话名称
                     )
                     # 写入 model_output 到 ES
                     if trace_id and job.text:

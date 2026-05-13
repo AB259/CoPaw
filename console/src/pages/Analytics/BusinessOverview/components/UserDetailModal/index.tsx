@@ -4,6 +4,7 @@ import { User } from "lucide-react";
 import {
   tracingApi,
   UserStats,
+  SessionStats,
   SessionListItem,
   TraceListItem,
 } from "../../../../../api/modules/tracing";
@@ -24,6 +25,10 @@ export default function UserDetailModal({
   // 用户统计状态
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [userLoading, setUserLoading] = useState(false);
+
+  // 会话统计状态
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [sessionStatsLoading, setSessionStatsLoading] = useState(false);
 
   // 会话列表状态
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -68,10 +73,6 @@ export default function UserDetailModal({
       });
       setSessions(data.items || []);
       setSessionsTotal(data.total || 0);
-      // 默认选中第一个会话
-      if (data.items && data.items.length > 0 && !selectedSessionId) {
-        setSelectedSessionId(data.items[0].session_id);
-      }
     } catch (error) {
       console.error("Failed to fetch sessions:", error);
       message.error("获取会话列表失败");
@@ -79,6 +80,25 @@ export default function UserDetailModal({
       setSessionsLoading(false);
     }
   }, [userId, startDate, endDate, sourceId, sessionsPageSize]);
+
+  // 获取会话统计
+  const fetchSessionStats = useCallback(async (sessionId: string) => {
+    setSessionStatsLoading(true);
+    try {
+      const data = await tracingApi.getSessionStats(
+        sessionId,
+        startDate,
+        endDate,
+        sourceId,
+      );
+      setSessionStats(data);
+    } catch (error) {
+      console.error("Failed to fetch session stats:", error);
+      message.error("获取会话统计失败");
+    } finally {
+      setSessionStatsLoading(false);
+    }
+  }, [startDate, endDate, sourceId]);
 
   // 获取对话列表
   const fetchTraces = useCallback(async (sessionId: string, page: number) => {
@@ -115,12 +135,16 @@ export default function UserDetailModal({
     if (selectedSessionId) {
       fetchTraces(selectedSessionId, 1);
       setTracesPage(1);
+    } else {
+      setTraces([]);
+      setTracesTotal(0);
     }
   }, [selectedSessionId, fetchTraces]);
 
   // 关闭时重置状态
   const handleClose = () => {
     setUserStats(null);
+    setSessionStats(null);
     setSessions([]);
     setSessionsTotal(0);
     setSessionsPage(1);
@@ -137,9 +161,17 @@ export default function UserDetailModal({
     fetchSessions(page);
   };
 
-  // 会话选中变化
+  // 会话选中变化 - 点击已选中的会话则取消选中
   const handleSessionSelect = (sessionId: string) => {
-    setSelectedSessionId(sessionId);
+    if (selectedSessionId === sessionId) {
+      // 取消选中
+      setSelectedSessionId(null);
+      setSessionStats(null);
+    } else {
+      // 选中新会话
+      setSelectedSessionId(sessionId);
+      fetchSessionStats(sessionId);
+    }
   };
 
   // 对话分页变化
@@ -149,6 +181,9 @@ export default function UserDetailModal({
       fetchTraces(selectedSessionId, page);
     }
   };
+
+  // 判断当前显示的是用户级还是会话级统计
+  const showSessionStats = selectedSessionId !== null && sessionStats !== null;
 
   return (
     <Modal
@@ -160,7 +195,7 @@ export default function UserDetailModal({
       }
       open={open}
       onCancel={handleClose}
-      width={800}
+      width={1000}
       footer={null}
       destroyOnClose
     >
@@ -170,9 +205,13 @@ export default function UserDetailModal({
         </div>
       ) : userStats ? (
         <div className={styles.modalContent}>
-          {/* 顶部：用户统计 */}
+          {/* 顶部：统计信息 */}
           <div className={styles.topSection}>
-            <UserStatsHeader userStats={userStats} />
+            <UserStatsHeader
+              userStats={userStats}
+              sessionStats={showSessionStats ? sessionStats : null}
+              loading={sessionStatsLoading}
+            />
           </div>
 
           {/* 下方：会话列表 + 对话流 */}
