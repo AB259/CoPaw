@@ -299,6 +299,28 @@ class TraceManager:
                 self.config.max_output_length,
             )
 
+        # 确定 session_name 的写入逻辑：
+        # 1. 新增会话：写入当前消息作为 session_name
+        # 2. 存量会话：查询第一条消息作为 session_name
+        # 每一条 trace 都需要写入 session_name
+        effective_session_name = None
+        if session_name:
+            # 检查是否为存量会话（跨所有 source_id 查询）
+            has_traces = await self.store.has_session_traces(session_id)
+            if has_traces:
+                # 存量会话：查询第一条消息作为 session_name（跨所有 source_id 查询）
+                first_msg = await self.store.get_session_first_message(
+                    session_id,
+                )
+                if first_msg:
+                    effective_session_name = first_msg[:10]
+                else:
+                    # 如果第一条消息为空，使用当前消息作为会话名称
+                    effective_session_name = session_name
+            else:
+                # 新增会话：写入当前消息作为 session_name
+                effective_session_name = session_name
+
         trace = Trace(
             trace_id=trace_id,
             source_id=source_id,
@@ -306,7 +328,7 @@ class TraceManager:
             user_name=user_name,
             bbk_id=bbk_id,
             session_id=session_id,
-            session_name=session_name,
+            session_name=effective_session_name,
             channel=channel,
             start_time=datetime.now(),
             status=TraceStatus.RUNNING,
@@ -326,7 +348,7 @@ class TraceManager:
             source_id,
             user_name=user_name,
             bbk_id=bbk_id,
-            session_name=session_name,
+            session_name=effective_session_name,
         )
         ctx.trace = trace
         set_current_trace(ctx)

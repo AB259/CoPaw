@@ -28,7 +28,6 @@ export default function UserDetailModal({
 
   // 会话统计状态
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
-  const [sessionStatsLoading, setSessionStatsLoading] = useState(false);
 
   // 会话列表状态
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -83,7 +82,6 @@ export default function UserDetailModal({
 
   // 获取会话统计
   const fetchSessionStats = useCallback(async (sessionId: string) => {
-    setSessionStatsLoading(true);
     try {
       const data = await tracingApi.getSessionStats(
         sessionId,
@@ -95,8 +93,6 @@ export default function UserDetailModal({
     } catch (error) {
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
-    } finally {
-      setSessionStatsLoading(false);
     }
   }, [startDate, endDate, sourceId]);
 
@@ -210,7 +206,6 @@ export default function UserDetailModal({
             <UserStatsHeader
               userStats={userStats}
               sessionStats={showSessionStats ? sessionStats : null}
-              loading={sessionStatsLoading}
             />
           </div>
 
@@ -235,6 +230,7 @@ export default function UserDetailModal({
                 page={tracesPage}
                 pageSize={tracesPageSize}
                 loading={tracesLoading}
+                hasSelectedSession={selectedSessionId !== null}
                 onPageChange={handleTracesPageChange}
               />
             </div>

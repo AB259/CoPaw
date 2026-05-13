@@ -1666,8 +1666,9 @@ class TracingQueryService:
             # 3. SELECT 子查询2: t2.source_id NOT IN (...)
             # 4. SELECT 子查询3: t3.source_id NOT IN (...)
             # 5. SELECT 子查询4: t4.source_id NOT IN (...) (session_name)
-            # 6. WHERE {where_sql} 的参数
-            # 7. LIMIT %s OFFSET %s
+            # 6. SELECT 子查询5: t5.source_id NOT IN (...) (user_message fallback)
+            # 7. WHERE {where_sql} 的参数
+            # 8. LIMIT %s OFFSET %s
             query = f"""
                 SELECT t.session_id,
                        t.user_id,
@@ -1688,10 +1689,19 @@ class TracingQueryService:
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                         AND t3.source_id NOT IN ({exclude_placeholders})
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       (SELECT t4.session_name FROM swe_tracing_traces t4
-                        WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
-                        AND t4.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t4.start_time DESC LIMIT 1) as session_name
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            AND t4.source_id NOT IN ({exclude_placeholders})
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                AND t5.source_id NOT IN ({exclude_placeholders})
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
@@ -1699,13 +1709,18 @@ class TracingQueryService:
                 LIMIT %s OFFSET %s
             """
             # 参数按 SQL 占位符出现顺序构建：
-            # 子查询1参数 + 子查询2参数 + 子查询3参数 + 子查询4参数 + WHERE参数 + LIMIT/OFFSET
+            # 子查询1参数 + 子查询2参数 + 子查询3参数 + 子查询4参数 + 子查询5参数 + WHERE参数 + LIMIT/OFFSET
             params = (
                 list(EXCLUDED_SOURCE_IDS)  # 子查询1: s.source_id NOT IN
                 + skill_params  # 子查询1: 日期条件
                 + list(EXCLUDED_SOURCE_IDS)  # 子查询2: t2.source_id NOT IN
                 + list(EXCLUDED_SOURCE_IDS)  # 子查询3: t3.source_id NOT IN
-                + list(EXCLUDED_SOURCE_IDS)  # 子查询4: t4.source_id NOT IN
+                + list(
+                    EXCLUDED_SOURCE_IDS,
+                )  # 子查询4: t4.source_id NOT IN (session_name)
+                + list(
+                    EXCLUDED_SOURCE_IDS,
+                )  # 子查询5: t5.source_id NOT IN (user_message fallback)
                 + params  # WHERE 子句参数
                 + [page_size, offset]
             )
@@ -1728,21 +1743,30 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       (SELECT t4.session_name FROM swe_tracing_traces t4
-                        WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
-                        AND t4.source_id = %s
-                        ORDER BY t4.start_time DESC LIMIT 1) as session_name
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            AND t4.source_id = %s
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                AND t5.source_id = %s
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            # 参数顺序: 子查询1 + 子查询2 + 子查询3 + 子查询4 + WHERE参数 + LIMIT/OFFSET
+            # 参数顺序: 子查询1 + 子查询2 + 子查询3 + 子查询4 + 子查询5 + WHERE参数 + LIMIT/OFFSET
             params = (
                 [source_id]
                 + skill_params
-                + [source_id, source_id, source_id]
+                + [source_id, source_id, source_id, source_id]
                 + params
                 + [page_size, offset]
             )
@@ -2106,10 +2130,12 @@ class TracingQueryService:
                 ORDER BY t.start_time DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend(
-                list(EXCLUDED_SOURCE_IDS)
-                + list(EXCLUDED_SOURCE_IDS)
-                + [page_size, offset],
+            # 参数顺序：子查询参数（按 SQL 出现顺序）+ WHERE 参数 + LIMIT/OFFSET
+            params = (
+                list(EXCLUDED_SOURCE_IDS)  # 子查询1: t2.source_id NOT IN
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询2: t3.source_id NOT IN
+                + params  # WHERE 子句参数
+                + [page_size, offset]
             )
         else:
             query = f"""

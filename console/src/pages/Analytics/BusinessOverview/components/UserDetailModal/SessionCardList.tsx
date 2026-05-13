@@ -1,4 +1,5 @@
-import { Pagination, Spin, Tooltip } from "antd";
+import { Pagination, Spin, Tooltip, message } from "antd";
+import { Copy } from "lucide-react";
 import { SessionListItem } from "../../../../../api/modules/tracing";
 import styles from "./index.module.less";
 
@@ -66,6 +67,16 @@ export default function SessionCardList({
     return <div className={className}>{truncated}</div>;
   };
 
+  // 复制会话 ID
+  const handleCopySessionId = (
+    e: React.MouseEvent,
+    sessionId: string,
+  ) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sessionId);
+    message.success("会话 ID 已复制");
+  };
+
   return (
     <div className={styles.sessionList}>
       <div className={styles.sessionListTitle}>会话列表</div>
@@ -86,11 +97,20 @@ export default function SessionCardList({
               }`}
               onClick={() => onSelect(session.session_id)}
             >
-              {renderTruncatedText(
-                session.session_id,
-                20,
-                styles.sessionId,
-              )}
+              <div className={styles.sessionIdRow}>
+                {renderTruncatedText(
+                  session.session_id,
+                  20,
+                  styles.sessionId,
+                )}
+                <Tooltip title="复制会话 ID">
+                  <Copy
+                    size={14}
+                    className={styles.copyIcon}
+                    onClick={(e) => handleCopySessionId(e, session.session_id)}
+                  />
+                </Tooltip>
+              </div>
               {session.session_name && (
                 <div className={styles.sessionName}>
                   {session.session_name.length > 24 ? (

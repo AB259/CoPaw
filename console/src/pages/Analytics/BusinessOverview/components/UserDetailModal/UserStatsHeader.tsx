@@ -1,19 +1,18 @@
-import { Descriptions, Tag, Tooltip, Spin } from "antd";
+import { Descriptions, Tag, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
-import { UserStats, SessionStats } from "../../../../../api/modules/tracing";
+import { UserStats, SessionStats, ModelUsage, ToolUsage, SkillUsage, MCPToolUsage } from "../../../../../api/modules/tracing";
 import { useMemo } from "react";
 
 interface UserStatsHeaderProps {
   userStats: UserStats;
   sessionStats?: SessionStats | null;
-  loading?: boolean;
 }
 
 /** 获取使用统计数据的活跃来源（用于模型、工具、技能） */
 function getActiveUsageStats(
   sessionStats: SessionStats | null | undefined,
   userStats: UserStats
-): { model_usage: unknown[]; mcp_tools_used: unknown[]; skills_used: unknown[] } {
+): { model_usage: ModelUsage[]; mcp_tools_used: MCPToolUsage[]; skills_used: SkillUsage[] } {
   // 如果选中了会话，使用会话级数据；否则使用用户级数据
   const active = sessionStats || userStats;
   return {
@@ -141,7 +140,6 @@ function TagList({
 export default function UserStatsHeader({
   userStats,
   sessionStats,
-  loading,
 }: UserStatsHeaderProps) {
   const { t } = useTranslation();
 
@@ -154,7 +152,7 @@ export default function UserStatsHeader({
   // 准备模型使用数据
   const modelItems = useMemo(
     () =>
-      activeUsageStats.model_usage.map((m: { model_name: string; count: number }) => ({
+      activeUsageStats.model_usage.map((m) => ({
         name: m.model_name,
         count: m.count,
       })),
@@ -164,7 +162,7 @@ export default function UserStatsHeader({
   // 准备 MCP 工具使用数据
   const mcpToolItems = useMemo(
     () =>
-      (activeUsageStats.mcp_tools_used || []).map((tool: { tool_name: string; mcp_server: string; count: number; error_count?: number }) => ({
+      (activeUsageStats.mcp_tools_used || []).map((tool) => ({
         name: `${tool.tool_name} (${tool.mcp_server})`,
         count: tool.count,
         error_count: tool.error_count,
@@ -175,7 +173,7 @@ export default function UserStatsHeader({
   // 准备技能使用数据
   const skillItems = useMemo(
     () =>
-      activeUsageStats.skills_used.map((s: { skill_name: string; count: number }) => ({
+      activeUsageStats.skills_used.map((s) => ({
         name: s.skill_name,
         count: s.count,
       })),
@@ -184,28 +182,13 @@ export default function UserStatsHeader({
 
   return (
     <div>
-      {/* 统计区域标题 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          marginBottom: 12,
-          gap: 8,
-        }}
-      >
-        <span style={{ fontWeight: 600, fontSize: 14 }}>
-          用户统计
-        </span>
-        {loading && <Spin size="small" />}
-      </div>
-
       {/* 表格始终显示用户级别数据 */}
       <Descriptions column={2} bordered size="small">
         <Descriptions.Item label={t("analytics.totalSessions", "总会话数")} span={1}>
           {userStats.total_sessions}
         </Descriptions.Item>
         <Descriptions.Item label={t("analytics.conversations", "对话数")} span={1}>
-          {userStats.total_traces}
+          {userStats.total_conversations}
         </Descriptions.Item>
         <Descriptions.Item label={t("analytics.totalTokens", "总 Token")} span={1}>
           {formatTokens(userStats.total_tokens)}
