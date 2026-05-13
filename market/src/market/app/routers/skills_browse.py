@@ -130,15 +130,16 @@ def _check_zip_size(zf: zipfile.ZipFile) -> None:
 
 
 def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
-    """Security check for path traversal and invalid characters in zip entries.
+    """Zip 路径安全检查：拒绝危险字符，允许 Unicode 目录名。
 
-    Windows 文件系统不允许路径段包含空格、斜杠等特殊字符，
-    需要在解压前检测并拒绝此类 zip 文件。
+    只拒绝 Windows/NTFS 真正保留的字符和控制字符，
+    中文等 Unicode 目录名在后续步骤会通过 sanitize_skill_name 转为拼音。
     """
     import re
 
     root_path = tmp_dir.resolve()
-    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+    # Windows/NTFS 保留字符 + 控制字符（禁止用于目录/文件名）
+    _UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
     for info in zf.infolist():
         decoded_name = _decode_zip_filename(info.filename, info)
@@ -148,16 +149,15 @@ def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
         if not target.is_relative_to(root_path):
             raise ValueError(f"Unsafe path in zip: {info.filename}")
 
-        # 检查路径段是否只包含安全字符（Windows 文件系统兼容）
-        # 仅检查目录部分，不检查文件名（文件名可以有扩展名中的特殊字符）
+        # 检查目录段是否包含非法字符（仅拒绝真正危险的字符）
         path_parts = decoded_name.split("/")
         for i, part in enumerate(
             path_parts[:-1],
         ):  # 检查所有目录段，不检查最后一段（可能是文件名）
-            if part and not _SAFE_SEGMENT_RE.match(part):
+            if part and _UNSAFE_CHARS_RE.search(part):
                 raise ValueError(
                     f"Zip 文件中的目录名 '{part}' 包含非法字符（空格、斜杠等）。"
-                    "Windows 文件系统不支持此类路径。请修改 zip 文件中的目录名。",
+                    "请修改 zip 文件中的目录名。",
                 )
 
 
@@ -372,8 +372,8 @@ def _update_skill_json(
         except (json.JSONDecodeError, OSError):
             pass
 
-    # name 字段优先使用原始名称（用于前端展示）
-    skill_data["name"] = skill_data.get("name") or original_name or skill_name
+    # name 字段优先使用用户指定的名称（original_name），其次保留已有名称
+    skill_data["name"] = original_name or skill_data.get("name") or skill_name
 
     # 优先从 skill.json 获取 description，其次从 SKILL.md frontmatter
     if not skill_data.get("description"):
@@ -417,10 +417,19 @@ def _process_single_skill(
         original_name: 原始技能名称
     """
     if skill_name in existing_names and not overwrite:
+        # 递增计数器直到找到不冲突的建议名
+        counter = 1
+        while True:
+            suggested = f"{original_name}_{counter}"
+            safe_suggested = sanitize_skill_name(suggested)
+            if safe_suggested not in existing_names:
+                break
+            counter += 1
         return False, {
             "reason": "already_exists",
             "skill_name": skill_name,
-            "suggested_name": f"{skill_name}_1",
+            "original_name": original_name,
+            "suggested_name": suggested,
         }
 
     if not _import_skill_dir(
@@ -474,10 +483,18 @@ def _import_skill_from_zip(
             safe_skill_name = sanitize_skill_name(original_name)
 
             # 应用 rename_map 映射（用户手动指定的重命名）
+            # 需要传递解析：rename_map 可能包含链式映射
+            # 如 {A→B, B→C}，表示最终要将 A 重命名为 C
             if rename_map and original_name in rename_map:
-                safe_skill_name = sanitize_skill_name(
-                    rename_map[original_name],
-                )
+                resolved = original_name
+                seen = {resolved}
+                while resolved in rename_map:
+                    resolved = rename_map[resolved]
+                    if resolved in seen:
+                        break  # 防止循环引用
+                    seen.add(resolved)
+                original_name = resolved
+                safe_skill_name = sanitize_skill_name(original_name)
             elif target_name and len(found_skills) == 1:
                 safe_skill_name = sanitize_skill_name(target_name.strip())
 

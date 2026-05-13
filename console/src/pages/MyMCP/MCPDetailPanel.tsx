@@ -32,6 +32,7 @@ interface MCPDetailPanelProps {
   testing: boolean;
   testResult: MCPTestResult | null;
   isManager: boolean;
+  togglingClientKey?: string | null;
   onEdit: (clientKey: string) => void;
   onDelete: (mcp: MyMCPDetail) => void;
   onToggle: (clientKey: string, enabled: boolean) => void;
@@ -69,6 +70,7 @@ export function MCPDetailPanel({
   testing,
   testResult,
   isManager,
+  togglingClientKey,
   onEdit,
   onDelete,
   onToggle,
@@ -314,6 +316,7 @@ export function MCPDetailPanel({
             icon={<Power style={{ width: 12, height: 12 }} />}
             style={{ height: 28, fontSize: 12, borderRadius: 8 }}
             onClick={() => onToggle(mcp.client_key, !mcp.enabled)}
+            loading={togglingClientKey === mcp.client_key}
           >
             {mcp.enabled ? "已启用" : "已禁用"}
           </Button>

@@ -102,9 +102,9 @@ export default function MySkillsPage() {
         if (conflicts.length > 0) {
           message.destroy("upload");
           const resolveResult = await showConflictRenameModal(
-            conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
-              key: c.skill_name || "",
-              label: c.skill_name || "",
+            conflicts.map((c: { skill_name?: string; original_name?: string; suggested_name?: string }) => ({
+              key: c.original_name || c.skill_name || "",
+              label: c.original_name || c.skill_name || "",
               suggested_name: c.suggested_name || "",
             }))
           );
@@ -225,8 +225,12 @@ export default function MySkillsPage() {
     }
   }, []);
 
+  const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
+
   const handleToggleEnabled = useCallback(async (skill: MySkill) => {
+    if (togglingSkill) return;
     const action = skill.enabled ? "disable" : "enable";
+    setTogglingSkill(skill.skill_name);
     try {
       if (skill.enabled) {
         await mySkillsApi.disableSkill(skill.skill_name);
@@ -237,8 +241,10 @@ export default function MySkillsPage() {
       refresh();
     } catch (err) {
       message.error(`${action === "enable" ? "启用" : "禁用"}失败`);
+    } finally {
+      setTogglingSkill(null);
     }
-  }, [refresh]);
+  }, [refresh, togglingSkill]);
 
   const handleDelete = useCallback(async (skill: MySkill) => {
     try {
@@ -354,7 +360,7 @@ export default function MySkillsPage() {
       message.destroy("sync");
 
       setPublishInitialData({
-        skillName: skill.skill_name,
+        skillName: skill.display_name || skill.skill_name,
         description: skill.description || "",
         skillJson,
         skillMd,
@@ -726,6 +732,7 @@ export default function MySkillsPage() {
               icon={<Power style={{ width: 12, height: 12 }} />}
               style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={() => handleToggleEnabled(skill)}
+              loading={togglingSkill === skill.skill_name}
             >
               {skill.enabled ? "已启用" : "已禁用"}
             </Button>

@@ -4,12 +4,12 @@
  * 支持技能和 MCP 分发，统一交互和布局。
  */
 import { useEffect, useMemo, useState } from "react";
-import { Modal, message, Radio, Select, Spin, Button } from "antd";
-import { CheckOutlined } from "@ant-design/icons";
+import { Modal, message, Radio, Select, Spin, Button, Collapse } from "antd";
+import { CheckOutlined, UserOutlined } from "@ant-design/icons";
 import { marketApi, DistributeRequest } from "../../api/modules/market";
 import { marketMcpApi } from "../../api/modules/marketMcp";
 import { fetchTenantsBySource, TenantSourceInfo } from "../../api/modules/userInfo";
-import { BBK_ID_MAP } from "../../constants/bbk";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../constants/bbk";
 import { useIframeStore } from "../../stores/iframeStore";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import type { MarketSkill } from "../../api/modules/market";
@@ -73,6 +73,21 @@ export function DistributeTargetModal({
         .map((t) => t.tenant_id);
     }
     return tenantOptions.map((t) => t.tenant_id);
+  }, [targetMode, selectedBbkIds, tenantOptions]);
+
+  // 按机构分组用户列表（用于展示具体用户）
+  const groupedTenants = useMemo(() => {
+    if (targetMode !== "bbk_id" || selectedBbkIds.length === 0) return [];
+    return selectedBbkIds
+      .map((bbkId) => {
+        const users = tenantOptions.filter((t) => t.bbk_id === bbkId);
+        return {
+          bbkId,
+          bbkName: BBK_ID_TO_NAME_MAP[bbkId] || bbkId,
+          users,
+        };
+      })
+      .filter((group) => group.users.length > 0);
   }, [targetMode, selectedBbkIds, tenantOptions]);
 
   // 手动输入的租户 ID
@@ -243,6 +258,52 @@ export function DistributeTargetModal({
                 <div style={{ color: "#666", fontSize: 12 }}>
                   已选择 {selectedBbkIds.length} 个机构，涉及 {filteredTenantIds.length} 个用户
                 </div>
+                {/* 机构下用户明细 */}
+                {groupedTenants.length > 0 && (
+                  <Collapse
+                    size="small"
+                    items={groupedTenants.map((group) => ({
+                      key: group.bbkId,
+                      label: (
+                        <span style={{ fontSize: 13 }}>
+                          <UserOutlined style={{ marginRight: 6, color: "#1677ff" }} />
+                          {group.bbkName}
+                          <span style={{ color: "#999", marginLeft: 8 }}>
+                            {group.users.length} 人
+                          </span>
+                        </span>
+                      ),
+                      children: (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                            gap: 4,
+                          }}
+                        >
+                          {group.users.map((u) => (
+                            <div
+                              key={u.tenant_id}
+                              style={{
+                                fontSize: 12,
+                                color: "#333",
+                                padding: "2px 0",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                              title={u.tenant_name ? `${u.tenant_name} (${u.tenant_id})` : u.tenant_id}
+                            >
+                              {u.tenant_name
+                                ? `${u.tenant_name} (${u.tenant_id})`
+                                : u.tenant_id}
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                    }))}
+                  />
+                )}
               </div>
             )}
 
