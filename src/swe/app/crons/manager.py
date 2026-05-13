@@ -105,9 +105,22 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 return
             self._started = True
         self._load_system_job_ids()
-        await self._restore_external_job_ids()
+        # 调度平台不可用时不应阻塞工作空间初始化
+        try:
+            await self._restore_external_job_ids()
+        except Exception:
+            logger.warning(
+                "Failed to restore external job ids from scheduler",
+                exc_info=True,
+            )
         self._prefetch_task = asyncio.create_task(self._prefetch_loop())
-        await self._register_system_jobs()
+        try:
+            await self._register_system_jobs()
+        except Exception:
+            logger.warning(
+                "Failed to register system jobs to external scheduler",
+                exc_info=True,
+            )
 
     # ----- read/state -----
 
@@ -1702,7 +1715,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         if not hb.enabled:
             if ext_id:
-                await self._scheduler_adapter.pause_job(ext_id)
+                try:
+                    await self._scheduler_adapter.pause_job(ext_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to pause heartbeat on external scheduler",
+                        exc_info=True,
+                    )
             return
 
         cron = self._every_to_cron(hb.every)
@@ -1755,7 +1774,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         if not dream_cron:
             if ext_id:
-                await self._scheduler_adapter.pause_job(ext_id)
+                try:
+                    await self._scheduler_adapter.pause_job(ext_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to pause dream on external scheduler",
+                        exc_info=True,
+                    )
             return
 
         callback_url = self._build_callback_url("dream")

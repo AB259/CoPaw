@@ -78,24 +78,36 @@ async def internal_cron_callback(
 ):
     """外部调度平台统一回调端点。
 
-    从 jobParam（base64 JSON）中解码 tenant_id、agent_id、
-    task_type 和 job_id，分发到对应的 CronManager 方法。
+    支持两种参数传入方式：
+    1. jobParam（base64 JSON 包裹）→ 解码后提取参数
+    2. body 顶层直接携带 tenant_id / agent_id / task_type / job_id
+
+    根据 task_type 分发到对应的 CronManager 方法。
     """
     _verify_internal_token(x_internal_token)
 
     job_param = body.get("jobParam") or body.get("job_param") or ""
-    if not job_param:
-        raise HTTPException(status_code=400, detail="Missing jobParam")
+    if job_param:
+        # base64 JSON 包裹格式：jobParam 编码后下发，回调时原样传回
+        try:
+            params = json.loads(base64.urlsafe_b64decode(job_param))
+        except Exception as e:
+            logger.warning("Failed to decode jobParam: %s", e)
+            raise HTTPException(status_code=400, detail=f"Invalid jobParam: {e}")
+    else:
+        # 直接参数格式：外部平台直接将参数字段展开在 body 中
+        params = body
 
     try:
-        params = json.loads(base64.urlsafe_b64decode(job_param))
         tenant_id = params["tenant_id"]
         agent_id = params["agent_id"]
         task_type = params["task_type"]
         job_id = params.get("job_id", "")
-    except Exception as e:
-        logger.warning("Failed to decode jobParam: %s", e)
-        raise HTTPException(status_code=400, detail=f"Invalid jobParam: {e}")
+    except KeyError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required param in callback body: {e}",
+        )
 
     manager = getattr(request.app.state, "multi_agent_manager", None)
     if manager is None:
