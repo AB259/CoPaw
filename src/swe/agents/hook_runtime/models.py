@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -269,11 +269,103 @@ class HookOverlayEntry(BaseModel):
         return self.expires_at is not None and self.expires_at <= now
 
 
-class HookSessionOverlay(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+class LoadedSkillHookSource(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+        populate_by_name=True,
+        use_enum_values=True,
+    )
 
+    source_id: str = Field(alias="sourceId")
+    skill_name: str = Field(alias="skillName")
+    skill_root: str = Field(alias="skillRoot")
+    source_path: str = Field(alias="sourcePath")
+    hook_config: HookConfig = Field(alias="hookConfig")
+    loaded_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        alias="loadedAt",
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_loaded_skill_source(self) -> "LoadedSkillHookSource":
+        namespace = f"skill:{self.skill_name}:"
+        expected_source_id = f"skill:{self.skill_name}"
+        if self.source_id != expected_source_id:
+            raise ValueError(
+                "loaded skill hook source id must match skill namespace",
+            )
+        seen_handlers: set[str] = set()
+        for groups in self.hook_config.events.values():
+            for group in groups:
+                if group.id and not group.id.startswith(namespace):
+                    raise ValueError(
+                        "loaded skill hook matcher group ids must be namespaced",
+                    )
+                for handler in group.hooks:
+                    if not handler.id.startswith(namespace):
+                        raise ValueError(
+                            "loaded skill hook handler ids must be namespaced",
+                        )
+                    if handler.id in seen_handlers:
+                        raise ValueError(
+                            "duplicate loaded skill hook handler id",
+                        )
+                    seen_handlers.add(handler.id)
+        return self
+
+    def handler_ids(self) -> set[str]:
+        return self.hook_config.handler_ids()
+
+
+class HookSessionState(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+        populate_by_name=True,
+        use_enum_values=True,
+    )
+
+    loaded_skill_sources: list[LoadedSkillHookSource] = Field(
+        default_factory=list,
+        alias="loadedSkillSources",
+    )
     entries: list[HookOverlayEntry] = Field(default_factory=list)
     once_executed: dict[str, bool] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_session_state(self) -> "HookSessionState":
+        seen_source_ids: set[str] = set()
+        seen_skill_names: set[str] = set()
+        available_skill_handler_ids: set[str] = set()
+        for source in self.loaded_skill_sources:
+            if source.source_id in seen_source_ids:
+                raise ValueError("duplicate loaded skill hook source id")
+            if source.skill_name in seen_skill_names:
+                raise ValueError("duplicate loaded skill hook skill name")
+            seen_source_ids.add(source.source_id)
+            seen_skill_names.add(source.skill_name)
+            available_skill_handler_ids.update(source.handler_ids())
+
+        for entry in self.entries:
+            if entry.hook_id.startswith("skill:"):
+                if entry.hook_id not in available_skill_handler_ids:
+                    raise ValueError(
+                        "overlay references unknown loaded skill hook id",
+                    )
+        return self
+
+    def loaded_skill_handler_ids(self) -> set[str]:
+        ids: set[str] = set()
+        for source in self.loaded_skill_sources:
+            ids.update(source.handler_ids())
+        return ids
+
+    def has_loaded_skill_sources(self) -> bool:
+        return bool(self.loaded_skill_sources)
+
+
+class HookSessionOverlay(HookSessionState):
+    """Backward-compatible name for persisted session hook state."""
 
 
 class EffectiveHookHandler(BaseModel):

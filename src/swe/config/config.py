@@ -1319,6 +1319,17 @@ class ProcessLimitsConfig(BaseModel):
         return self
 
 
+class SkillHookHttpConfig(BaseModel):
+    """Tenant-approved destinations for skill-owned HTTP hooks."""
+
+    approved_urls: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Exact HTTP endpoint URLs that skill-owned hook handlers may call."
+        ),
+    )
+
+
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
@@ -1326,6 +1337,9 @@ class SecurityConfig(BaseModel):
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(
         default_factory=SkillScannerConfig,
+    )
+    skill_hook_http: SkillHookHttpConfig = Field(
+        default_factory=SkillHookHttpConfig,
     )
     process_limits: ProcessLimitsConfig = Field(
         default_factory=ProcessLimitsConfig,

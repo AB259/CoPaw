@@ -9,7 +9,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
 from uuid import uuid4
 
 import httpx
@@ -39,6 +39,8 @@ from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
+from ...agents.skill_invocation_detector import SkillInvocationDetector
+from ...agents.skills_manager import get_workspace_skills_dir
 from ...agents.hook_runtime import HookRuntime
 from ...agents.hook_runtime.models import (
     HookConfig,
@@ -46,7 +48,12 @@ from ...agents.hook_runtime.models import (
     HookDecision,
     HookEventName,
     HookSessionOverlay,
+    HookSessionState,
     MergedHookResult,
+)
+from ...agents.hook_runtime.skill_loader import (
+    SkillHookLoadError,
+    load_skill_hooks_for_session,
 )
 from ...security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ...config.config import (
@@ -212,11 +219,16 @@ def _load_tenant_hook_config(tenant_id: str | None) -> HookConfig:
 def _hook_config_enabled(
     tenant_hooks: HookConfig | None,
     agent_config: Any,
+    session_state: HookSessionState | None = None,
 ) -> bool:
     agent_hooks = getattr(agent_config, "hooks", None)
     return bool(
         (tenant_hooks is not None and tenant_hooks.enabled)
-        or (agent_hooks is not None and agent_hooks.enabled),
+        or (agent_hooks is not None and agent_hooks.enabled)
+        or (
+            session_state is not None
+            and session_state.has_loaded_skill_sources()
+        ),
     )
 
 
@@ -247,6 +259,75 @@ async def _load_session_hook_overlay(
     except Exception:
         logger.warning("Invalid hook_overlay session state", exc_info=True)
         return HookSessionOverlay()
+
+
+def _load_tenant_approved_skill_hook_http_urls(
+    tenant_id: str | None,
+) -> set[str]:
+    try:
+        from ...config.utils import get_tenant_config_path, load_config
+
+        config_path = get_tenant_config_path(tenant_id) if tenant_id else None
+        security = load_config(config_path).security
+        skill_hook_http = getattr(security, "skill_hook_http", None)
+        urls = getattr(skill_hook_http, "approved_urls", None) or []
+        return {str(url) for url in urls if str(url).strip()}
+    except Exception:
+        logger.debug(
+            "Failed to load tenant skill hook HTTP approvals",
+            exc_info=True,
+        )
+        return set()
+
+
+def _create_session_skill_detector(
+    *,
+    workspace_dir: Path,
+    tenant_id: str | None,
+    user_id: str,
+    session_id: str,
+    channel: str,
+    source_id: str,
+    enabled_skills: list[str],
+    get_hook_state: Callable[[], HookSessionState],
+    set_hook_state: Callable[[HookSessionState], None],
+    approved_http_urls: Collection[str] | None = None,
+) -> SkillInvocationDetector:
+    workspace = Path(workspace_dir)
+    approvals = (
+        set(approved_http_urls)
+        if approved_http_urls is not None
+        else _load_tenant_approved_skill_hook_http_urls(tenant_id)
+    )
+
+    async def _load_skill_hooks(skill_name: str) -> None:
+        skill_root = get_workspace_skills_dir(workspace) / skill_name
+        try:
+            next_state = load_skill_hooks_for_session(
+                skill_name=skill_name,
+                skill_root=skill_root,
+                workspace_dir=workspace,
+                session_state=get_hook_state(),
+                approved_http_urls=approvals,
+            )
+        except SkillHookLoadError as exc:
+            logger.warning(
+                "Rejected hooks for skill '%s': %s",
+                skill_name,
+                exc,
+            )
+            return
+        set_hook_state(next_state)
+
+    detector = SkillInvocationDetector(
+        user_id=user_id,
+        session_id=session_id,
+        channel=channel,
+        source_id=source_id,
+        skill_hook_loader=_load_skill_hooks,
+    )
+    detector.set_enabled_skills(enabled_skills)
+    return detector
 
 
 def _build_runner_hook_context(
@@ -921,12 +1002,17 @@ class AgentRunner(Runner):
             tenant_id=self.tenant_id,
         )
         tenant_hooks = _load_tenant_hook_config(self.tenant_id)
-        if query and _hook_config_enabled(tenant_hooks, agent_config):
+        if query:
             hook_overlay = await _load_session_hook_overlay(
                 getattr(self, "session", None),
                 session_id=session_id,
                 user_id=user_id,
             )
+        if query and _hook_config_enabled(
+            tenant_hooks,
+            agent_config,
+            hook_overlay,
+        ):
             prompt_hook_result = await _emit_runner_hook(
                 HookEventName.USER_PROMPT_SUBMIT,
                 request=request,
@@ -1134,7 +1220,7 @@ class AgentRunner(Runner):
                     f"session_id={session_id}",
                 )
 
-            if _hook_config_enabled(tenant_hooks, agent_config):
+            if _hook_config_enabled(tenant_hooks, agent_config, hook_overlay):
                 session_start_result = await _emit_runner_hook(
                     HookEventName.SESSION_START,
                     request=request,
@@ -1208,6 +1294,61 @@ class AgentRunner(Runner):
             )
             await agent.register_mcp_clients()
             agent.set_console_output_enabled(enabled=False)
+
+            def _get_session_hook_state() -> HookSessionState:
+                return HookSessionState.model_validate(
+                    hook_overlay.model_dump(mode="json", by_alias=True),
+                )
+
+            def _set_session_hook_state(
+                next_state: HookSessionState,
+            ) -> None:
+                nonlocal hook_overlay
+                hook_overlay = HookSessionOverlay.model_validate(
+                    next_state.model_dump(mode="json", by_alias=True),
+                )
+                dumped = hook_overlay.model_dump(mode="json", by_alias=True)
+                agent._request_context["_hook_overlay_model"] = hook_overlay
+                agent._request_context["hook_overlay"] = dumped
+
+            channel_meta = getattr(request, "channel_meta", {}) or {}
+            source_id_for_hooks = (
+                getattr(request, "source_id", None)
+                or channel_meta.get("source_id")
+                or "default"
+            )
+            skill_detector = _create_session_skill_detector(
+                workspace_dir=Path(self.workspace_dir or WORKING_DIR),
+                tenant_id=self.tenant_id,
+                user_id=user_id,
+                session_id=session_id,
+                channel=channel,
+                source_id=source_id_for_hooks,
+                enabled_skills=(
+                    agent.get_effective_skills()
+                    if hasattr(agent, "get_effective_skills")
+                    else []
+                ),
+                get_hook_state=_get_session_hook_state,
+                set_hook_state=_set_session_hook_state,
+            )
+            if not hasattr(agent, "_request_context"):
+                agent._request_context = {}
+            agent._request_context["_skill_invocation_detector"] = (
+                skill_detector
+            )
+            user_message_for_skill = query or _get_last_user_text(msgs) or ""
+            if user_message_for_skill:
+                skill, confidence = skill_detector.detect_from_user_message(
+                    user_message_for_skill,
+                )
+                if skill and confidence >= 0.7:
+                    await skill_detector.start_skill(
+                        skill_name=skill,
+                        trigger_tool="user_message",
+                        trigger_reason="declared",
+                        confidence=confidence,
+                    )
 
             # Setup skill detector for tracing
             if trace_id:
@@ -1344,7 +1485,7 @@ class AgentRunner(Runner):
 
                 break
 
-            if _hook_config_enabled(tenant_hooks, agent_config):
+            if _hook_config_enabled(tenant_hooks, agent_config, hook_overlay):
                 stop_hook_result = await _emit_runner_hook(
                     HookEventName.STOP,
                     request=request,
@@ -1552,6 +1693,7 @@ class AgentRunner(Runner):
                                         and _hook_config_enabled(
                                             tenant_hooks,
                                             agent_config,
+                                            hook_overlay,
                                         )
                                     )
                                     else None

@@ -32,7 +32,16 @@ class HookResolver:
         self.now = now or datetime.now(timezone.utc)
 
     def resolve_event_plan(self, context: HookContext) -> EffectiveHookPlan:
-        if not self.tenant_config.enabled and not self.agent_config.enabled:
+        loaded_skill_configs = [
+            source.hook_config
+            for source in self.session_overlay.loaded_skill_sources
+            if source.hook_config.enabled
+        ]
+        if (
+            not self.tenant_config.enabled
+            and not self.agent_config.enabled
+            and not loaded_skill_configs
+        ):
             return EffectiveHookPlan(
                 event_name=context.hook_event_name,
                 context=context,
@@ -42,6 +51,8 @@ class HookResolver:
         available_ids = (
             self.tenant_config.handler_ids() | self.agent_config.handler_ids()
         )
+        for config in loaded_skill_configs:
+            available_ids.update(config.handler_ids())
         overlay_entries = {
             entry.hook_id: entry
             for entry in self.session_overlay.entries
@@ -52,7 +63,11 @@ class HookResolver:
         handlers: list[EffectiveHookHandler] = []
         seen: set[str] = set()
         order = 0
-        for config in (self.tenant_config, self.agent_config):
+        for config in (
+            self.tenant_config,
+            self.agent_config,
+            *loaded_skill_configs,
+        ):
             if not config.enabled:
                 continue
             event_name = _event_name_value(context.hook_event_name)

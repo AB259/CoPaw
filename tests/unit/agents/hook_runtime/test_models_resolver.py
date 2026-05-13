@@ -15,7 +15,9 @@ from swe.agents.hook_runtime.models import (
     HookMatcherConfig,
     HookMatcherGroupConfig,
     HookOverlayEntry,
+    HookSessionState,
     HookSessionOverlay,
+    LoadedSkillHookSource,
 )
 from swe.agents.hook_runtime.resolver import HookResolver
 
@@ -202,3 +204,229 @@ def test_resolver_applies_overlay_disable_expiration_and_once_scope() -> None:
         "enabled",
         "expired",
     ]
+
+
+def test_legacy_session_state_loads_with_empty_skill_sources() -> None:
+    state = HookSessionState.model_validate(
+        {
+            "entries": [
+                {
+                    "hookId": "tenant-hook",
+                    "enabled": False,
+                },
+            ],
+            "once_executed": {
+                "tenant-a:user-1:session-1:PreToolUse:tenant-hook": True,
+            },
+        },
+    )
+
+    assert state.loaded_skill_sources == []
+    assert state.entries[0].hook_id == "tenant-hook"
+    assert state.once_executed == {
+        "tenant-a:user-1:session-1:PreToolUse:tenant-hook": True,
+    }
+
+
+def test_session_state_serializes_loaded_skill_source() -> None:
+    loaded_at = datetime.now(timezone.utc)
+    state = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root="/workspace/skills/xlsx",
+                source_path="/workspace/skills/xlsx/hooks/hooks.json",
+                loaded_at=loaded_at,
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.PRE_TOOL_USE: [
+                            HookMatcherGroupConfig(
+                                id="skill:xlsx:shell",
+                                hooks=[
+                                    _handler("skill:xlsx:validate"),
+                                ],
+                            ),
+                        ],
+                    },
+                ),
+                metadata={"format": "hooks.json"},
+            ),
+        ],
+    )
+
+    data = state.model_dump(mode="json", by_alias=True)
+
+    assert data["loadedSkillSources"][0]["sourceId"] == "skill:xlsx"
+    assert (
+        data["loadedSkillSources"][0]["hookConfig"]["events"]["PreToolUse"][0][
+            "hooks"
+        ][0]["id"]
+        == "skill:xlsx:validate"
+    )
+
+
+def test_session_state_rejects_duplicate_loaded_skill_sources() -> None:
+    source = LoadedSkillHookSource(
+        source_id="skill:xlsx",
+        skill_name="xlsx",
+        skill_root="/workspace/skills/xlsx",
+        source_path="/workspace/skills/xlsx/hooks/hooks.json",
+        hook_config=HookConfig(
+            enabled=True,
+            events={
+                HookEventName.PRE_TOOL_USE: [
+                    HookMatcherGroupConfig(
+                        id="skill:xlsx:shell",
+                        hooks=[_handler("skill:xlsx:validate")],
+                    ),
+                ],
+            },
+        ),
+    )
+
+    with pytest.raises(ValidationError):
+        HookSessionState(
+            loaded_skill_sources=[source, source],
+        )
+
+
+def test_session_state_validates_skill_overlay_references() -> None:
+    source = LoadedSkillHookSource(
+        source_id="skill:xlsx",
+        skill_name="xlsx",
+        skill_root="/workspace/skills/xlsx",
+        source_path="/workspace/skills/xlsx/hooks/hooks.json",
+        hook_config=HookConfig(
+            enabled=True,
+            events={
+                HookEventName.PRE_TOOL_USE: [
+                    HookMatcherGroupConfig(
+                        id="skill:xlsx:shell",
+                        hooks=[_handler("skill:xlsx:validate")],
+                    ),
+                ],
+            },
+        ),
+    )
+
+    state = HookSessionState(
+        loaded_skill_sources=[source],
+        entries=[
+            HookOverlayEntry(hook_id="skill:xlsx:validate", enabled=False),
+        ],
+    )
+    assert state.entries[0].hook_id == "skill:xlsx:validate"
+
+    with pytest.raises(ValidationError):
+        HookSessionState(
+            loaded_skill_sources=[source],
+            entries=[
+                HookOverlayEntry(
+                    hook_id="skill:xlsx:missing",
+                    enabled=False,
+                ),
+            ],
+        )
+
+
+def test_resolver_merges_tenant_agent_and_loaded_skill_sources_in_order() -> (
+    None
+):
+    tenant = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.PRE_TOOL_USE: [
+                HookMatcherGroupConfig(
+                    id="tenant",
+                    hooks=[_handler("tenant-hook")],
+                ),
+            ],
+        },
+    )
+    agent = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.PRE_TOOL_USE: [
+                HookMatcherGroupConfig(
+                    id="agent",
+                    hooks=[_handler("agent-hook")],
+                ),
+            ],
+        },
+    )
+    state = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root="/workspace/skills/xlsx",
+                source_path="/workspace/skills/xlsx/hooks/hooks.json",
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.PRE_TOOL_USE: [
+                            HookMatcherGroupConfig(
+                                id="skill:xlsx:shell",
+                                hooks=[_handler("skill:xlsx:skill-hook")],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+    )
+
+    plan = HookResolver(
+        tenant_config=tenant,
+        agent_config=agent,
+        session_overlay=state,
+    ).resolve_event_plan(
+        _context(
+            HookEventName.PRE_TOOL_USE,
+            tool_name="execute_shell_command",
+        ),
+    )
+
+    assert [item.handler.id for item in plan.handlers] == [
+        "tenant-hook",
+        "agent-hook",
+        "skill:xlsx:skill-hook",
+    ]
+
+
+def test_resolver_allows_overlay_to_disable_loaded_skill_hook() -> None:
+    state = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root="/workspace/skills/xlsx",
+                source_path="/workspace/skills/xlsx/hooks/hooks.json",
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.STOP: [
+                            HookMatcherGroupConfig(
+                                id="skill:xlsx:stop",
+                                hooks=[_handler("skill:xlsx:stop-hook")],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+        entries=[
+            HookOverlayEntry(
+                hook_id="skill:xlsx:stop-hook",
+                enabled=False,
+            ),
+        ],
+    )
+
+    plan = HookResolver(session_overlay=state).resolve_event_plan(
+        _context(HookEventName.STOP, prompt="done"),
+    )
+
+    assert plan.handlers == ()

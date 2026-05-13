@@ -16,8 +16,12 @@ from swe.agents.hook_runtime.models import (
     HookEventName,
     HookHandlerResult,
     HookMatcherGroupConfig,
+    HookSessionState,
+    LoadedSkillHookSource,
     MergedHookResult,
 )
+from swe.agents.skill_invocation_detector import SkillInvocationDetector
+from swe.agents.skill_tool_registry import SkillToolRegistry
 from swe.agents.tool_guard_mixin import ToolGuardMixin
 
 
@@ -71,6 +75,38 @@ async def test_no_hook_config_preserves_tool_execution(tmp_path) -> None:
 
     assert result == {"content": {"path": "README.md"}}
     assert agent.memory.content == []
+
+
+def test_tool_hooks_enabled_accepts_loaded_skill_sources(tmp_path) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._request_context["_hook_overlay_model"] = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root="/workspace/skills/xlsx",
+                source_path="/workspace/skills/xlsx/hooks/hooks.json",
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.PRE_TOOL_USE: [
+                            HookMatcherGroupConfig(
+                                id="skill:xlsx:shell",
+                                hooks=[
+                                    CommandHookHandlerConfig(
+                                        id="skill:xlsx:hook",
+                                        command="echo {}",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+    )
+
+    assert agent._tool_hooks_enabled(HookConfig())
 
 
 @pytest.mark.asyncio
@@ -259,3 +295,84 @@ async def test_tool_hook_once_state_is_written_back_to_request_context(
     assert once_executed == {
         "default:user-1:session-1:PreToolUse:once": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_skill_activation_loads_hooks_for_later_tool_event(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    registry = SkillToolRegistry()
+    registry.register_skill_tools("xlsx", ["read_file"])
+    loaded_state = HookSessionState()
+
+    async def load_skill_hooks(skill_name: str) -> None:
+        nonlocal loaded_state
+        loaded_state = HookSessionState(
+            loaded_skill_sources=[
+                LoadedSkillHookSource(
+                    source_id=f"skill:{skill_name}",
+                    skill_name=skill_name,
+                    skill_root=str(tmp_path / "skills" / skill_name),
+                    source_path=str(
+                        tmp_path / "skills" / skill_name / "hooks/hooks.json",
+                    ),
+                    hook_config=HookConfig(
+                        enabled=True,
+                        events={
+                            HookEventName.POST_TOOL_USE: [
+                                HookMatcherGroupConfig(
+                                    id=f"skill:{skill_name}:post",
+                                    hooks=[
+                                        CommandHookHandlerConfig(
+                                            id=f"skill:{skill_name}:post-hook",
+                                            command="echo {}",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        },
+                    ),
+                ),
+            ],
+        )
+        agent._request_context["_hook_overlay_model"] = loaded_state
+        agent._request_context["hook_overlay"] = loaded_state.model_dump(
+            mode="json",
+            by_alias=True,
+        )
+
+    detector = SkillInvocationDetector(
+        registry=registry,
+        skill_hook_loader=load_skill_hooks,
+    )
+    detector.set_enabled_skills(["xlsx"])
+    agent._request_context["_skill_invocation_detector"] = detector
+    agent._request_context["_hook_overlay_model"] = loaded_state
+    calls = []
+
+    async def fake_execute_handler(handler, context, *, workspace_dir):
+        calls.append((handler.id, context.hook_event_name))
+        return HookHandlerResult(handler_id=handler.id, order=0)
+
+    monkeypatch.setattr(
+        "swe.agents.tool_guard_mixin.ToolGuardMixin._load_tenant_hook_config",
+        lambda self: HookConfig(),
+    )
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.runtime.execute_handler",
+        fake_execute_handler,
+    )
+
+    await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "read_file",
+            "input": {"path": "data.xlsx"},
+        },
+    )
+
+    assert calls == [
+        ("skill:xlsx:post-hook", HookEventName.POST_TOOL_USE),
+    ]

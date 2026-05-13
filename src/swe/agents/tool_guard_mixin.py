@@ -30,7 +30,7 @@ from .hook_runtime.models import (
     HookContext,
     HookDecision,
     HookEventName,
-    HookSessionOverlay,
+    HookSessionState,
     MergedHookResult,
 )
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
@@ -533,10 +533,23 @@ class ToolGuardMixin:
 
     def _tool_hooks_enabled(self, tenant_hooks: HookConfig) -> bool:
         agent_hooks = getattr(self._agent_config, "hooks", None)
+        session_state = self._get_hook_session_state()
         return bool(
             tenant_hooks.enabled
-            or (agent_hooks is not None and agent_hooks.enabled),
+            or (agent_hooks is not None and agent_hooks.enabled)
+            or session_state.has_loaded_skill_sources(),
         )
+
+    def _get_hook_session_state(self) -> HookSessionState:
+        overlay_ref = self._request_context.get("_hook_overlay_model")
+        if isinstance(overlay_ref, HookSessionState):
+            return overlay_ref
+        try:
+            return HookSessionState.model_validate(
+                self._request_context.get("hook_overlay") or {},
+            )
+        except Exception:
+            return HookSessionState()
 
     def _build_tool_hook_context(
         self,
@@ -595,18 +608,9 @@ class ToolGuardMixin:
         error: str | None = None,
     ) -> MergedHookResult:
         tenant_hooks = self._load_tenant_hook_config()
+        overlay = self._get_hook_session_state()
         if not self._tool_hooks_enabled(tenant_hooks):
             return MergedHookResult()
-        overlay_ref = self._request_context.get("_hook_overlay_model")
-        if isinstance(overlay_ref, HookSessionOverlay):
-            overlay = overlay_ref
-        else:
-            try:
-                overlay = HookSessionOverlay.model_validate(
-                    self._request_context.get("hook_overlay") or {},
-                )
-            except Exception:
-                overlay = HookSessionOverlay()
         agent_hooks = getattr(self._agent_config, "hooks", None)
         if not isinstance(agent_hooks, HookConfig):
             agent_hooks = HookConfig()
@@ -632,6 +636,24 @@ class ToolGuardMixin:
             by_alias=True,
         )
         return result
+
+    async def _notify_skill_detector_tool_call(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        mcp_server: str | None,
+    ) -> None:
+        detector = self._request_context.get("_skill_invocation_detector")
+        if detector is None or not hasattr(detector, "on_tool_call"):
+            return
+        try:
+            await detector.on_tool_call(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                mcp_server=mcp_server,
+            )
+        except Exception as exc:
+            logger.debug("Skill detector tool notification failed: %s", exc)
 
     async def _acting_hook_denied(
         self,
@@ -768,6 +790,12 @@ class ToolGuardMixin:
                     pre_hook_result.reason,
                 ),
             )
+
+        await self._notify_skill_detector_tool_call(
+            tool_name,
+            tool_input,
+            mcp_server,
+        )
 
         span_id = await self._emit_tool_trace_start(
             tool_name,

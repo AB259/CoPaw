@@ -9,14 +9,20 @@ from agentscope.message import Msg
 
 from swe.agents.hook_runtime.models import (
     CommandHookHandlerConfig,
+    LoadedSkillHookSource,
     HookConfig,
     HookDecision,
     HookEventName,
     HookMatcherGroupConfig,
+    HookSessionState,
     AdditionalContext,
     MergedHookResult,
 )
-from swe.app.runner.runner import AgentRunner
+from swe.app.runner.runner import (
+    AgentRunner,
+    _create_session_skill_detector,
+    _hook_config_enabled,
+)
 from swe.app.runner.session import SafeJSONSession
 from swe.config.config import SuggestionMode
 
@@ -96,6 +102,106 @@ def _patch_normal_agent_path(monkeypatch):
         "swe.app.runner.runner.build_env_context",
         lambda **kwargs: "base context",
     )
+
+
+def test_hook_config_enabled_accepts_loaded_skill_sources() -> None:
+    state = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root="/workspace/skills/xlsx",
+                source_path="/workspace/skills/xlsx/hooks/hooks.json",
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.STOP: [
+                            HookMatcherGroupConfig(
+                                id="skill:xlsx:stop",
+                                hooks=[
+                                    CommandHookHandlerConfig(
+                                        id="skill:xlsx:stop-hook",
+                                        command="echo {}",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+    )
+
+    assert _hook_config_enabled(HookConfig(), _agent_config(), state)
+
+
+@pytest.mark.asyncio
+async def test_create_session_skill_detector_loads_skill_hooks(
+    tmp_path,
+) -> None:
+    skill_root = tmp_path / "skills" / "xlsx"
+    (skill_root / "hooks").mkdir(parents=True)
+    (skill_root / "scripts").mkdir()
+    (skill_root / "scripts" / "check.py").write_text(
+        "print('{}')\n",
+        encoding="utf-8",
+    )
+    (skill_root / "hooks" / "hooks.json").write_text(
+        """
+        {
+          "enabled": true,
+          "events": {
+            "Stop": [
+              {
+                "hooks": [
+                  {
+                    "id": "stop",
+                    "type": "command",
+                    "argv": ["python", "scripts/check.py"]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    state = HookSessionState()
+
+    def get_state() -> HookSessionState:
+        return state
+
+    def set_state(new_state: HookSessionState) -> None:
+        nonlocal state
+        state = new_state
+
+    detector = _create_session_skill_detector(
+        workspace_dir=tmp_path,
+        tenant_id="tenant-a",
+        user_id="user-1",
+        session_id="session-1",
+        channel="console",
+        source_id="source-1",
+        enabled_skills=["xlsx"],
+        get_hook_state=get_state,
+        set_hook_state=set_state,
+        approved_http_urls=set(),
+    )
+
+    await detector.start_skill(
+        "xlsx",
+        trigger_tool="user_message",
+        trigger_reason="declared",
+    )
+
+    assert state.loaded_skill_sources[0].source_id == "skill:xlsx"
+    handler = (
+        state.loaded_skill_sources[0]
+        .hook_config.events[HookEventName.STOP][0]
+        .hooks[0]
+    )
+    assert handler.id == "skill:xlsx:stop"
 
 
 @pytest.mark.asyncio

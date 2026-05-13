@@ -9,6 +9,8 @@ from .models import (
     HookDecision,
     HookEventName,
     HookSessionOverlay,
+    HookSessionState,
+    LoadedSkillHookSource,
 )
 from .runtime import HookRuntime
 
@@ -21,4 +23,6 @@ __all__ = [
     "HookEventName",
     "HookRuntime",
     "HookSessionOverlay",
+    "HookSessionState",
+    "LoadedSkillHookSource",
 ]

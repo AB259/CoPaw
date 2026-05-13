@@ -71,3 +71,21 @@ def test_config_rejects_unsupported_mvp_hook_handler_type() -> None:
                 },
             },
         )
+
+
+def test_config_parses_skill_hook_http_approved_urls() -> None:
+    cfg = Config.model_validate(
+        {
+            "security": {
+                "skill_hook_http": {
+                    "approved_urls": [
+                        "https://hooks.example.test/skill",
+                    ],
+                },
+            },
+        },
+    )
+
+    assert cfg.security.skill_hook_http.approved_urls == [
+        "https://hooks.example.test/skill",
+    ]
