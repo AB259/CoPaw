@@ -440,7 +440,7 @@ class SuggestionConfig(BaseModel):
         description="是否启用猜你想问功能",
     )
     mode: SuggestionMode = Field(
-        default=SuggestionMode.QA_EXTRACTION_ONLY,
+        default=SuggestionMode.BACKEND_GENERATE,
         description="猜你想问生成模式",
     )
     max_suggestions: int = Field(
@@ -478,6 +478,47 @@ class SuggestionConfig(BaseModel):
         ge=30,
         le=300,
         description="Q&A 内容存储有效期（秒）",
+    )
+
+
+class PostTurnValidationConfig(BaseModel):
+    """回答后校验配置 - 判断任务是否完成并在必要时提示续跑."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="是否启用回答后的任务完成校验",
+    )
+    max_confirmed_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=5,
+        description="单次用户请求最多允许用户确认续跑的轮数",
+    )
+    max_auto_turns: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="每次用户请求或确认后最多允许全自动续跑的轮数",
+    )
+    timeout_seconds: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=20.0,
+        description="后校验模型调用超时时间（秒）",
+    )
+    user_message_max_length: int = Field(
+        default=300,
+        ge=50,
+        le=1000,
+        description="后校验时保留的用户任务长度上限",
+    )
+    assistant_response_max_length: int = Field(
+        default=1200,
+        ge=200,
+        le=4000,
+        description="后校验时保留的助手回答长度上限",
     )
 
 
@@ -622,13 +663,13 @@ class AgentsRunningConfig(BaseModel):
 
         normalized = dict(data)
         if normalized.get("llm_chat_max_concurrent") is None:
-            normalized[
-                "llm_chat_max_concurrent"
-            ] = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            normalized["llm_chat_max_concurrent"] = (
+                DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            )
         if normalized.get("llm_cron_max_concurrent") is None:
-            normalized[
-                "llm_cron_max_concurrent"
-            ] = DEFAULT_LLM_CRON_MAX_CONCURRENT
+            normalized["llm_cron_max_concurrent"] = (
+                DEFAULT_LLM_CRON_MAX_CONCURRENT
+            )
         return normalized
 
     @model_validator(mode="after")
@@ -715,6 +756,11 @@ class AgentsRunningConfig(BaseModel):
     suggestions: SuggestionConfig = Field(
         default_factory=SuggestionConfig,
         description="猜你想问功能配置",
+    )
+
+    post_turn_validation: PostTurnValidationConfig = Field(
+        default_factory=PostTurnValidationConfig,
+        description="回答后的任务完成校验与自动续跑配置",
     )
 
     @property
@@ -1729,9 +1775,11 @@ def migrate_legacy_config_to_multi_agent() -> bool:
             else AgentsLLMRoutingConfig()
         ),
         system_prompt_files=normalize_system_prompt_files(
-            legacy_agents.system_prompt_files
-            if legacy_agents.system_prompt_files
-            else None,
+            (
+                legacy_agents.system_prompt_files
+                if legacy_agents.system_prompt_files
+                else None
+            ),
         ),
         tools=config.tools if config.tools else None,
         security=config.security if config.security else None,

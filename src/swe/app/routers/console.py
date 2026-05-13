@@ -27,6 +27,10 @@ from starlette.responses import StreamingResponse
 
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
+from ..post_turn_continuation_store import (
+    claim_pending_continuation,
+    peek_latest_pending_continuation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ _TEXT_PREVIEW_MIME_TYPES = {
     "application/x-yaml",
     "application/toml",
 }
-_PREVIEW_TYPES = (
+PreviewType = Literal[
     "image",
     "video",
     "audio",
@@ -55,6 +59,71 @@ _PREVIEW_TYPES = (
     "text",
     "html",
     "other",
+]
+_PREVIEW_TYPES: tuple[PreviewType, ...] = (
+    "image",
+    "video",
+    "audio",
+    "office",
+    "pdf",
+    "markdown",
+    "text",
+    "html",
+    "other",
+)
+_PREVIEW_TYPE_BY_EXTENSION: dict[str, PreviewType] = {
+    **dict.fromkeys(
+        ("png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"),
+        "image",
+    ),
+    **dict.fromkeys(
+        ("mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"),
+        "video",
+    ),
+    **dict.fromkeys(
+        ("mp3", "wav", "flac", "ape", "aac", "ogg", "m4a"),
+        "audio",
+    ),
+    **dict.fromkeys(("doc", "docx", "xls", "xlsx", "ppt", "pptx"), "office"),
+    "pdf": "pdf",
+    "md": "markdown",
+    "mdx": "markdown",
+    "html": "html",
+    "htm": "html",
+    "xhtml": "html",
+    **dict.fromkeys(
+        (
+            "txt",
+            "json",
+            "xml",
+            "csv",
+            "log",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "conf",
+            "config",
+            "env",
+            "sh",
+            "bash",
+            "zsh",
+            "ps1",
+            "bat",
+            "cmd",
+        ),
+        "text",
+    ),
+}
+_PREVIEW_TYPE_BY_MIME: dict[str, PreviewType] = {
+    "application/pdf": "pdf",
+    "text/html": "html",
+    "application/xhtml+xml": "html",
+}
+_PREVIEW_MIME_PREFIXES: tuple[tuple[str, PreviewType], ...] = (
+    ("image/", "image"),
+    ("video/", "video"),
+    ("audio/", "audio"),
 )
 _UPLOADED_STORED_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}_(?P<name>.+)$")
 
@@ -122,73 +191,43 @@ def _resolve_display_name(
     return match.group("name") or file_name
 
 
+def _resolve_preview_type_from_mime(
+    mime_type: str | None,
+) -> PreviewType | None:
+    """在后缀无法判断时，根据 MIME 推断前端预览类型。"""
+    if not mime_type:
+        return None
+
+    for prefix, preview_type in _PREVIEW_MIME_PREFIXES:
+        if mime_type.startswith(prefix):
+            return preview_type
+
+    preview_type = _PREVIEW_TYPE_BY_MIME.get(mime_type)
+    if preview_type is not None:
+        return preview_type
+
+    if (
+        mime_type.startswith(_TEXT_PREVIEW_MIME_PREFIX)
+        or mime_type in _TEXT_PREVIEW_MIME_TYPES
+    ):
+        return "text"
+    return None
+
+
 def _resolve_preview_type(
     path: Path,
     mime_type: str | None,
-) -> Literal[
-    "image",
-    "video",
-    "audio",
-    "office",
-    "pdf",
-    "markdown",
-    "text",
-    "html",
-    "other",
-]:
+) -> PreviewType:
     """根据后缀、MIME 与内容嗅探给前端提供稳定预览类型。"""
     ext = path.suffix.lower().lstrip(".")
-    if ext in {"png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"}:
-        return "image"
-    if ext in {"mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"}:
-        return "video"
-    if ext in {"mp3", "wav", "flac", "ape", "aac", "ogg", "m4a"}:
-        return "audio"
-    if ext in {"doc", "docx", "xls", "xlsx", "ppt", "pptx"}:
-        return "office"
-    if ext == "pdf":
-        return "pdf"
-    if ext in {"md", "mdx"}:
-        return "markdown"
-    if ext in {"html", "htm", "xhtml"}:
-        return "html"
-    if ext in {
-        "txt",
-        "json",
-        "xml",
-        "csv",
-        "log",
-        "yaml",
-        "yml",
-        "toml",
-        "ini",
-        "conf",
-        "config",
-        "env",
-        "sh",
-        "bash",
-        "zsh",
-        "ps1",
-        "bat",
-        "cmd",
-    }:
-        return "text"
-    if mime_type:
-        if mime_type.startswith("image/"):
-            return "image"
-        if mime_type.startswith("video/"):
-            return "video"
-        if mime_type.startswith("audio/"):
-            return "audio"
-        if mime_type == "application/pdf":
-            return "pdf"
-        if mime_type in {"text/html", "application/xhtml+xml"}:
-            return "html"
-        if (
-            mime_type.startswith(_TEXT_PREVIEW_MIME_PREFIX)
-            or mime_type in _TEXT_PREVIEW_MIME_TYPES
-        ):
-            return "text"
+    preview_type = _PREVIEW_TYPE_BY_EXTENSION.get(ext)
+    if preview_type is not None:
+        return preview_type
+
+    preview_type = _resolve_preview_type_from_mime(mime_type)
+    if preview_type is not None:
+        return preview_type
+
     if _looks_like_text_file(path):
         return "text"
     return "other"
@@ -301,6 +340,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
 
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
     """
+    resume_id = None
     if isinstance(request_data, AgentRequest):
         channel_id = getattr(request_data, "channel", None) or "console"
         sender_id = request_data.user_id or "default"
@@ -308,11 +348,15 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         content_parts = (
             list(request_data.input[0].content) if request_data.input else []
         )
+        resume_id = getattr(request_data, "post_turn_validation_resume_id", None)
+
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
+        resume_id = request_data.get("post_turn_validation_resume_id")
+
 
         content_parts = []
         for content_part in input_data:
@@ -331,7 +375,15 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             "user_id": sender_id,
         },
     }
+    if resume_id:
+        native_payload["meta"]["post_turn_validation_resume_id"] = resume_id
     return native_payload
+
+
+class PostTurnValidationConsumeRequest(BaseModel):
+    """Request body for confirming a pending post-turn continuation."""
+
+    session_id: str = Field(..., description="Session id for validation scope")
 
 
 def _derive_chat_name(native_payload: dict) -> str:
@@ -477,6 +529,7 @@ async def post_console_chat(
         # Hold iterator so finally can aclose(); guarantees stream_from_queue's
         # finally (detach_subscriber) on client abort / generator teardown.
         stream_it = tracker.stream_from_queue(queue, run_key)
+        yield ": keep-alive\n\n"
         try:
             try:
                 async for event_data in stream_it:
@@ -638,6 +691,44 @@ async def get_suggestions(
     return {"suggestions": suggestions}
 
 
+@router.get("/post-turn-validation")
+async def get_post_turn_validation(
+    request: Request,
+    session_id: str = Query(
+        ...,
+        description="Session id to get pending post-turn validation result",
+    ),
+) -> dict:
+    """Return the latest pending continuation confirmation for a session."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    result = await peek_latest_pending_continuation(
+        session_id=session_id,
+        tenant_id=tenant_id,
+    )
+    return {"result": result}
+
+
+@router.post("/post-turn-validation/{validation_id}/consume")
+async def consume_post_turn_validation(
+    validation_id: str,
+    body: PostTurnValidationConsumeRequest,
+    request: Request,
+) -> dict:
+    """Confirm a pending continuation without exposing the internal prompt."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    result = await claim_pending_continuation(
+        validation_id=validation_id,
+        session_id=body.session_id,
+        tenant_id=tenant_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Post-turn validation result not found or expired",
+        )
+    return {"result": result}
+
+
 class QAContentRequest(BaseModel):
     """Q&A 内容请求模型."""
 
@@ -679,6 +770,7 @@ async def get_suggestions_qa_content(
 
     entry = await get_qa_content(
         chat_id=body.chat_id,
+        user_message=body.user_message,
         tenant_id=tenant_id,
     )
 
