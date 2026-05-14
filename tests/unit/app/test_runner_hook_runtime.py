@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -465,6 +466,95 @@ async def test_query_handler_injects_prompt_additional_context(
     assert request.channel_meta["session_title"] == "Hooked"
     assert "prompt context" in _FakeAgent.last_env_context
     assert "start context" in _FakeAgent.last_env_context
+
+
+@pytest.mark.asyncio
+async def test_query_handler_session_start_block_yields_before_cleanup(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    chat = SimpleNamespace(id="chat-1")
+    chat_manager = SimpleNamespace(
+        get_or_create_chat=AsyncMock(return_value=chat),
+        update_chat=AsyncMock(return_value=chat),
+    )
+    setattr(runner, "_chat_manager", chat_manager)
+
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def slow_cleanup(clients):
+        assert clients == ["mcp-client"]
+        cleanup_started.set()
+        await cleanup_release.wait()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._build_and_connect_mcp_clients",
+        AsyncMock(return_value=["mcp-client"]),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._cleanup_mcp_clients",
+        slow_cleanup,
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.build_env_context",
+        lambda **kwargs: "base context",
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._resolve_active_model_label",
+        lambda *args, **kwargs: "openai/gpt-test",
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        AsyncMock(
+            side_effect=[
+                MergedHookResult(),
+                MergedHookResult(
+                    decision=HookDecision.BLOCK,
+                    reason="session start blocked",
+                ),
+            ],
+        ),
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+    stream = runner.query_handler(msgs, request=request)
+    next_item = asyncio.create_task(anext(stream))
+
+    try:
+        done, _pending = await asyncio.wait({next_item}, timeout=0.05)
+        assert next_item in done
+        msg, last = next_item.result()
+        assert last is True
+        assert msg.get_text_content() == "session start blocked"
+        assert not cleanup_started.is_set()
+
+        close_task = asyncio.create_task(stream.aclose())
+        await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+        chat_manager.update_chat.assert_awaited_once_with(chat)
+        cleanup_release.set()
+        await asyncio.wait_for(close_task, timeout=0.5)
+    finally:
+        cleanup_release.set()
+        if not next_item.done():
+            next_item.cancel()
+            await asyncio.gather(next_item, return_exceptions=True)
 
 
 @pytest.mark.asyncio
