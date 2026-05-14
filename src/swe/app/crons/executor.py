@@ -400,7 +400,7 @@ class CronExecutor:
             # 使用 nonlocal 来修改外层变量
             nonlocal trace_id
             # 在 stream 开始后立即获取 trace_id（trace context 此时存在）
-            from ..tracing import get_current_trace
+            from ...tracing import get_current_trace
 
             trace = get_current_trace()
             if trace:
