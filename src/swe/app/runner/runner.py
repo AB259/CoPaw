@@ -2339,51 +2339,21 @@ class AgentRunner(Runner):
             len(extracted_assistant),
         )
 
-    async def query_handler(
+    async def _stream_query_after_preflight(
         self,
         msgs,
-        request: AgentRequest = None,
-        **kwargs,
+        *,
+        request: AgentRequest,
+        query: str | None,
+        session_id: str,
+        preflight: _QueryPreflight,
     ):
-        """
-        Handle agent query.
-        """
-        logger.debug(
-            f"AgentRunner.query_handler called: agent_id={self.agent_id}, "
-            f"msgs={msgs}, request={request}",
-        )
-        query = _get_last_user_text(msgs)
-        session_id = getattr(request, "session_id", "") or ""
-        user_id = getattr(request, "user_id", "") or ""
-
-        preflight = await self._prepare_query_preflight(
-            session_id=session_id,
-            user_id=user_id,
-            query=query,
-            request=request,
-        )
-        if preflight.response is not None:
-            yield preflight.response, True
-            if preflight.cleanup_denied_memory:
-                await self._cleanup_denied_session_memory(
-                    session_id,
-                    user_id,
-                    denial_response=preflight.response,
-                )
-            return
-
-        if not preflight.approval_consumed and query and _is_command(query):
-            logger.info("Command path: %s", query.strip()[:50])
-            async for msg, last in run_command_path(request, msgs, self):
-                yield msg, last
-            return
-
+        """执行已经通过前置校验的普通 Agent query 主流程。"""
         logger.debug(
             f"AgentRunner.stream_query: request={request}, "
             f"agent_id={self.agent_id}",
         )
 
-        # Set agent context for model creation
         from ..agent_context import set_current_agent_id
 
         set_current_agent_id(self.agent_id)
@@ -2421,9 +2391,7 @@ class AgentRunner(Runner):
                 runtime.user_id,
             )
 
-            # Rebuild system prompt so it always reflects the latest
-            # AGENTS.md / SOUL.md / PROFILE.md, not the stale one saved
-            # in the session state.
+            # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
             runtime.agent.rebuild_sys_prompt()
 
             plan_result = await self._build_turn_plan(
@@ -2500,6 +2468,71 @@ class AgentRunner(Runner):
                 query=query,
                 outcome=outcome,
             )
+
+    async def _stream_query_entry(
+        self,
+        msgs,
+        *,
+        request: AgentRequest,
+        query: str | None,
+        session_id: str,
+        user_id: str,
+    ):
+        """处理 query 主流程前的审批、prompt hook 与命令分发。"""
+        preflight = await self._prepare_query_preflight(
+            session_id=session_id,
+            user_id=user_id,
+            query=query,
+            request=request,
+        )
+        if preflight.response is not None:
+            yield preflight.response, True
+            if preflight.cleanup_denied_memory:
+                await self._cleanup_denied_session_memory(
+                    session_id,
+                    user_id,
+                    denial_response=preflight.response,
+                )
+            return
+
+        if not preflight.approval_consumed and query and _is_command(query):
+            logger.info("Command path: %s", query.strip()[:50])
+            async for msg, last in run_command_path(request, msgs, self):
+                yield msg, last
+            return
+
+        async for msg, last in self._stream_query_after_preflight(
+            msgs,
+            request=request,
+            query=query,
+            session_id=session_id,
+            preflight=preflight,
+        ):
+            yield msg, last
+
+    async def query_handler(
+        self,
+        msgs,
+        request: AgentRequest = None,
+        **kwargs,
+    ):
+        """处理 Agent query，并保持 Runner 期望的流式输出格式。"""
+        logger.debug(
+            f"AgentRunner.query_handler called: agent_id={self.agent_id}, "
+            f"msgs={msgs}, request={request}",
+        )
+        query = _get_last_user_text(msgs)
+        session_id = getattr(request, "session_id", "") or ""
+        user_id = getattr(request, "user_id", "") or ""
+
+        async for msg, last in self._stream_query_entry(
+            msgs,
+            request=request,
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+        ):
+            yield msg, last
 
     async def get_state_loaded(
         self,
