@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,12 +18,23 @@ logger = logging.getLogger(__name__)
 CONSOLE_CHANNEL = "console"
 
 
+@dataclass
+class ExecutionResult:
+    """执行结果，包含 trace_id 和输出预览。
+
+    用于将执行过程中的关键信息传递给调用方。
+    """
+
+    trace_id: str = ""
+    output_preview: str = ""
+
+
 class CronExecutor:
     def __init__(self, *, runner: Any, channel_manager: Any):
         self._runner = runner
         self._channel_manager = channel_manager
 
-    async def execute(self, job: CronJobSpec) -> None:
+    async def execute(self, job: CronJobSpec) -> ExecutionResult:
         """Execute one job once with tenant context.
 
         - task_type text: send fixed text to channel
@@ -30,6 +42,9 @@ class CronExecutor:
             stream_query + send_event)
 
         Job execution is wrapped in tenant context to ensure proper isolation.
+
+        Returns:
+            ExecutionResult containing trace_id and output_preview
         """
         target_user_id = job.dispatch.target.user_id
         target_session_id = job.dispatch.target.session_id
@@ -64,12 +79,17 @@ class CronExecutor:
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
-            await self._execute_job(
+            trace_id, output_preview = await self._execute_job(
                 job,
                 target_user_id,
                 target_session_id,
                 dispatch_meta,
             )
+
+        return ExecutionResult(
+            trace_id=trace_id,
+            output_preview=output_preview[:100],
+        )
 
     async def _execute_job(
         self,
@@ -77,17 +97,21 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> None:
-        """Internal: execute job logic (called within tenant context)."""
+    ) -> tuple[str, str]:
+        """Internal: execute job logic (called within tenant context).
+
+        Returns:
+            tuple of (trace_id, output_preview)
+        """
         if job.task_type == "text" and job.text:
-            await self._execute_text_job(
+            return await self._execute_text_job(
                 job,
                 target_user_id,
                 target_session_id,
                 dispatch_meta,
             )
         else:
-            await self._execute_agent_job(
+            return await self._execute_agent_job(
                 job,
                 target_user_id,
                 target_session_id,
@@ -100,8 +124,12 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> None:
-        """Execute text-type job: send fixed text to channel."""
+    ) -> tuple[str, str]:
+        """Execute text-type job: send fixed text to channel.
+
+        Returns:
+            tuple of (trace_id, output_preview)
+        """
         tenant_id = dispatch_meta.get("tenant_id") or "default"
         logger.info(
             "cron send_text: job_id=%s channel=%s len=%s",
@@ -123,6 +151,8 @@ class CronExecutor:
                 job.text.strip(),
                 tenant_id,
             )
+        # text 类型任务没有 trace_id，返回文本内容作为 preview
+        return "", (job.text or "").strip()[:100]
 
     async def _execute_agent_job(
         self,
@@ -130,8 +160,12 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> None:
-        """Execute agent-type job: run agent query and send events."""
+    ) -> tuple[str, str]:
+        """Execute agent-type job: run agent query and send events.
+
+        Returns:
+            tuple of (trace_id, output_preview)
+        """
         tenant_id = dispatch_meta.get("tenant_id") or "default"
         logger.info(
             "cron agent: job_id=%s channel=%s timeout=%ss",
@@ -144,12 +178,13 @@ class CronExecutor:
         self._apply_auth_token(job, dispatch_meta, req)
 
         console_text_parts: list[str] = []
+        trace_id = ""
         try:
             # Wrap the entire agent execution in a timeout so that
             # initialization delays + streaming are both covered.
             if hasattr(asyncio, "timeout"):
                 async with asyncio.timeout(job.runtime.timeout_seconds):
-                    await self._run_agent_stream(
+                    trace_id = await self._run_agent_stream(
                         job,
                         target_user_id,
                         target_session_id,
@@ -158,7 +193,7 @@ class CronExecutor:
                         console_text_parts,
                     )
             else:
-                await asyncio.wait_for(
+                trace_id = await asyncio.wait_for(
                     self._run_agent_stream(
                         job,
                         target_user_id,
@@ -191,6 +226,12 @@ class CronExecutor:
         except asyncio.CancelledError:
             logger.info("cron execute: job_id=%s cancelled", job.id)
             raise
+
+        # 返回 trace_id 和 output preview
+        output_preview = (
+            "\n".join(console_text_parts)[:100] if console_text_parts else ""
+        )
+        return trace_id, output_preview
 
     def _build_agent_request(
         self,
@@ -243,10 +284,24 @@ class CronExecutor:
         dispatch_meta: Dict[str, Any],
         req: Dict[str, Any],
         console_text_parts: list[str],
-    ) -> None:
-        """Run agent stream query and send events to channel."""
+    ) -> str:
+        """Run agent stream query and send events to channel.
+
+        Returns:
+            trace_id captured during execution
+        """
+        trace_id = ""
 
         async def _stream() -> None:
+            # 使用 nonlocal 来修改外层变量
+            nonlocal trace_id
+            # 在 stream 开始后立即获取 trace_id（trace context 此时存在）
+            from ..tracing import get_current_trace
+
+            trace = get_current_trace()
+            if trace:
+                trace_id = trace.trace_id
+
             async for event in self._runner.stream_query(req):
                 await self._channel_manager.send_event(
                     channel=job.dispatch.channel,
@@ -261,6 +316,7 @@ class CronExecutor:
 
         # Timeout is handled by _execute_agent_job which wraps this call
         await _stream()
+        return trace_id
 
     async def _notify_timeout(self, job: CronJobSpec, tenant_id: str) -> None:
         """Push a timeout notification to the console so the user is aware.

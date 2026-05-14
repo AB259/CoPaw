@@ -2332,21 +2332,25 @@ class CronManager:  # pylint: disable=too-many-public-methods
         error_message: str,
         output_preview: str,
         is_manual: bool = False,
+        trace_id: str = "",
     ) -> None:
-        """Sync execution record to Monitor service (non-blocking)."""
+        """Sync execution record to Monitor service (non-blocking).
+
+        Args:
+            job: 任务定义
+            exec_status: 执行状态
+            actual_time: 实际开始时间
+            end_time: 结束时间
+            duration_ms: 执行耗时（毫秒）
+            error_message: 错误信息
+            output_preview: 输出预览
+            is_manual: 是否手动执行
+            trace_id: 从执行过程中捕获的 trace_id
+        """
         if self._monitor_sync_client is None:
             return
 
-        trace_id = ""
         session_id = str((job.meta or {}).get("task_session_id", "") or "")
-        try:
-            from ..tracing import get_current_trace
-
-            trace = get_current_trace()
-            if trace:
-                trace_id = trace.trace_id
-        except Exception:  # pylint: disable=broad-except
-            pass
 
         await self._monitor_sync_client.record_execution(
             job=job,
@@ -2384,9 +2388,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             exec_status = "success"
             error_message = ""
             output_preview = ""
+            trace_id = ""
 
             try:
-                await self._executor.execute(job)
+                # 执行任务并获取 trace_id 和 output_preview
+                exec_result = await self._executor.execute(job)
+                trace_id = exec_result.trace_id
+                output_preview = exec_result.output_preview
                 st.last_status = "success"
                 st.last_error = None
                 end_time = datetime.now(timezone.utc)
@@ -2407,14 +2415,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await asyncio.shield(
                     self._record_task_execution_success(job),
                 )
-                # Get output preview from job meta
-                output_preview = str(
-                    (job.meta or {}).get("task_last_scheduled_preview", "")
-                    or "",
-                )[:100]
                 logger.info(
-                    "cron _execute_once: job_id=%s status=success",
+                    "cron _execute_once: job_id=%s status=success trace_id=%s",
                     job.id,
+                    trace_id[:20] if trace_id else "(empty)",
                 )
             except asyncio.CancelledError:
                 exec_status = "cancelled"
@@ -2458,6 +2462,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     error_message=error_message,
                     output_preview=output_preview,
                     is_manual=is_manual,
+                    trace_id=trace_id,
                 )
 
     # ----- Legacy API compatibility -----
