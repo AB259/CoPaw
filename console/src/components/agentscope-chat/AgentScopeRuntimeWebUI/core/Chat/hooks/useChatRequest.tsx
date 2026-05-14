@@ -26,6 +26,7 @@ import {
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
+  hasMessage?: (id: string) => boolean;
   getCurrentSessionId: () => string;
   onFinish: (owner: ChatRequestOwner) => void;
 }
@@ -68,7 +69,13 @@ function getUserVisibleErrorMessage(error: unknown) {
  * 处理 API 请求和流式响应的 Hook
  */
 export default function useChatRequest(options: UseChatRequestOptions) {
-  const { currentQARef, updateMessage, getCurrentSessionId, onFinish } =
+  const {
+    currentQARef,
+    updateMessage,
+    hasMessage = () => true,
+    getCurrentSessionId,
+    onFinish,
+  } =
     options;
   const apiOptions = useChatAnywhereOptions((v) => v.api);
 
@@ -88,6 +95,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
   const failActiveResponse = useCallback(
     (owner: ChatRequestOwner, error: unknown) => {
+      if (
+        currentQARef.current.response?.id &&
+        !hasMessage(currentQARef.current.response.id)
+      ) {
+        return;
+      }
+
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
       const responseData = currentQARef.current.response?.cards?.[0]?.data as
         | {
@@ -131,7 +145,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
       onFinish(owner);
     },
-    [currentQARef, getResponseHeaderTimestamp, onFinish, updateMessage],
+    [currentQARef, getResponseHeaderTimestamp, hasMessage, onFinish, updateMessage],
   );
 
   const mockRequest = useCallback(async (mockdata) => {
@@ -163,6 +177,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
       const isOwnerActive = () =>
         isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, owner);
+      const isLiveResponseMounted = () => {
+        const responseId = currentQARef.current.response?.id;
+        return Boolean(responseId && hasMessage(responseId));
+      };
       const buildResponseCard = () => {
         const responseData = currentQARef.current.response?.cards?.[0]
           ?.data as
@@ -340,7 +358,11 @@ export default function useChatRequest(options: UseChatRequestOptions) {
             continue;
           }
 
-          if (currentQARef.current.response && isOwnerActive()) {
+          if (
+            currentQARef.current.response &&
+            isOwnerActive() &&
+            isLiveResponseMounted()
+          ) {
             const cards: any[] = [
               {
                 code: "AgentScopeRuntimeResponseCard",
@@ -391,6 +413,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       failActiveResponse,
       getCurrentSessionId,
       getResponseHeaderTimestamp,
+      hasMessage,
       onFinish,
       updateMessage,
     ],

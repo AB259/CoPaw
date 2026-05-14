@@ -4,13 +4,14 @@ import { DESIGN_TOKENS } from "@/config/designTokens";
 export default createGlobalStyle`
 .chat-task-list {
   padding: 0 20px;
+  margin-bottom: 8px;
 
   &-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     height: 21px;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
     cursor: pointer;
   }
 
@@ -44,7 +45,7 @@ export default createGlobalStyle`
 
   &-item {
     position: relative;
-    padding: 10px 12px;
+    padding: 8px 12px;
     cursor: pointer;
     border-radius: 4px;
     background-color: transparent;
@@ -65,6 +66,11 @@ export default createGlobalStyle`
     &--running {
       background: rgba(55, 105, 252, 0.06);
       box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.12);
+    }
+
+    &--selected {
+      background: rgba(55, 105, 252, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.16);
     }
   }
 
