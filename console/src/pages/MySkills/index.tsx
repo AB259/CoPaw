@@ -54,7 +54,7 @@ export default function MySkillsPage() {
   const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
   const isManager = manager || userId === "default";
-  const { createdSkills, receivedSkills, loading, refresh } = useMySkills();
+  const { createdSkills, receivedSkills, loading, refresh, refreshSkill } = useMySkills();
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<MySkill | null>(null);
@@ -356,12 +356,18 @@ export default function MySkillsPage() {
       setFileContent(contentToSave);
       setIsEditing(false);
       message.success("保存成功，可新开会话试一试效果。");
+
+      // 刷新单个技能数据（更新 updated_at 显示）
+      const updatedSkill = await refreshSkill(selectedSkill.skill_name);
+      if (updatedSkill) {
+        setSelectedSkill(updatedSkill);
+      }
     } catch (err) {
       message.error("保存失败");
     } finally {
       setIsSaving(false);
     }
-  }, [selectedSkill, selectedFile, isEditing, draftContent, fileContent]);
+  }, [selectedSkill, selectedFile, isEditing, draftContent, fileContent, refreshSkill]);
 
   // 编辑开始：初始化 draftContent
   const handleEditStart = useCallback(() => {
