@@ -51,6 +51,7 @@ export function ModelsSection({
   const [distributionTenantIds, setDistributionTenantIds] = useState<string[]>([]);
   const [selectedDistributionTenantIds, setSelectedDistributionTenantIds] =
     useState<string[]>([]);
+
   const { message } = useAppMessage();
 
   const currentSlot = activeModels?.active_llm;
