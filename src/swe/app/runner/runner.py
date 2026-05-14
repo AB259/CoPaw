@@ -448,9 +448,8 @@ def _strip_internal_follow_up_messages_from_state(
             if isinstance(msg_payload, dict)
             else None
         )
-        if (
-            isinstance(metadata, dict)
-            and metadata.get(_INTERNAL_FOLLOW_UP_METADATA_KEY)
+        if isinstance(metadata, dict) and metadata.get(
+            _INTERNAL_FOLLOW_UP_METADATA_KEY,
         ):
             removed += 1
             continue
@@ -804,6 +803,13 @@ class AgentRunner(Runner):
                         None,
                     )
 
+                    # 提取 session_name：从第一条消息中提取前 10 个字符
+                    session_name_for_trace = None
+                    if msgs and len(msgs) > 0:
+                        content = msgs[0].get_text_content()
+                        if content:
+                            session_name_for_trace = content[:10]
+
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
@@ -812,6 +818,7 @@ class AgentRunner(Runner):
                         user_message=user_message,
                         user_name=user_name_for_trace,
                         bbk_id=bbk_id_for_trace,
+                        session_name=session_name_for_trace,
                     )
             except Exception as e:
                 logger.warning("Failed to start trace: %s", e)
@@ -1115,7 +1122,11 @@ class AgentRunner(Runner):
                         session_id,
                     )
 
-            suggestions_config = getattr(agent_config.running, "suggestions", None)
+            suggestions_config = getattr(
+                agent_config.running,
+                "suggestions",
+                None,
+            )
             if (
                 task_completed
                 and suggestions_config is not None
