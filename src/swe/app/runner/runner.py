@@ -1651,6 +1651,10 @@ class AgentRunner(Runner):
                         session_id,
                     )
 
+            logger.debug(
+                "Suggestions generation handled by frontend external API; "
+                "backend does not schedule duplicate generation."
+            )
             suggestions_config = getattr(
                 agent_config.running,
                 "suggestions",
