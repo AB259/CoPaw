@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+from pathlib import Path as PathlibPath
 from typing import List, Literal, Optional
 from copy import deepcopy
 
@@ -20,11 +22,13 @@ from pydantic import BaseModel, Field
 
 from ...config.context import (
     get_current_effective_tenant_id,
+    resolve_effective_tenant_id,
 )
 from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
 )
+from ...constant import SECRET_DIR
 from ...providers.models import ModelSlotConfig
 from ...providers.provider import ProviderInfo, ModelInfo
 from ...providers.provider_manager import ActiveModelsInfo, ProviderManager
@@ -154,6 +158,57 @@ def _request_tenant_working_dir(request: Request):
 
 def _request_source_id(request: Request) -> str | None:
     return getattr(request.state, "source_id", None)
+
+
+def _get_effective_tenant_id(request: Request) -> str | None:
+    """Get effective tenant ID from request context."""
+    tenant_id = _request_tenant_id(request)
+    if tenant_id is None:
+        return None
+    return resolve_effective_tenant_id(tenant_id, _request_source_id(request))
+
+
+def _distribute_providers_to_tenant(
+    *,
+    source_providers_dir: PathlibPath,
+    target_tenant_id: str,
+    source_working_dir: PathlibPath,
+    source_id: str | None,
+) -> ProvidersDistributionTenantResult:
+    """Distribute providers directory to a single target tenant.
+
+    Args:
+        source_providers_dir: Source tenant's providers directory path.
+        target_tenant_id: Target tenant ID.
+        source_working_dir: Source tenant's working directory parent.
+        source_id: Source identifier for tenant initialization.
+
+    Returns:
+        Distribution result for this tenant.
+    """
+    initializer = TenantInitializer(
+        source_working_dir.parent,
+        target_tenant_id,
+        source_id=source_id,
+    )
+    was_bootstrapped = initializer.has_seeded_bootstrap()
+    if not was_bootstrapped:
+        initializer.ensure_seeded_bootstrap()
+
+    target_providers_dir = SECRET_DIR / target_tenant_id / "providers"
+
+    # Remove existing target directory if exists
+    if target_providers_dir.exists():
+        shutil.rmtree(target_providers_dir)
+
+    # Copy entire providers directory
+    shutil.copytree(source_providers_dir, target_providers_dir)
+
+    return ProvidersDistributionTenantResult(
+        tenant_id=target_tenant_id,
+        success=True,
+        bootstrapped=not was_bootstrapped,
+    )
 
 
 def _validate_target_tenant_id(tenant_id: str) -> str:
