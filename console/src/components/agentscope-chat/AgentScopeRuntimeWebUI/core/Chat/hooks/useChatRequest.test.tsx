@@ -120,11 +120,13 @@ function createOwner(
 function Harness(props: {
   currentQARef: CurrentQARef;
   updateMessage: (message: unknown) => void;
+  hasMessage?: (id: string) => boolean;
   onFinish: (owner: ChatRequestOwner) => void;
 }) {
   hookApi = useChatRequest({
     currentQARef: props.currentQARef,
     updateMessage: props.updateMessage,
+    hasMessage: props.hasMessage,
     getCurrentSessionId: () => "chat-b",
     onFinish: props.onFinish,
   });
@@ -265,6 +267,62 @@ describe("useChatRequest", () => {
       ],
     };
 
+    mocks.streamGate.resolve();
+
+    await act(async () => {
+      await requestPromise;
+    });
+
+    expect(updateMessage).toHaveBeenCalledTimes(1);
+    expect(onFinish).not.toHaveBeenCalled();
+  });
+
+  it("does not append delayed chunks after the live response leaves the current message list", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      body: {},
+    } as Response);
+
+    const updateMessage = vi.fn();
+    const onFinish = vi.fn();
+    const currentQARef = {
+      current: {
+        response: {
+          id: "ui-response-a",
+          msgStatus: "generating",
+          cards: [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: {
+                id: "response-1",
+                status: "created",
+                created_at: 0,
+                output: [],
+              },
+            },
+          ],
+        },
+        activeRequestOwner: createOwner(),
+      },
+    } as CurrentQARef;
+    let responseMounted = true;
+
+    render(
+      <Harness
+        currentQARef={currentQARef}
+        updateMessage={updateMessage}
+        hasMessage={() => responseMounted}
+        onFinish={onFinish}
+      />,
+    );
+
+    const requestPromise = hookApi.request([], undefined, createOwner());
+
+    await waitFor(() => {
+      expect(updateMessage).toHaveBeenCalledTimes(1);
+    });
+
+    responseMounted = false;
     mocks.streamGate.resolve();
 
     await act(async () => {
