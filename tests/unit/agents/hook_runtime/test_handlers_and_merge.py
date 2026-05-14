@@ -371,6 +371,17 @@ def test_prompt_judgment_output_maps_valid_decisions(
     assert result.order == 3
 
 
+def test_prompt_judgment_output_repairs_malformed_json() -> None:
+    result = normalize_prompt_judgment_output(
+        handler_id="policy",
+        order=3,
+        text="{decision: allow, reason: ok}",
+    )
+
+    assert result.decision == HookDecision.ALLOW
+    assert result.reason == "ok"
+
+
 @pytest.mark.parametrize(
     "text",
     [

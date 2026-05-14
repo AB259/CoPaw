@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from json_repair import loads as repair_json_loads
+
 from .models import HookDecision, HookHandlerResult, HookOutput
 
 PROMPT_JUDGMENT_MAX_REASON_LENGTH = 2000
@@ -13,6 +15,18 @@ _PROMPT_JUDGMENT_DECISIONS = {
     "deny": HookDecision.DENY,
     "block": HookDecision.BLOCK,
 }
+
+
+def _parse_prompt_judgment_json(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as original_exc:
+        try:
+            return repair_json_loads(text, skip_json_loads=True)
+        except ValueError as repair_exc:
+            raise ValueError(
+                f"Invalid prompt hook JSON output: {original_exc}",
+            ) from repair_exc
 
 
 def normalize_hook_output(
@@ -57,10 +71,7 @@ def normalize_prompt_judgment_output(
     order: int,
     text: str,
 ) -> HookHandlerResult:
-    try:
-        raw = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid prompt hook JSON output: {exc}") from exc
+    raw = _parse_prompt_judgment_json(text)
     if not isinstance(raw, dict):
         raise ValueError("Prompt hook output must be a JSON object")
     if set(raw) != _PROMPT_JUDGMENT_KEYS:
