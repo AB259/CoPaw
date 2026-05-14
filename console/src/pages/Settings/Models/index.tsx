@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Button, Input, Modal } from "@agentscope-ai/design";
-import { PlusOutlined, SearchOutlined, CloudUploadOutlined } from "@ant-design/icons";
+import { PlusOutlined, SearchOutlined, SendOutlined } from "@ant-design/icons";
 import { useProviders } from "./useProviders";
 import {
   LoadingState,
@@ -232,7 +232,7 @@ function ModelsPage() {
                     {t("models.addProvider")}
                   </Button>
                   <Button
-                    icon={<CloudUploadOutlined />}
+                    icon={<SendOutlined />}
                     onClick={openProvidersDistModal}
                     className={styles.addProviderBtn}
                     disabled={!manager}
