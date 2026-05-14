@@ -230,7 +230,11 @@ class ToolGuardMixin:
         if not self.memory.content:
             return False
         msg, marks = self.memory.content[-1]
-        return TOOL_GUARD_DENIED_MARK in marks and msg.role == "system"
+        return (
+            bool(marks)
+            and TOOL_GUARD_DENIED_MARK in marks
+            and msg.role == "system"
+        )
 
     def _extract_sibling_tool_calls(self) -> list[dict[str, Any]]:
         """Extract all tool_use blocks from the last assistant message."""
@@ -734,7 +738,7 @@ class ToolGuardMixin:
             "system",
         )
         await self.print(tool_res_msg, True)
-        await self.memory.add(tool_res_msg, marks=TOOL_GUARD_DENIED_MARK)
+        await self.memory.add(tool_res_msg)
         return None
 
     async def _record_tool_hook_result(
