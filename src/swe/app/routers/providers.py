@@ -161,7 +161,7 @@ def _request_source_id(request: Request) -> str | None:
 
 
 def _get_effective_tenant_id(request: Request) -> str | None:
-    """Get effective tenant ID from request context."""
+    """从请求上下文获取有效租户 ID。"""
     tenant_id = _request_tenant_id(request)
     if tenant_id is None:
         return None
@@ -175,17 +175,20 @@ def _distribute_providers_to_tenant(
     source_working_dir: PathlibPath,
     source_id: str | None,
 ) -> ProvidersDistributionTenantResult:
-    """Distribute providers directory to a single target tenant.
+    """分发 providers 目录到单个目标租户。
 
     Args:
-        source_providers_dir: Source tenant's providers directory path.
-        target_tenant_id: Target tenant ID.
-        source_working_dir: Source tenant's working directory parent.
-        source_id: Source identifier for tenant initialization.
+        source_providers_dir: 源租户的 providers 目录路径。
+        target_tenant_id: 目标租户 ID。
+        source_working_dir: 源租户的工作目录父路径。
+        source_id: 租户初始化使用的 source 标识。
 
     Returns:
-        Distribution result for this tenant.
+        分发结果。
     """
+    # 安全校验
+    target_tenant_id = _validate_target_tenant_id(target_tenant_id)
+
     initializer = TenantInitializer(
         source_working_dir.parent,
         target_tenant_id,
