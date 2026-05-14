@@ -286,6 +286,21 @@ handler.prompt 业务规则
 
 如果持续返回 `block`，Runner 会使用自动续跑预算保护当前请求。预算耗尽时，系统会展示包含最新阻断原因的未完成消息，避免无限循环。
 
+预算可在 agent 的 `running.hook_runtime` 下配置：
+
+```json
+{
+  "running": {
+    "hook_runtime": {
+      "max_before_stop_turns": 2,
+      "max_automatic_follow_up_turns": 4
+    }
+  }
+}
+```
+
+`running.max_before_stop_turns` 和 `running.max_automatic_follow_up_turns` 仍会作为兼容字段读取；同时配置时，`running.hook_runtime` 优先。
+
 ## Handler 通用字段
 
 | 字段 | 必填 | 说明 |

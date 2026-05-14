@@ -523,6 +523,29 @@ class PostTurnValidationConfig(BaseModel):
     )
 
 
+class HookRuntimeRunningConfig(BaseModel):
+    """Hook Runtime 自动续跑预算配置。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    max_before_stop_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "BeforeStop 阻断后允许自动续跑的最大轮数；"
+            "未配置时使用 Runner 默认值"
+        ),
+    )
+    max_automatic_follow_up_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "单次请求中所有自动续跑机制共享的最大轮数；"
+            "未配置时按各机制预算推导"
+        ),
+    )
+
+
 class AgentsRunningConfig(BaseModel):
     """Agent runtime behavior configuration."""
 
@@ -533,6 +556,32 @@ class AgentsRunningConfig(BaseModel):
         ge=1,
         description=(
             "Maximum number of reasoning-acting iterations for ReAct agent"
+        ),
+    )
+
+    max_before_stop_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "BeforeStop 阻断后允许自动续跑的最大轮数；"
+            "兼容旧版 running 顶层配置"
+        ),
+    )
+
+    max_automatic_follow_up_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "单次请求中所有自动续跑机制共享的最大轮数；"
+            "兼容旧版 running 顶层配置"
+        ),
+    )
+
+    hook_runtime: Optional[HookRuntimeRunningConfig] = Field(
+        default=None,
+        description=(
+            "Hook Runtime 相关运行预算配置；配置后优先于 "
+            "running 顶层兼容字段"
         ),
     )
 
