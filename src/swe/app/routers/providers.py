@@ -830,6 +830,85 @@ async def distribute_active_model(
     )
 
 
+@router.post(
+    "/distribution/providers",
+    response_model=ProvidersDistributionResponse,
+    summary="Distribute entire providers directory to target tenants",
+)
+async def distribute_providers(
+    request: Request,
+    body: ProvidersDistributionRequest = Body(...),
+) -> ProvidersDistributionResponse:
+    """从当前租户全量分发 providers 目录到目标租户。
+
+    该端点执行完全覆盖，包括 builtin/、custom/ 和 active_model.json。
+
+    Args:
+        request: FastAPI 请求对象。
+        body: 分发请求，包含目标租户 ID 列表。
+
+    Returns:
+        每个目标租户的分发结果。
+
+    Raises:
+        HTTPException: 400 如果 overwrite 为 False、无目标租户、
+            或源 providers 目录不存在。
+    """
+    if not body.overwrite:
+        raise HTTPException(
+            status_code=400,
+            detail="overwrite=true is required for providers distribution",
+        )
+    if not body.target_tenant_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No target tenant IDs provided",
+        )
+
+    # 获取源租户的有效租户 ID
+    effective_tenant_id = _get_effective_tenant_id(request)
+    if effective_tenant_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No tenant ID in request context",
+        )
+
+    # 获取源 providers 目录
+    source_providers_dir = SECRET_DIR / effective_tenant_id / "providers"
+    if not source_providers_dir.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source providers directory not found for tenant '{effective_tenant_id}'",
+        )
+
+    source_working_dir = _request_tenant_working_dir(request)
+    source_id = _request_source_id(request)
+
+    results: list[ProvidersDistributionTenantResult] = []
+    for tenant_id in body.target_tenant_ids:
+        try:
+            result = _distribute_providers_to_tenant(
+                source_providers_dir=source_providers_dir,
+                target_tenant_id=tenant_id,
+                source_working_dir=source_working_dir,
+                source_id=source_id,
+            )
+            results.append(result)
+        except Exception as exc:
+            results.append(
+                ProvidersDistributionTenantResult(
+                    tenant_id=str(tenant_id),
+                    success=False,
+                    error=str(exc),
+                ),
+            )
+
+    return ProvidersDistributionResponse(
+        source_tenant_id=effective_tenant_id,
+        results=results,
+    )
+
+
 # ============================================================================
 # Deprecated: Tenant Model Configuration Endpoints
 # ============================================================================
