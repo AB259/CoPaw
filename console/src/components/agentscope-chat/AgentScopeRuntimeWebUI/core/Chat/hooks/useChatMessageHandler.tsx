@@ -105,6 +105,13 @@ export default function useChatMessageHandler(
     return AgentScopeRuntimeRequestBuilder.getHistoryMessages(getMessages());
   }, [getMessages]);
 
+  const hasMessage = useCallback(
+    (id: string) => {
+      return getMessages().some((item) => item.id === id);
+    },
+    [getMessages],
+  );
+
   /**
    * 移除指定消息
    */
@@ -125,5 +132,6 @@ export default function useChatMessageHandler(
     updateMessage,
     removeMessageById,
     getMessages,
+    hasMessage,
   };
 }
