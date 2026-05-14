@@ -102,7 +102,7 @@ export default createGlobalStyle`
     align-items: center;
     justify-content: space-between;
     height: 21px;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
     cursor: pointer;
   }
 

@@ -1454,6 +1454,7 @@ export default function ChatPage() {
         {/* 聊天专用侧栏：支持折叠为64px工具条 */}
         <ChatSidebar
           tasks={tasks}
+          selectedTaskId={currentTask?.id}
           onCreateSession={handleCreateSessionFromSidebar}
           onTaskClick={handleTaskOpen}
           onTaskPause={handleTaskPause}
