@@ -394,6 +394,44 @@ class ActiveModelDistributionResponse(BaseModel):
     )
 
 
+class ProvidersDistributionRequest(BaseModel):
+    """Request body for distributing entire providers directory."""
+
+    target_tenant_ids: List[str] = Field(
+        default_factory=list,
+        description="Target tenant IDs to distribute providers to",
+    )
+    overwrite: bool = Field(
+        ...,
+        description="Must be true for providers distribution",
+    )
+
+
+class ProvidersDistributionTenantResult(BaseModel):
+    """Per-tenant providers distribution result."""
+
+    tenant_id: str = Field(..., description="Target tenant ID")
+    success: bool = Field(..., description="Whether distribution succeeded")
+    bootstrapped: bool = Field(
+        default=False,
+        description="Whether the target tenant was bootstrapped during distribution",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if failed",
+    )
+
+
+class ProvidersDistributionResponse(BaseModel):
+    """Response payload for providers distribution requests."""
+
+    source_tenant_id: str = Field(..., description="Source tenant ID")
+    results: List[ProvidersDistributionTenantResult] = Field(
+        default_factory=list,
+        description="Per-tenant distribution results",
+    )
+
+
 @router.post(
     "/{provider_id}/test",
     response_model=TestConnectionResponse,
