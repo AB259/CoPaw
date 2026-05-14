@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { SaveOutlined, SendOutlined } from "@ant-design/icons";
+import { SaveOutlined, SendOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { Select, Button, Modal } from "@agentscope-ai/design";
 import type { ModelSlotRequest } from "../../../../../api/types";
 import api from "../../../../../api";
@@ -51,6 +51,15 @@ export function ModelsSection({
   const [distributionTenantIds, setDistributionTenantIds] = useState<string[]>([]);
   const [selectedDistributionTenantIds, setSelectedDistributionTenantIds] =
     useState<string[]>([]);
+
+  // 供应商全量分发状态
+  const [providersDistOpen, setProvidersDistOpen] = useState(false);
+  const [providersDistLoading, setProvidersDistLoading] = useState(false);
+  const [providersDistSubmitting, setProvidersDistSubmitting] = useState(false);
+  const [providersDistTenantIds, setProvidersDistTenantIds] = useState<string[]>([]);
+  const [selectedProvidersDistTenantIds, setSelectedProvidersDistTenantIds] =
+    useState<string[]>([]);
+
   const { message } = useAppMessage();
 
   const currentSlot = activeModels?.active_llm;
@@ -219,6 +228,98 @@ export function ModelsSection({
     }
   };
 
+  // ===== 供应商全量分发 =====
+
+  const openProvidersDistModal = async () => {
+    setProvidersDistOpen(true);
+    setSelectedProvidersDistTenantIds([]);
+    setProvidersDistLoading(true);
+    try {
+      const result = await api.listActiveModelDistributionTenants();
+      setProvidersDistTenantIds(result.tenant_ids || []);
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : t("models.distributeFailed");
+      message.error(errMsg);
+    } finally {
+      setProvidersDistLoading(false);
+    }
+  };
+
+  const closeProvidersDistModal = () => {
+    if (providersDistSubmitting) return;
+    setProvidersDistOpen(false);
+    setSelectedProvidersDistTenantIds([]);
+  };
+
+  const handleDistributeProviders = async () => {
+    if (!selectedProvidersDistTenantIds.length) return;
+
+    setProvidersDistSubmitting(true);
+    try {
+      const result = await api.distributeProviders({
+        target_tenant_ids: selectedProvidersDistTenantIds,
+        overwrite: true,
+      });
+      const items = Array.isArray(result.results) ? result.results : [];
+      const succeeded = items.filter((item) => item.success);
+      const failed = items.filter((item) => !item.success);
+
+      if (succeeded.length > 0) {
+        const lines = succeeded.map((item) => {
+          const suffix = item.bootstrapped
+            ? ` (${t("models.distributeBootstrapped")})`
+            : "";
+          return `• ${item.tenant_id}${suffix}`;
+        });
+        message.success(
+          t("models.distributeProvidersSuccess", { count: succeeded.length }),
+        );
+        Modal.confirm({
+          title: t("models.distributeResultTitle"),
+          content: (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div>{t("models.distributeSuccessList")}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                {lines.join("\n")}
+              </pre>
+              {failed.length > 0 ? (
+                <div>{t("models.distributeFailureInlineHint")}</div>
+              ) : null}
+            </div>
+          ),
+          okText: t("common.close"),
+          cancelButtonProps: { style: { display: "none" } },
+        });
+      }
+
+      if (failed.length > 0) {
+        const failureLines = failed.map(
+          (item) => `• ${item.tenant_id}: ${item.error || t("models.distributeFailed")}`,
+        );
+        Modal.confirm({
+          title: t("models.distributePartialFailureTitle"),
+          content: (
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+              {failureLines.join("\n")}
+            </pre>
+          ),
+          okText: t("common.close"),
+          cancelButtonProps: { style: { display: "none" } },
+        });
+      }
+
+      setProvidersDistOpen(false);
+      setSelectedProvidersDistTenantIds([]);
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : t("models.distributeFailed");
+      message.error(errMsg);
+    } finally {
+      setProvidersDistSubmitting(false);
+    }
+  };
+
   const isActive =
     currentSlot &&
     currentSlot.provider_id === selectedProviderId &&
@@ -288,6 +389,15 @@ export function ModelsSection({
             >
               {t("models.distribute")}
             </Button>
+            {manager && (
+              <Button
+                onClick={openProvidersDistModal}
+                block
+                icon={<CloudUploadOutlined />}
+              >
+                {t("models.distributeProviders")}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -329,6 +439,44 @@ export function ModelsSection({
               tenantIds={distributionTenantIds}
               selectedTenantIds={selectedDistributionTenantIds}
               onChange={setSelectedDistributionTenantIds}
+            />
+          )}
+        </div>
+      </Modal>
+
+      {/* 供应商全量分发 Modal */}
+      <Modal
+        open={providersDistOpen}
+        title={t("models.distributeProvidersTitle")}
+        onCancel={closeProvidersDistModal}
+        onOk={handleDistributeProviders}
+        okButtonProps={{
+          disabled: !selectedProvidersDistTenantIds.length,
+          loading: providersDistSubmitting,
+        }}
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ color: "#666", fontSize: 12 }}>
+            {t("models.distributeProvidersHint")}
+          </div>
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 8,
+              background: "#fff2f0",
+              border: "1px solid #ffccc7",
+              color: "#cf1322",
+            }}
+          >
+            {t("models.distributeProvidersWarning")}
+          </div>
+          {providersDistLoading ? (
+            <div>{t("models.loading")}</div>
+          ) : (
+            <TenantTargetPicker
+              tenantIds={providersDistTenantIds}
+              selectedTenantIds={selectedProvidersDistTenantIds}
+              onChange={setSelectedProvidersDistTenantIds}
             />
           )}
         </div>
