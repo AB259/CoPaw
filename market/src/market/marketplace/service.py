@@ -1170,10 +1170,11 @@ class MarketplaceService:
         skill_name: str,
         file_path: str,
         content: str,
+        user_name: str | None = None,
         agent_id: str = "default",
         source_id: str | None = None,
     ) -> bool:
-        """保存技能文件内容."""
+        """保存技能文件内容，自动创建 skill.json（如不存在）."""
         skills_dir = get_user_skills_dir(
             self.swe_root,
             user_id,
@@ -1194,16 +1195,17 @@ class MarketplaceService:
         try:
             target.write_text(content, encoding="utf-8")
 
-            # 更新 skill.json 的 updated_at
+            # 处理 skill.json：自动创建或更新
             skill_json_path = skill_dir / "skill.json"
+            current_time = datetime.now(timezone.utc).isoformat()
+
             if skill_json_path.exists():
+                # 更新现有 skill.json 的 updated_at
                 try:
                     skill_data = json.loads(
                         skill_json_path.read_text(encoding="utf-8"),
                     )
-                    skill_data["updated_at"] = datetime.now(
-                        timezone.utc,
-                    ).isoformat()
+                    skill_data["updated_at"] = current_time
                     skill_json_path.write_text(
                         json.dumps(skill_data, ensure_ascii=False, indent=2),
                         encoding="utf-8",
@@ -1211,6 +1213,35 @@ class MarketplaceService:
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
                         "Failed to update skill.json updated_at: %s",
+                        e,
+                    )
+            else:
+                # 自动创建基础 skill.json
+                base_skill_data = {
+                    "name": skill_name,
+                    "description": "",
+                    "version": "1.0.0",
+                    "creator_id": user_id,
+                    "creator_name": user_name or "",
+                    "created_at": current_time,
+                    "source": "customized",
+                }
+                try:
+                    skill_json_path.write_text(
+                        json.dumps(
+                            base_skill_data,
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        "Auto-created skill.json for %s",
+                        skill_name,
+                    )
+                except OSError as e:
+                    logger.warning(
+                        "Failed to auto-create skill.json: %s",
                         e,
                     )
 

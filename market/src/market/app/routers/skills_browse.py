@@ -882,8 +882,9 @@ async def save_skill_file(
         skill_name,
         file_path,
         content,
-        agent_id,
-        source_id,
+        user_name=x_user_name,
+        agent_id=agent_id,
+        source_id=source_id,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save file")

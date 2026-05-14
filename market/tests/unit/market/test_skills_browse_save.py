@@ -46,28 +46,38 @@ def test_save_skill_file_updates_updated_at_preserves_created_at():
 
 
 def test_save_skill_file_without_existing_skill_json():
-    """如果 skill.json 不存在，不应抛出异常."""
+    """如果 skill.json 不存在，应自动创建基础配置."""
     with tempfile.TemporaryDirectory() as tmpdir:
         skill_dir = Path(tmpdir) / "test_skill"
         skill_dir.mkdir()
 
-        # skill.json 不存在时，更新逻辑应跳过
+        # skill.json 不存在时，应自动创建
         skill_json_path = skill_dir / "skill.json"
         assert not skill_json_path.exists()
 
-        # 模拟：如果不存在则跳过更新
-        if skill_json_path.exists():
-            skill_data = json.loads(
-                skill_json_path.read_text(encoding="utf-8"),
-            )
-            skill_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-            skill_json_path.write_text(
-                json.dumps(skill_data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+        # 模拟自动创建逻辑
+        current_time = datetime.now(timezone.utc).isoformat()
+        base_skill_data = {
+            "name": "test_skill",
+            "description": "",
+            "version": "1.0.0",
+            "creator_id": "test_user",
+            "creator_name": "Test User",
+            "created_at": current_time,
+            "source": "customized",
+        }
+        skill_json_path.write_text(
+            json.dumps(base_skill_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-        # 验证没有创建 skill.json
-        assert not skill_json_path.exists()
+        # 验证创建了 skill.json
+        assert skill_json_path.exists()
+        saved_data = json.loads(skill_json_path.read_text(encoding="utf-8"))
+        assert saved_data["name"] == "test_skill"
+        assert saved_data["source"] == "customized"
+        assert "created_at" in saved_data
+        assert saved_data["creator_id"] == "test_user"
 
 
 def test_save_skill_file_with_malformed_skill_json():
