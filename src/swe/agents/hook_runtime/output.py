@@ -1,9 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .models import HookDecision, HookHandlerResult, HookOutput
+
+PROMPT_JUDGMENT_MAX_REASON_LENGTH = 2000
+_PROMPT_JUDGMENT_KEYS = {"decision", "reason"}
+_PROMPT_JUDGMENT_DECISIONS = {
+    "allow": HookDecision.ALLOW,
+    "deny": HookDecision.DENY,
+    "block": HookDecision.BLOCK,
+}
 
 
 def normalize_hook_output(
@@ -38,5 +47,45 @@ def normalize_hook_output(
         order=order,
         output=output,
         decision=decision,
+        reason=reason,
+    )
+
+
+def normalize_prompt_judgment_output(
+    *,
+    handler_id: str,
+    order: int,
+    text: str,
+) -> HookHandlerResult:
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid prompt hook JSON output: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("Prompt hook output must be a JSON object")
+    if set(raw) != _PROMPT_JUDGMENT_KEYS:
+        raise ValueError(
+            "Prompt hook output must contain exactly decision and reason",
+        )
+
+    decision_value = raw.get("decision")
+    if decision_value not in _PROMPT_JUDGMENT_DECISIONS:
+        raise ValueError("Prompt hook output has unsupported decision")
+
+    reason = raw.get("reason")
+    if not isinstance(reason, str):
+        raise ValueError("Prompt hook output reason must be a string")
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("Prompt hook output reason must be non-empty")
+    if len(reason) > PROMPT_JUDGMENT_MAX_REASON_LENGTH:
+        raise ValueError("Prompt hook output reason is too long")
+
+    output = HookOutput(decision=decision_value, reason=reason)
+    return HookHandlerResult(
+        handler_id=handler_id,
+        order=order,
+        output=output,
+        decision=_PROMPT_JUDGMENT_DECISIONS[decision_value],
         reason=reason,
     )

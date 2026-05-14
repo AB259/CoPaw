@@ -484,18 +484,19 @@ async def test_query_handler_stop_hook_blocks_completion(
         "swe.app.runner.runner._load_tenant_hook_config",
         lambda *args, **kwargs: HookConfig(enabled=True),
     )
+    emit_hook = AsyncMock(
+        side_effect=[
+            MergedHookResult(),
+            MergedHookResult(),
+            MergedHookResult(
+                decision=HookDecision.BLOCK,
+                reason="stop blocked",
+            ),
+        ],
+    )
     monkeypatch.setattr(
         "swe.app.runner.runner._emit_runner_hook",
-        AsyncMock(
-            side_effect=[
-                MergedHookResult(),
-                MergedHookResult(),
-                MergedHookResult(
-                    decision=HookDecision.BLOCK,
-                    reason="stop blocked",
-                ),
-            ],
-        ),
+        emit_hook,
     )
 
     request = SimpleNamespace(
@@ -514,6 +515,9 @@ async def test_query_handler_stop_hook_blocks_completion(
         "agent reply",
         "stop blocked",
     ]
+    stop_call = emit_hook.await_args_list[-1]
+    assert stop_call.args[0] == HookEventName.STOP
+    assert stop_call.kwargs["assistant_response"] == "agent reply"
 
 
 @pytest.mark.asyncio

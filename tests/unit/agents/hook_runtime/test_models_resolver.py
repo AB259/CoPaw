@@ -17,6 +17,7 @@ from swe.agents.hook_runtime.models import (
     HookOverlayEntry,
     HookSessionState,
     HookSessionOverlay,
+    PromptHookHandlerConfig,
     LoadedSkillHookSource,
 )
 from swe.agents.hook_runtime.resolver import HookResolver
@@ -26,6 +27,18 @@ def _handler(handler_id: str, **kwargs) -> CommandHookHandlerConfig:
     return CommandHookHandlerConfig(
         id=handler_id,
         command="python -c 'print({})'",
+        **kwargs,
+    )
+
+
+def _prompt_handler(
+    handler_id: str,
+    prompt: str,
+    **kwargs,
+) -> PromptHookHandlerConfig:
+    return PromptHookHandlerConfig(
+        id=handler_id,
+        prompt=prompt,
         **kwargs,
     )
 
@@ -157,6 +170,55 @@ def test_resolver_filters_by_tool_matcher_if_condition_and_deduplicates() -> (
         "audit",
         "skipped-tool",
         "conditional",
+    ]
+
+
+def test_prompt_handler_identity_includes_prompt_digest() -> None:
+    first = _prompt_handler("policy", "Reject secrets.")
+    second = _prompt_handler("policy", "Reject secrets with more detail.")
+
+    assert first.target_identity() != second.target_identity()
+
+
+def test_prompt_handler_default_fail_policy_is_block() -> None:
+    handler = _prompt_handler("policy", "Reject secrets.")
+
+    assert handler.fail_policy == "block"
+
+
+def test_resolver_does_not_dedupe_prompt_handlers_with_different_rules() -> (
+    None
+):
+    config = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.PRE_TOOL_USE: [
+                HookMatcherGroupConfig(
+                    id="policy",
+                    hooks=[
+                        _prompt_handler("shared", "Reject rm -rf."),
+                        _prompt_handler("shared", "Reject writes to secrets."),
+                    ],
+                ),
+            ],
+        },
+    )
+
+    plan = HookResolver(tenant_config=config).resolve_event_plan(
+        _context(
+            HookEventName.PRE_TOOL_USE,
+            tool_name="execute_shell_command",
+            tool_input={"cmd": "pwd"},
+        ),
+    )
+
+    assert [item.handler.target_identity() for item in plan.handlers] == [
+        config.events[HookEventName.PRE_TOOL_USE][0]
+        .hooks[0]
+        .target_identity(),
+        config.events[HookEventName.PRE_TOOL_USE][0]
+        .hooks[1]
+        .target_identity(),
     ]
 
 

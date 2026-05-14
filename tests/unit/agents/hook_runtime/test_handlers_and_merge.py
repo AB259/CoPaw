@@ -15,11 +15,16 @@ from swe.agents.hook_runtime.models import (
     EffectiveHookHandler,
     EffectiveHookPlan,
     FailPolicy,
+    HookConfig,
     HookContext,
     HookDecision,
     HookEventName,
+    HookHandlerResult,
     HttpHookHandlerConfig,
+    PromptHookHandlerConfig,
+    HookMatcherGroupConfig,
 )
+from swe.agents.hook_runtime.output import normalize_prompt_judgment_output
 from swe.config.context import tenant_context
 
 
@@ -341,6 +346,261 @@ async def test_http_handler_resolves_header_secret_from_effective_tenant(
     assert result.failed is False
     assert observed["Authorization"] == "tenant-secret"
     assert tenant_calls == [("HOOK_TOKEN", "tenant-a")]
+
+
+@pytest.mark.parametrize(
+    ("text", "decision"),
+    [
+        ('{"decision":"allow","reason":"ok"}', HookDecision.ALLOW),
+        ('{"decision":"deny","reason":"no"}', HookDecision.DENY),
+        ('{"decision":"block","reason":"stop"}', HookDecision.BLOCK),
+    ],
+)
+def test_prompt_judgment_output_maps_valid_decisions(
+    text: str,
+    decision: HookDecision,
+) -> None:
+    result = normalize_prompt_judgment_output(
+        handler_id="policy",
+        order=3,
+        text=text,
+    )
+
+    assert result.decision == decision
+    assert result.reason
+    assert result.order == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not-json",
+        "[]",
+        '{"decision":"allow"}',
+        '{"reason":"ok"}',
+        '{"decision":"ask","reason":"review"}',
+        '{"decision":"allow","reason":1}',
+        '{"decision":"allow","reason":"   "}',
+        '{"decision":"allow","reason":"ok","extra":true}',
+        '{"decision":"allow","reason":"ok","continue":false}',
+        '{"decision":"allow","reason":"' + ("x" * 2001) + '"}',
+    ],
+)
+def test_prompt_judgment_output_rejects_invalid_shapes(text: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_prompt_judgment_output(
+            handler_id="policy",
+            order=0,
+            text=text,
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_handler_binds_context_and_redacts_model_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    observed = {}
+
+    async def fake_model(messages):
+        observed["messages"] = messages
+        return '{"decision":"deny","reason":"secret request"}'
+
+    def fake_create_model_and_formatter(agent_id=None):
+        observed["agent_id"] = agent_id
+        from swe.config.context import (
+            get_current_source_id,
+            get_current_tenant_id,
+            get_current_user_id,
+            get_current_workspace_dir,
+        )
+
+        observed["tenant_id"] = get_current_tenant_id()
+        observed["user_id"] = get_current_user_id()
+        observed["source_id"] = get_current_source_id()
+        observed["workspace_dir"] = get_current_workspace_dir()
+        return fake_model, object()
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.create_model_and_formatter",
+        fake_create_model_and_formatter,
+    )
+    context = _context()
+    context.source_id = "web"
+    context.tool_input = {"api_key": "sk-secret", "cmd": "echo ok"}
+    handler = PromptHookHandlerConfig(
+        id="policy",
+        prompt="Reject leaked secrets.",
+    )
+
+    result = await execute_handler(
+        handler,
+        context,
+        workspace_dir=tmp_path,
+    )
+
+    assert result.decision == HookDecision.DENY
+    assert observed["agent_id"] == "agent-1"
+    assert observed["tenant_id"] == "tenant-a"
+    assert observed["user_id"] == "user-1"
+    assert observed["source_id"] == "web"
+    assert observed["workspace_dir"] == Path(context.workspace_dir)
+    prompt_text = observed["messages"][0]["content"]
+    assert "Reject leaked secrets." in prompt_text
+    assert "HookContext JSON" in prompt_text
+    assert "sk-secret" not in prompt_text
+    assert "[REDACTED]" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_prompt_handler_extracts_streaming_delta_and_cumulative_chunks(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        [
+            {"content": [{"type": "text", "text": '{"decision":"all'}]},
+            {"content": [{"type": "text", "text": 'ow","reason":"ok"}'}]},
+        ],
+        [
+            {"content": [{"type": "text", "text": '{"decision":"allow"'}]},
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"decision":"allow","reason":"ok"}',
+                    },
+                ],
+            },
+        ],
+    ]
+
+    async def fake_model(_messages):
+        items = responses.pop(0)
+
+        async def stream():
+            for item in items:
+                yield item
+
+        return stream()
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.create_model_and_formatter",
+        lambda agent_id=None: (fake_model, object()),
+    )
+    handler = PromptHookHandlerConfig(id="policy", prompt="Allow safe work.")
+
+    first = await execute_handler(handler, _context(), workspace_dir=tmp_path)
+    second = await execute_handler(handler, _context(), workspace_dir=tmp_path)
+
+    assert first.decision == HookDecision.ALLOW
+    assert second.decision == HookDecision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_prompt_handler_timeout_closes_stream(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    closed = {"value": False}
+
+    class FakeStream:
+        def __init__(self):
+            self._index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._index == 0:
+                self._index += 1
+                return {
+                    "content": [
+                        {"type": "text", "text": '{"decision":"allow"'},
+                    ],
+                }
+            await asyncio.sleep(1)
+            return {"content": [{"type": "text", "text": ',"reason":"ok"}'}]}
+
+        async def aclose(self):
+            closed["value"] = True
+
+    async def fake_model(_messages):
+        return FakeStream()
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.create_model_and_formatter",
+        lambda agent_id=None: (fake_model, object()),
+    )
+    handler = PromptHookHandlerConfig(
+        id="policy",
+        prompt="Allow safe work.",
+        timeout=0.01,
+    )
+
+    result = await execute_handler(handler, _context(), workspace_dir=tmp_path)
+
+    assert result.failed is True
+    assert result.decision == HookDecision.BLOCK
+    assert result.failure_type == "timeout"
+    assert closed["value"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_prompt_command_and_http_handlers_concurrently(
+    monkeypatch,
+) -> None:
+    from swe.agents.hook_runtime.runtime import HookRuntime
+
+    events = []
+
+    async def fake_execute_handler(handler, context, *, workspace_dir):
+        events.append(("start", handler.id))
+        await asyncio.sleep(0.01)
+        events.append(("end", handler.id))
+        return HookHandlerResult(
+            handler_id=handler.id,
+            order=0,
+            decision=HookDecision.ALLOW,
+            reason=handler.id,
+        )
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.runtime.execute_handler",
+        fake_execute_handler,
+    )
+
+    runtime = HookRuntime(
+        tenant_config=HookConfig(
+            enabled=True,
+            events={
+                HookEventName.PRE_TOOL_USE: [
+                    HookMatcherGroupConfig(
+                        hooks=[
+                            CommandHookHandlerConfig(id="cmd", command="echo"),
+                            HttpHookHandlerConfig(
+                                id="http",
+                                url="https://hooks.example/http",
+                            ),
+                            PromptHookHandlerConfig(
+                                id="prompt",
+                                prompt="Reject unsafe actions.",
+                            ),
+                        ],
+                    ),
+                ],
+            },
+        ),
+    )
+
+    await runtime.emit(_context(), workspace_dir=Path("/tmp"))
+
+    assert events[:3] == [
+        ("start", "cmd"),
+        ("start", "http"),
+        ("start", "prompt"),
+    ]
+    assert events[-3:] == [("end", "cmd"), ("end", "http"), ("end", "prompt")]
 
 
 def test_merge_priority_additional_context_and_updated_input_conflict() -> (

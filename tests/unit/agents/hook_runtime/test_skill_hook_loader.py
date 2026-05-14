@@ -315,3 +315,75 @@ def test_http_handler_literal_headers_and_env_are_rejected(
             session_state=HookSessionState(),
             approved_http_urls={"https://hooks.example.test/skill"},
         )
+
+
+def test_skill_prompt_hook_is_namespaced_and_loaded(tmp_path: Path) -> None:
+    skill_root = _write_skill_hook(
+        tmp_path,
+        {
+            "enabled": True,
+            "events": {
+                "UserPromptSubmit": [
+                    {
+                        "id": "prompts",
+                        "hooks": [
+                            {
+                                "id": "policy",
+                                "type": "prompt",
+                                "prompt": "Reject credential requests.",
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+
+    result = load_skill_hooks_for_session(
+        skill_name="xlsx",
+        skill_root=skill_root,
+        workspace_dir=tmp_path,
+        session_state=HookSessionState(),
+    )
+
+    handler = (
+        result.loaded_skill_sources[0]
+        .hook_config.events[HookEventName.USER_PROMPT_SUBMIT][0]
+        .hooks[0]
+    )
+    assert handler.id == "skill:xlsx:policy"
+    assert handler.type == "prompt"
+    assert handler.fail_policy == "block"
+
+
+@pytest.mark.parametrize(
+    ("event_name", "handler_update", "message"),
+    [
+        ("PostToolUse", {}, "blockable"),
+        ("PreToolUse", {"model": "gpt-test"}, "extra"),
+    ],
+)
+def test_invalid_skill_prompt_hooks_are_rejected(
+    tmp_path: Path,
+    event_name: str,
+    handler_update: dict,
+    message: str,
+) -> None:
+    handler = {
+        "id": "policy",
+        "type": "prompt",
+        "prompt": "Reject credential requests.",
+    }
+    handler.update(handler_update)
+    skill_root = _write_skill_hook(
+        tmp_path,
+        {"enabled": True, "events": {event_name: [{"hooks": [handler]}]}},
+    )
+
+    with pytest.raises(SkillHookLoadError, match=message):
+        load_skill_hooks_for_session(
+            skill_name="xlsx",
+            skill_root=skill_root,
+            workspace_dir=tmp_path,
+            session_state=HookSessionState(),
+        )

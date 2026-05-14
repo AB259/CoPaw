@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -16,6 +17,15 @@ class HookEventName(str, Enum):
     POST_TOOL_USE = "PostToolUse"
     POST_TOOL_USE_FAILURE = "PostToolUseFailure"
     STOP = "Stop"
+
+
+PROMPT_HANDLER_MAX_PROMPT_LENGTH = 20000
+PROMPT_HANDLER_BLOCKABLE_EVENTS = {
+    HookEventName.SESSION_START,
+    HookEventName.USER_PROMPT_SUBMIT,
+    HookEventName.PRE_TOOL_USE,
+    HookEventName.STOP,
+}
 
 
 class PermissionMode(str, Enum):
@@ -81,6 +91,7 @@ class HookContext(BaseModel):
     tool_input: dict[str, Any] | None = None
     tool_use_id: str | None = None
     tool_response: Any = None
+    assistant_response: str | None = None
     error: str | None = None
 
     def to_handler_payload(self) -> dict[str, Any]:
@@ -226,8 +237,33 @@ class HttpHookHandlerConfig(BaseHookHandlerConfig):
         return self.url
 
 
+class PromptHookHandlerConfig(BaseHookHandlerConfig):
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        use_enum_values=True,
+    )
+
+    type: Literal["prompt"] = "prompt"
+    prompt: str = Field(max_length=PROMPT_HANDLER_MAX_PROMPT_LENGTH)
+    fail_policy: FailPolicy = Field(
+        default=FailPolicy.BLOCK,
+        alias="failPolicy",
+    )
+
+    @model_validator(mode="after")
+    def validate_prompt(self) -> "PromptHookHandlerConfig":
+        if not self.prompt.strip():
+            raise ValueError("prompt handler requires non-empty prompt")
+        return self
+
+    def target_identity(self) -> str:
+        digest = hashlib.sha256(self.prompt.encode("utf-8")).hexdigest()
+        return f"prompt:{digest}"
+
+
 HookHandlerConfig = Annotated[
-    CommandHookHandlerConfig | HttpHookHandlerConfig,
+    CommandHookHandlerConfig | HttpHookHandlerConfig | PromptHookHandlerConfig,
     Field(discriminator="type"),
 ]
 
@@ -265,6 +301,22 @@ class HookConfig(BaseModel):
             for group in groups:
                 ids.update(handler.id for handler in group.hooks)
         return ids
+
+    @model_validator(mode="after")
+    def validate_prompt_handler_events(self) -> "HookConfig":
+        for event_name, groups in self.events.items():
+            if event_name in PROMPT_HANDLER_BLOCKABLE_EVENTS:
+                continue
+            for group in groups:
+                if any(
+                    isinstance(handler, PromptHookHandlerConfig)
+                    for handler in group.hooks
+                ):
+                    raise ValueError(
+                        "prompt hook handlers must be configured on "
+                        "blockable events only",
+                    )
+        return self
 
 
 class HookOverlayEntry(BaseModel):

@@ -11,6 +11,7 @@ from .models import (
     HookSessionOverlay,
     HookSessionState,
     LoadedSkillHookSource,
+    PromptHookHandlerConfig,
 )
 from .runtime import HookRuntime
 
@@ -25,4 +26,5 @@ __all__ = [
     "HookSessionOverlay",
     "HookSessionState",
     "LoadedSkillHookSource",
+    "PromptHookHandlerConfig",
 ]

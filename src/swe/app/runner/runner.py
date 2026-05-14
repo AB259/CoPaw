@@ -405,6 +405,7 @@ def _build_runner_hook_context(
     request: Any,
     runner: "AgentRunner",
     prompt: str | None = None,
+    assistant_response: str | None = None,
     source: str | None = None,
     model: str | None = None,
 ) -> HookContext:
@@ -451,6 +452,7 @@ def _build_runner_hook_context(
         chat_id=channel_meta.get("chat_id"),
         turn_id=channel_meta.get("turn_id"),
         prompt=prompt,
+        assistant_response=assistant_response,
         source=source,
         model=model,
     )
@@ -465,6 +467,7 @@ async def _emit_runner_hook(
     agent_config: Any,
     overlay: HookSessionOverlay,
     prompt: str | None = None,
+    assistant_response: str | None = None,
     source: str | None = None,
     model: str | None = None,
 ) -> MergedHookResult:
@@ -481,6 +484,7 @@ async def _emit_runner_hook(
         request=request,
         runner=runner,
         prompt=prompt,
+        assistant_response=assistant_response,
         source=source,
         model=model,
     )
@@ -1465,6 +1469,7 @@ class AgentRunner(Runner):
                 None,
             )
             task_completed = True
+            assistant_response = ""
             if resume_id:
                 pending_continuation = await consume_pending_continuation(
                     validation_id=resume_id,
@@ -1577,6 +1582,7 @@ class AgentRunner(Runner):
                     agent_config=agent_config,
                     overlay=hook_overlay,
                     prompt=original_user_message,
+                    assistant_response=assistant_response,
                 )
                 stop_context = _format_hook_additional_context(
                     stop_hook_result,

@@ -219,6 +219,45 @@ async def test_approved_pre_tool_hook_ask_replay_executes_once(
 
 
 @pytest.mark.asyncio
+async def test_pre_tool_prompt_allow_does_not_bypass_tool_guard(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.ALLOW,
+            reason="prompt allowed",
+        ),
+    )
+    agent._acting_with_approval = AsyncMock(return_value=None)
+    agent._tool_guard_engine = SimpleNamespace(
+        enabled=True,
+        is_denied=lambda _tool_name: False,
+        is_guarded=lambda _tool_name: False,
+        guard=lambda *_args, **_kwargs: SimpleNamespace(
+            findings=[object()],
+        ),
+    )
+    agent._ensure_tool_guard = lambda: None
+    monkeypatch.setattr(
+        "swe.security.tool_guard.utils.log_findings",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+
+    assert result is None
+    agent._acting_with_approval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_approved_pre_tool_hook_ask_replay_does_not_cover_new_ask_handler(
     tmp_path,
 ) -> None:
