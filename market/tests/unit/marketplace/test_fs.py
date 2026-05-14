@@ -327,6 +327,76 @@ def test_copy_skill_to_user_with_chinese_name(tmp_path):
 # ========== created_at 时间字段测试 ==========
 
 
+def test_copy_skill_to_user_preserves_created_at_on_redistribute(tmp_path):
+    """重复分发时应保留原有 created_at 时间戳."""
+    import time
+    from datetime import datetime, timezone
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skills_dir,
+    )
+
+    # Setup: 创建市场技能和用户目录
+    src_dir = get_skill_dir(
+        tmp_path / "marketplace",
+        "test_source",
+        "test_item",
+    )
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Test Skill", encoding="utf-8")
+    skill_json = {"name": "Test Skill", "description": "A test skill"}
+    (src_dir / "skill.json").write_text(
+        json.dumps(skill_json, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    swe_root = tmp_path / "swe"
+    user_id = "test_user"
+
+    # 首次分发
+    copy_skill_to_user(
+        marketplace_root=tmp_path / "marketplace",
+        source_id="test_source",
+        item_id="test_item",
+        swe_root=swe_root,
+        user_id=user_id,
+        skill_name="test_skill",
+        original_name="Test Skill",
+        description="A test skill",
+        distributed_by="admin",
+        version="1.0.0",
+    )
+
+    user_skill_json = (
+        get_user_skills_dir(swe_root, user_id) / "test_skill" / "skill.json"
+    )
+    first_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
+    first_created_at = first_data["created_at"]
+
+    # 等待一小段时间确保时间戳不同
+    time.sleep(0.1)
+
+    # 重复分发
+    copy_skill_to_user(
+        marketplace_root=tmp_path / "marketplace",
+        source_id="test_source",
+        item_id="test_item",
+        swe_root=swe_root,
+        user_id=user_id,
+        skill_name="test_skill",
+        original_name="Test Skill",
+        description="A test skill",
+        distributed_by="admin",
+        version="1.0.0",
+    )
+
+    second_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
+
+    # created_at 应保持不变
+    assert second_data["created_at"] == first_created_at
+
+
 def test_copy_skill_to_user_writes_created_at(tmp_path):
     """分发技能时应写入 created_at 时间字段."""
     from datetime import datetime, timezone

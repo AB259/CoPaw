@@ -238,6 +238,22 @@ def copy_skill_to_user(
                 e,
             )
 
+    # 重复分发时保留目标目录已有的 created_at
+    dst_skill_json = dst_dir / "skill.json"
+    if dst_skill_json.exists():
+        try:
+            existing_data = json.loads(
+                dst_skill_json.read_text(encoding="utf-8"),
+            )
+            if "created_at" in existing_data:
+                skill_data["created_at"] = existing_data["created_at"]
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to read existing skill.json %s: %s",
+                dst_skill_json,
+                e,
+            )
+
     # 确保 name 字段存在（用于前端展示）
     if "name" not in skill_data:
         skill_data["name"] = original_name
@@ -249,7 +265,8 @@ def copy_skill_to_user(
     skill_data["source"] = f"marketplace:{item_id}"
     skill_data["distributed_by"] = distributed_by
     skill_data["received_version"] = version
-    skill_data["created_at"] = datetime.now(timezone.utc).isoformat()
+    # 保留原有 created_at（重复分发时不覆盖首次创建时间）
+    skill_data.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
     _atomic_write_json(dst_dir / "skill.json", skill_data)
 
