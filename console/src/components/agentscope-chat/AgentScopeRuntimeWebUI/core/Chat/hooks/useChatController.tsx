@@ -111,6 +111,7 @@ export default function useChatController() {
   const { request, reconnect, cancelActiveRequest } = useChatRequest({
     currentQARef,
     updateMessage: messageHandler.updateMessage,
+    hasMessage: messageHandler.hasMessage,
     getCurrentSessionId: sessionHandler.getCurrentSessionId,
     onFinish: (owner) => finishResponse("finished", owner),
   });
