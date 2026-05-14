@@ -1006,6 +1006,8 @@ class MarketplaceService:
                     creator_name=_decode_creator_name(
                         data.get("creator_name", ""),
                     ),
+                    created_at=data.get("created_at"),
+                    updated_at=data.get("updated_at"),
                 ),
             )
         return result
