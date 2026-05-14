@@ -778,11 +778,9 @@ export default function MySkillsPage() {
                 </Text>
               )}
               {skill.created_at && (
-                <Tooltip title={dayjs(skill.created_at).format("YYYY-MM-DD HH:mm:ss")}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    创建: {dayjs(skill.created_at).fromNow()}
-                  </Text>
-                </Tooltip>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  创建: {dayjs(skill.created_at).format("YYYY-MM-DD")}
+                </Text>
               )}
               {skill.updated_at && (
                 <Tooltip title={dayjs(skill.updated_at).format("YYYY-MM-DD HH:mm:ss")}>
