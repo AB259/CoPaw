@@ -111,4 +111,111 @@ describe("getCompletedReasoningFallbackText", () => {
 
     expect(getCompletedReasoningFallbackText(data)).toBe("");
   });
+
+  it("returns trailing reasoning when earlier body text exists in the same response", () => {
+    const data = response({
+      output: [
+        {
+          id: "message-1",
+          object: "message",
+          role: AgentScopeRuntimeMessageRole.ASSISTANT,
+          type: AgentScopeRuntimeMessageType.MESSAGE,
+          status: AgentScopeRuntimeRunStatus.Completed,
+          content: [
+            {
+              object: "content",
+              type: AgentScopeRuntimeContentType.TEXT,
+              text: "前面已经正常展示的正文",
+              status: AgentScopeRuntimeRunStatus.Completed,
+            },
+          ],
+        },
+        {
+          id: "reason-1",
+          object: "message",
+          role: AgentScopeRuntimeMessageRole.ASSISTANT,
+          type: AgentScopeRuntimeMessageType.REASONING,
+          status: AgentScopeRuntimeRunStatus.Completed,
+          content: [
+            {
+              object: "content",
+              type: AgentScopeRuntimeContentType.TEXT,
+              text: "最后被误归类到 Thinking 的正文",
+              status: AgentScopeRuntimeRunStatus.Completed,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(getCompletedReasoningFallbackText(data)).toBe(
+      "最后被误归类到 Thinking 的正文",
+    );
+  });
+
+  it("returns trailing reasoning for idle historical responses after output is done", () => {
+    const data = response({
+      status: "idle" as AgentScopeRuntimeRunStatus,
+      output: [
+        {
+          id: "reason-1",
+          object: "message",
+          role: AgentScopeRuntimeMessageRole.ASSISTANT,
+          type: AgentScopeRuntimeMessageType.REASONING,
+          status: AgentScopeRuntimeRunStatus.Completed,
+          content: [
+            {
+              object: "content",
+              type: AgentScopeRuntimeContentType.TEXT,
+              text: "历史记录里的最终 Thinking 正文",
+              status: null as unknown as AgentScopeRuntimeRunStatus,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(getCompletedReasoningFallbackText(data)).toBe(
+      "历史记录里的最终 Thinking 正文",
+    );
+  });
+
+  it("does not return fallback when visible body appears after reasoning", () => {
+    const data = response({
+      output: [
+        {
+          id: "reason-1",
+          object: "message",
+          role: AgentScopeRuntimeMessageRole.ASSISTANT,
+          type: AgentScopeRuntimeMessageType.REASONING,
+          status: AgentScopeRuntimeRunStatus.Completed,
+          content: [
+            {
+              object: "content",
+              type: AgentScopeRuntimeContentType.TEXT,
+              text: "正常思考",
+              status: AgentScopeRuntimeRunStatus.Completed,
+            },
+          ],
+        },
+        {
+          id: "message-1",
+          object: "message",
+          role: AgentScopeRuntimeMessageRole.ASSISTANT,
+          type: AgentScopeRuntimeMessageType.MESSAGE,
+          status: AgentScopeRuntimeRunStatus.Completed,
+          content: [
+            {
+              object: "content",
+              type: AgentScopeRuntimeContentType.TEXT,
+              text: "后续正文已经正常展示",
+              status: AgentScopeRuntimeRunStatus.Completed,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(getCompletedReasoningFallbackText(data)).toBe("");
+  });
 });
