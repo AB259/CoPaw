@@ -51,22 +51,53 @@ function getReasoningText(message: IAgentScopeRuntimeMessage) {
   );
 }
 
+function isGeneratingStatus(status: unknown) {
+  return (
+    status === AgentScopeRuntimeRunStatus.Created ||
+    status === AgentScopeRuntimeRunStatus.InProgress
+  );
+}
+
+function isResponseReadyForFallback(
+  response: IAgentScopeRuntimeResponse,
+  messages: IAgentScopeRuntimeMessage[],
+) {
+  if (response.status === AgentScopeRuntimeRunStatus.Completed) {
+    return true;
+  }
+
+  if (String(response.status) !== "idle") {
+    return false;
+  }
+
+  return !messages.some((message) => {
+    if (isGeneratingStatus(message.status)) {
+      return true;
+    }
+
+    return message.content?.some((content) =>
+      isGeneratingStatus(content.status),
+    );
+  });
+}
+
 export function getCompletedReasoningFallbackText(
   response: IAgentScopeRuntimeResponse,
   messages: IAgentScopeRuntimeMessage[] = response.output,
 ) {
-  if (response.status !== AgentScopeRuntimeRunStatus.Completed) {
-    return "";
-  }
-
-  if (messages.some(hasVisibleMessageContent)) {
+  if (!isResponseReadyForFallback(response, messages)) {
     return "";
   }
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const text = getReasoningText(messages[index]);
-    if (text) {
-      return text;
+    const message = messages[index];
+    if (hasVisibleMessageContent(message)) {
+      return "";
+    }
+
+    const reasoningText = getReasoningText(message);
+    if (reasoningText) {
+      return reasoningText;
     }
   }
 
