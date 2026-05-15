@@ -369,6 +369,21 @@
     &.negative {
       color: #f5222d;
     }
+
+    &.neutral {
+      color: #8c8c8c;
+    }
+  }
+
+  .metricSubRow {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+  }
+
+  .metricSubItem {
+    font-size: 12px;
+    color: #8c8c8c;
   }
 }
 
@@ -419,6 +434,7 @@
   height: 280px;
   position: relative;
   cursor: crosshair;
+  padding: 0 12px;
 }
 
 // 折线图悬浮 Tooltip
@@ -657,6 +673,96 @@
     color: #262626;
     margin-bottom: 12px;
   }
+}
+
+.userCardScroll {
+  background: #fff;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+  padding: 16px;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+
+  .cardTitle {
+    font-size: 14px;
+    font-weight: 500;
+    color: #262626;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+
+  .cardTitleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+
+    .cardTitle {
+      margin-bottom: 0;
+    }
+  }
+
+  .filterTab {
+    display: flex;
+    font-size: 12px;
+    border: 1px solid #e8e8e8;
+    border-radius: 4px;
+    overflow: hidden;
+
+    .filterTabItem {
+      padding: 4px 10px;
+      cursor: pointer;
+      color: #666;
+      background: #fff;
+      transition: all 0.2s;
+
+      &:hover {
+        color: #1677ff;
+      }
+    }
+
+    .filterTabActive {
+      padding: 4px 10px;
+      cursor: pointer;
+      color: #fff;
+      background: #1677ff;
+    }
+  }
+}
+
+.userListScroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #f0f0f0;
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #d9d9d9;
+    border-radius: 3px;
+
+    &:hover {
+      background: #bfbfbf;
+    }
+  }
+}
+
+.loadingMore,
+.noMoreData,
+.emptyList {
+  text-align: center;
+  padding: 12px 0;
+  font-size: 12px;
+  color: #999;
 }
 
 .userList {

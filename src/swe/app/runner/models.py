@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Chat models for runner with UUID management."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -43,7 +44,7 @@ class ChatSpec(BaseModel):
     )
     status: str = Field(
         default="idle",
-        description="Conversation status: idle or running",
+        description="Conversation status: idle, running, or stopping",
     )
 
 
@@ -62,7 +63,7 @@ class ChatHistory(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     status: str = Field(
         default="idle",
-        description="Conversation status: idle or running",
+        description="Conversation status: idle, running, or stopping",
     )
 
 

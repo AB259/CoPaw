@@ -17,7 +17,6 @@ import type { MyMCPListItem } from "../../api/types";
 export default function MyMCPPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const userId = getUserId();
-  const userName = useIframeStore((state) => state.clawName) || "Unknown";
   const manager = useIframeStore((state) => state.manager);
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
   const canManage = manager || isSuperManager || userId === "default";
@@ -95,16 +94,22 @@ export default function MyMCPPage() {
     [deleteMCP]
   );
 
+  const [togglingClientKey, setTogglingClientKey] = useState<string | null>(null);
+
   const handleToggle = useCallback(
     async (clientKey: string, enabled: boolean) => {
+      if (togglingClientKey) return;
+      setTogglingClientKey(clientKey);
       try {
         await toggleMCP(clientKey);
         message.success(enabled ? "已启用" : "已禁用");
       } catch {
         message.error("操作失败");
+      } finally {
+        setTogglingClientKey(null);
       }
     },
-    [toggleMCP]
+    [toggleMCP, togglingClientKey]
   );
 
   const handleTest = useCallback(async () => {
@@ -345,6 +350,7 @@ export default function MyMCPPage() {
             testing={testing}
             testResult={testResult}
             isManager={!!canManage}
+            togglingClientKey={togglingClientKey}
             onEdit={openEditModal}
             onDelete={(mcp) => void handleDelete(mcp.client_key)}
             onToggle={handleToggle}
@@ -375,9 +381,6 @@ export default function MyMCPPage() {
 
       <PublishMCPModal
         open={publishModalOpen}
-        sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         clientKey={publishClientKey}
         clientName={selectedMCP?.name || ""}
         onClose={() => {

@@ -5,6 +5,7 @@ The ``ApprovalService`` is the single central store for pending /
 completed approval records.  Approval is granted exclusively via
 the ``/daemon approve`` command in the chat interface.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -220,6 +221,7 @@ class ApprovalService:
         session_id: str,
         tool_name: str,
         tool_params: dict[str, Any] | None = None,
+        approval_kind: str = "tool_guard",
     ) -> bool:
         """Check and consume a one-shot tool approval.
 
@@ -239,6 +241,8 @@ class ApprovalService:
                     and completed.tool_name == tool_name
                     and completed.status == "approved"
                     and not completed.consumed
+                    and completed.extra.get("approval_kind", "tool_guard")
+                    == approval_kind
                 ):
                     if tool_params is not None:
                         approved_call = completed.extra.get(

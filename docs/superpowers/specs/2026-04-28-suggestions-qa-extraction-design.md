@@ -27,9 +27,9 @@
 - 后端 Q&A 内容提取钩子（runner.py finally 块）
 - 按用户问题 hash 存储和查询 Q&A 内容
 - 后端 API：POST /console/suggestions/qa-content
-- 前端：先获取后端 Q&A 再调用外部 suggestions API
+- 前端：从当前 request/response card 本地提取 Q&A 后调用外部 suggestions API
 - 配置开关：SuggestionMode（disabled/backend_generate/qa_extraction_only）
-- Fallback 机制：后端无内容时前端本地提取
+- Fallback 机制：本地或外部 API 未配置时使用 mock suggestions
 
 **本期不实现：**
 
@@ -192,26 +192,15 @@ async def get_suggestions_qa_content(
 ```typescript
 const pollSuggestions = useCallback(async () => {
   const userMessage = extractUserMessageText(currentRequest...);
+  const assistantMessage = extractCopyableText(currentResponse...);
 
-  // Step 1: 从后端获取 Q&A 内容
-  const qaResponse = await fetchQAContent({ chatId, userMessage });
-
-  let qaContent = qaResponse.qa_content;
-
-  // Fallback: 后端无内容时使用本地提取
-  if (!qaContent) {
-    const assistantMessage = extractCopyableText(currentResponse...);
-    qaContent = { user_message: userMessage, assistant_response: assistantMessage };
-  }
-
-  // Step 2: 调用外部 API 生成 suggestions
+  // 由前端直接调用 external/mock suggestions API，后端不重复生成。
   const suggestions = await fetchSuggestions({
     chatId, turnId,
-    userMessage: qaContent.user_message,
-    assistantMessage: qaContent.assistant_response,
+    userMessage,
+    assistantMessage,
   });
 
-  // Step 3: 更新响应
   updateMessage({ ...response, suggestions });
 }, []);
 ```
@@ -225,10 +214,10 @@ const pollSuggestions = useCallback(async () => {
 | `src/swe/config/config.py` | 添加 SuggestionMode 枚举和配置字段 |
 | `src/swe/app/suggestions/store.py` | 新增 store_qa_content, get_qa_content 函数 |
 | `src/swe/app/suggestions/__init__.py` | 导出新增函数 |
-| `src/swe/app/runner/runner.py` | 替换 if False: 为 Q&A 提取逻辑 |
+| `src/swe/app/runner/runner.py` | 不再调度后端 suggestions 生成，避免和前端 external API 重复 |
 | `src/swe/app/routers/console.py` | 新增 POST /suggestions/qa-content |
-| `console/src/api/modules/suggestions.ts` | 新增 fetchQAContent 函数 |
-| `console/.../useSuggestionsPolling.tsx` | 先获取后端 Q&A 再调用外部 API |
+| `console/src/api/modules/suggestions.ts` | 提供前端 external/mock suggestions API 调用 |
+| `console/.../useSuggestionsPolling.tsx` | 本地提取 Q&A 后直接调用前端 suggestions API |
 
 ---
 
@@ -240,18 +229,21 @@ const pollSuggestions = useCallback(async () => {
 | backend_generate | 提取 + 异步生成建议 | 轮询 GET /suggestions |
 | qa_extraction_only | 仅提取 Q&A | 获取 Q&A + 调用外部 API |
 
+当前线上行为对齐 `fix(suggestions): switch suggestion fetching to frontend API`：
+响应完成后由前端从当前 request/response card 提取用户问题和助手回答，
+直接调用 external suggestions API；本地或外部 API 未配置时使用 mock
+suggestions。后端 runner 不再重复调度异步 suggestions 生成。
+
 ---
 
 ## 7. 验证方案
 
-1. 配置 `mode: qa_extraction_only`
-2. 发送问题，等待模型响应完成
-3. 检查后端日志确认 Q&A 提取执行
-4. 前端调用 POST /suggestions/qa-content
-5. 检查返回 Q&A 内容（总长度 ≤ 1500）
-6. 前端调用外部 API 获取 suggestions
-7. 检查 UI 显示"猜你想问"按钮
-8. 点击按钮触发新对话
+1. 发送问题，等待模型响应完成
+2. 前端从当前 request/response card 提取用户问题和助手回答
+3. 前端调用 external/mock suggestions API 获取 suggestions
+4. 检查 UI 显示"猜你想问"按钮
+5. 点击按钮触发新对话
+6. 存在后校验继续执行提示时，不提前展示"猜你想问"
 
 ---
 

@@ -69,6 +69,25 @@ export interface ActiveModelDistributionResponse {
   results: ActiveModelDistributionTenantResult[];
 }
 
+/* ---- Providers full distribution ---- */
+
+export interface ProvidersDistributionRequest {
+  target_tenant_ids: string[];
+  overwrite: boolean;
+}
+
+export interface ProvidersDistributionTenantResult {
+  tenant_id: string;
+  success: boolean;
+  bootstrapped: boolean;
+  error?: string;
+}
+
+export interface ProvidersDistributionResponse {
+  source_tenant_id: string;
+  results: ProvidersDistributionTenantResult[];
+}
+
 export type ActiveModelScope = "effective" | "global" | "agent";
 
 export interface GetActiveModelsRequest {

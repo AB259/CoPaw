@@ -8,6 +8,7 @@ context for the duration of the request.
 
 import logging
 from typing import Callable, Awaitable
+from urllib.parse import unquote
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -136,6 +137,10 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         source_id = request.headers.get("X-Source-Id")
         user_name = request.headers.get("X-User-Name")
         bbk_id = request.headers.get("X-Bbk-Id")
+
+        # 对 header 中的 user_name 进行 URI 解码
+        if user_name:
+            user_name = unquote(user_name)
 
         if not is_exempt:
             tenant_id = self._validate_tenant_id(path, tenant_id)

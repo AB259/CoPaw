@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { marketApi, Category, MarketSkill, MarketSkillDetail } from "../../api/modules/market";
 
-export function useMarket(sourceId: string, bbkId: string) {
+export function useMarket(sourceId: string) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [skills, setSkills] = useState<MarketSkill[]>([]);
   const [loading, setLoading] = useState(false);
@@ -9,8 +9,6 @@ export function useMarket(sourceId: string, bbkId: string) {
   const [selectedSkill, setSelectedSkill] = useState<MarketSkillDetail | null>(null);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
-  const [distributeModalOpen, setDistributeModalOpen] = useState(false);
-  const [distributeTargetSkill, setDistributeTargetSkill] = useState<MarketSkill | null>(null);
 
   const refreshCategories = useCallback(async () => {
     try {
@@ -24,19 +22,19 @@ export function useMarket(sourceId: string, bbkId: string) {
   const refreshSkills = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await marketApi.listMarketSkills(sourceId, bbkId, selectedCategory ?? undefined);
+      const data = await marketApi.listMarketSkills(sourceId, selectedCategory ?? undefined);
       setSkills(data);
     } catch (err) {
       console.error("Failed to load skills:", err);
     } finally {
       setLoading(false);
     }
-  }, [sourceId, bbkId, selectedCategory]);
+  }, [sourceId, selectedCategory]);
 
   const openSkillDetail = useCallback(
     async (itemId: string) => {
       try {
-        const detail = await marketApi.getSkillDetail(sourceId, itemId, bbkId);
+        const detail = await marketApi.getSkillDetail(sourceId, itemId);
         if (detail) {
           setSelectedSkill(detail);
           setDetailDrawerOpen(true);
@@ -45,13 +43,8 @@ export function useMarket(sourceId: string, bbkId: string) {
         console.error("Failed to load skill detail:", err);
       }
     },
-    [sourceId, bbkId]
+    [sourceId]
   );
-
-  const openDistributeModal = useCallback((skill: MarketSkill) => {
-    setDistributeTargetSkill(skill);
-    setDistributeModalOpen(true);
-  }, []);
 
   return {
     categories,
@@ -64,12 +57,8 @@ export function useMarket(sourceId: string, bbkId: string) {
     setDetailDrawerOpen,
     publishModalOpen,
     setPublishModalOpen,
-    distributeModalOpen,
-    setDistributeModalOpen,
-    distributeTargetSkill,
     refreshCategories,
     refreshSkills,
     openSkillDetail,
-    openDistributeModal,
   };
 }

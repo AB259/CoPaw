@@ -4,6 +4,7 @@
 run_key is ChatSpec.id (chat_id). Per run: task, queues, event buffer.
 Reconnects get buffer replay + new events. Cleanup when task completes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,9 @@ import json
 import logging
 import weakref
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Callable, Coroutine
+from typing import Any, AsyncGenerator, Callable, Coroutine, Literal
+
+from .task_progress import TaskProgressPayload, clone_task_progress
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ class _RunState:
     task: asyncio.Future
     queues: list[asyncio.Queue] = field(default_factory=list)
     buffer: list[str] = field(default_factory=list)
+    status: Literal["running", "stopping"] = "running"
 
 
 class TaskTracker:
@@ -38,18 +42,19 @@ class TaskTracker:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._runs: dict[str, _RunState] = {}
+        self._task_progress: dict[str, TaskProgressPayload] = {}
 
     @property
     def lock(self) -> asyncio.Lock:
         return self._lock
 
     async def get_status(self, run_key: str) -> str:
-        """Return ``'idle'`` or ``'running'``."""
+        """Return ``'idle'``, ``'running'`` or ``'stopping'``."""
         async with self._lock:
             state = self._runs.get(run_key)
         if state is None or state.task.done():
             return "idle"
-        return "running"
+        return state.status
 
     async def has_active_tasks(self) -> bool:
         """Check if any tasks are currently running.
@@ -112,6 +117,27 @@ class TaskTracker:
             state.queues.append(q)
             return q
 
+    async def update_task_progress(
+        self,
+        run_key: str,
+        payload: TaskProgressPayload,
+    ) -> TaskProgressPayload:
+        """Store the latest task progress payload for a run."""
+        async with self._lock:
+            cloned_payload = clone_task_progress(payload)
+            if cloned_payload is None:
+                raise ValueError("task progress payload must not be empty")
+            self._task_progress[run_key] = cloned_payload
+            return clone_task_progress(cloned_payload) or cloned_payload
+
+    async def get_task_progress(
+        self,
+        run_key: str,
+    ) -> TaskProgressPayload | None:
+        """Get a copy of the latest task progress payload for a run."""
+        async with self._lock:
+            return clone_task_progress(self._task_progress.get(run_key))
+
     async def detach_subscriber(
         self,
         run_key: str,
@@ -136,7 +162,17 @@ class TaskTracker:
             state = self._runs.get(run_key)
             if state is None or state.task.done():
                 return False
+            state.status = "stopping"
             state.task.cancel()
+            return True
+
+    async def mark_stopping(self, run_key: str) -> bool:
+        """Mark an active run as stopping without cancelling it."""
+        async with self._lock:
+            state = self._runs.get(run_key)
+            if state is None or state.task.done():
+                return False
+            state.status = "stopping"
             return True
 
     async def attach_or_start(
@@ -198,11 +234,14 @@ class TaskTracker:
                         async with tracker.lock:
                             for q in run.queues:
                                 q.put_nowait(_SENTINEL)
-                            # pylint: disable=protected-access
-                            tracker._runs.pop(
-                                run_key,
-                                None,
-                            )
+                            current = tracker._runs.get(run_key)
+                            if current is run:
+                                tracker._task_progress.pop(run_key, None)
+                                # pylint: disable=protected-access
+                                tracker._runs.pop(
+                                    run_key,
+                                    None,
+                                )
 
             run.task = asyncio.create_task(_producer())
             return my_queue, True

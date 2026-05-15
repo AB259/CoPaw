@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Optional, TYPE_CHECKING
+from inspect import isawaitable
+from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
 
 from .skill_context_manager import (
     SkillContextManager,
@@ -71,6 +72,11 @@ class SkillInvocationDetector:
         channel: str = "",
         source_id: str = "",
         idle_threshold: int = 3,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        skill_hook_loader: (
+            Callable[[str], Awaitable[None] | None] | None
+        ) = None,
     ) -> None:
         """Initialize the detector.
 
@@ -85,6 +91,9 @@ class SkillInvocationDetector:
             channel: Channel identifier
             source_id: Source identifier for data isolation
             idle_threshold: Number of non-skill tool calls before ending skill
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
+            skill_hook_loader: Optional session-scoped hook loader callback
         """
         self._registry = registry or get_skill_tool_registry()
         self._context_manager = context_manager or get_skill_context_manager()
@@ -95,6 +104,9 @@ class SkillInvocationDetector:
         self._session_id = session_id
         self._channel = channel
         self._source_id = source_id
+        self._user_name = user_name
+        self._bbk_id = bbk_id
+        self._skill_hook_loader = skill_hook_loader
 
         # Configuration
         self._idle_threshold = idle_threshold
@@ -537,6 +549,8 @@ class SkillInvocationDetector:
                         "trigger_reason": trigger_reason,
                         "confidence": confidence,
                     },
+                    user_name=self._user_name,
+                    bbk_id=self._bbk_id,
                 )
             except Exception as e:
                 logger.warning("Failed to emit skill start event: %s", e)
@@ -551,6 +565,18 @@ class SkillInvocationDetector:
 
         # Update state
         self._update_skill_state(skill_name)
+
+        if self._skill_hook_loader is not None:
+            try:
+                result = self._skill_hook_loader(skill_name)
+                if isawaitable(result):
+                    await result
+            except Exception as e:
+                logger.warning(
+                    "Failed to load hooks for skill '%s': %s",
+                    skill_name,
+                    e,
+                )
 
         logger.info(
             "Started skill '%s' (reason: %s, confidence: %.2f)",

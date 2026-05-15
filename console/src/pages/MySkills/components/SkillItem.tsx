@@ -11,10 +11,6 @@ interface Props {
   expanded: boolean;
   selected: boolean;
   disabled: boolean;
-  sourceId: string;
-  userId: string;
-  userName: string;
-  bbkId: string;
   selectedFile: string | null;
   expandedDirs: Set<string>;
   onToggle: () => void;
@@ -27,10 +23,6 @@ export function SkillItem({
   expanded,
   selected,
   disabled,
-  sourceId,
-  userId,
-  userName,
-  bbkId,
   selectedFile,
   expandedDirs,
   onToggle,
@@ -43,12 +35,12 @@ export function SkillItem({
   useEffect(() => {
     if (expanded && files.length === 0) {
       setLoading(true);
-      mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skill.skill_name)
+      mySkillsApi.listSkillFiles(skill.skill_name)
         .then(setFiles)
         .catch(console.error)
         .finally(() => setLoading(false));
     }
-  }, [expanded, skill.skill_name, sourceId, userId, userName, bbkId, files.length]);
+  }, [expanded, skill.skill_name, files.length]);
 
   return (
     <div
@@ -87,7 +79,7 @@ export function SkillItem({
             color: disabled ? "#8c8c8c" : "#262626",
           }}
         >
-          {skill.skill_name}
+          {skill.display_name || skill.skill_name}
         </Text>
         {skill.version && <Tag style={{ marginLeft: 4 }}>v{skill.version}</Tag>}
         {skill.is_received && <Tag color="orange">接收的</Tag>}

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Chat management API."""
+
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
@@ -16,7 +17,6 @@ from .models import (
 )
 from .utils import agentscope_msg_to_message
 from ..approvals import get_approval_service
-
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 TASK_MESSAGES_STATE_KEY = "task_messages"
@@ -156,6 +156,88 @@ def _with_task_run_metadata(
     return ChatMessage.model_validate(payload)
 
 
+def _normalize_task_runs(
+    raw_task_runs: list[dict],
+    content_length: int,
+) -> list[tuple[int, int, int, str]] | None:
+    """校验并标准化 task_runs 索引数据。"""
+    task_runs: list[tuple[int, int, int, str]] = []
+    for run_index, raw_run in enumerate(raw_task_runs):
+        if not isinstance(raw_run, dict):
+            return None
+
+        raw_start = raw_run.get("memory_start")
+        raw_end = raw_run.get("memory_end")
+        if raw_start is None or raw_end is None:
+            return None
+
+        try:
+            start = int(raw_start)
+            end = int(raw_end)
+        except (TypeError, ValueError):
+            return None
+
+        if start < 0 or end < start or end > content_length:
+            return None
+
+        run_id = str(raw_run.get("run_id") or f"task-run-{run_index}")
+        task_runs.append((start, end, run_index, run_id))
+
+    task_runs.sort(key=lambda item: (item[0], item[2]))
+    return task_runs
+
+
+async def _messages_from_memory_range(
+    memory_state: dict,
+    start: int,
+    end: int,
+) -> list[ChatMessage] | None:
+    """读取一段 memory slice 对应的消息。"""
+    sliced_state = _slice_memory_state(memory_state, start, end)
+    if sliced_state is None:
+        return None
+    return await _messages_from_memory_state(sliced_state)
+
+
+def _find_final_text_message_index(
+    run_messages: list[ChatMessage],
+) -> int | None:
+    """返回最后一个包含文本的 assistant 消息位置。"""
+    for index in range(len(run_messages) - 1, -1, -1):
+        candidate = run_messages[index]
+        if candidate.role == "assistant" and _message_has_text_content(
+            candidate,
+        ):
+            return index
+    return None
+
+
+def _annotate_run_messages(
+    run_messages: list[ChatMessage],
+    *,
+    run_id: str,
+    run_index: int,
+) -> list[ChatMessage]:
+    """为单次 task run 的消息补齐 step/final 元数据。"""
+    final_index = _find_final_text_message_index(run_messages)
+    if final_index is None:
+        return run_messages
+
+    return [
+        _with_task_run_metadata(
+            message,
+            run_id=run_id,
+            run_index=run_index,
+            section=(
+                TASK_RUN_SECTION_FINAL
+                if index == final_index
+                else TASK_RUN_SECTION_STEP
+            ),
+        )
+        for index, message in enumerate(run_messages)
+    ]
+
+
 async def _annotate_task_run_messages(
     memory_state: dict,
     raw_task_runs: list[dict],
@@ -164,25 +246,9 @@ async def _annotate_task_run_messages(
     if not isinstance(content, list):
         return await _messages_from_memory_state(memory_state)
 
-    task_runs: list[tuple[int, int, int, str]] = []
-    for run_index, raw_run in enumerate(raw_task_runs):
-        if not isinstance(raw_run, dict):
-            return await _messages_from_memory_state(memory_state)
-        raw_start = raw_run.get("memory_start")
-        raw_end = raw_run.get("memory_end")
-        if raw_start is None or raw_end is None:
-            return await _messages_from_memory_state(memory_state)
-        try:
-            start = int(raw_start)
-            end = int(raw_end)
-        except (TypeError, ValueError):
-            return await _messages_from_memory_state(memory_state)
-        if start < 0 or end < start or end > len(content):
-            return await _messages_from_memory_state(memory_state)
-        run_id = str(raw_run.get("run_id") or f"task-run-{run_index}")
-        task_runs.append((start, end, run_index, run_id))
-
-    task_runs.sort(key=lambda item: (item[0], item[2]))
+    task_runs = _normalize_task_runs(raw_task_runs, len(content))
+    if task_runs is None:
+        return await _messages_from_memory_state(memory_state)
 
     messages: list[ChatMessage] = []
     cursor = 0
@@ -191,47 +257,40 @@ async def _annotate_task_run_messages(
             return await _messages_from_memory_state(memory_state)
 
         if cursor < start:
-            gap_state = _slice_memory_state(memory_state, cursor, start)
-            if gap_state is not None:
-                messages.extend(await _messages_from_memory_state(gap_state))
+            gap_messages = await _messages_from_memory_range(
+                memory_state,
+                cursor,
+                start,
+            )
+            if gap_messages is None:
+                return await _messages_from_memory_state(memory_state)
+            messages.extend(gap_messages)
 
-        run_state = _slice_memory_state(memory_state, start, end)
-        if run_state is None:
+        run_messages = await _messages_from_memory_range(
+            memory_state,
+            start,
+            end,
+        )
+        if run_messages is None:
             return await _messages_from_memory_state(memory_state)
-
-        run_messages = await _messages_from_memory_state(run_state)
-        final_index = None
-        for index in range(len(run_messages) - 1, -1, -1):
-            candidate = run_messages[index]
-            if candidate.role == "assistant" and _message_has_text_content(
-                candidate,
-            ):
-                final_index = index
-                break
-
-        if final_index is None:
-            messages.extend(run_messages)
-        else:
-            for index, message in enumerate(run_messages):
-                messages.append(
-                    _with_task_run_metadata(
-                        message,
-                        run_id=run_id,
-                        run_index=run_index,
-                        section=(
-                            TASK_RUN_SECTION_FINAL
-                            if index == final_index
-                            else TASK_RUN_SECTION_STEP
-                        ),
-                    ),
-                )
+        messages.extend(
+            _annotate_run_messages(
+                run_messages,
+                run_id=run_id,
+                run_index=run_index,
+            ),
+        )
 
         cursor = end
 
     if cursor < len(content):
-        tail_state = _slice_memory_state(memory_state, cursor, len(content))
-        if tail_state is not None:
-            messages.extend(await _messages_from_memory_state(tail_state))
+        tail_messages = await _messages_from_memory_range(
+            memory_state,
+            cursor,
+            len(content),
+        )
+        if tail_messages is not None:
+            messages.extend(tail_messages)
 
     return messages
 
@@ -382,7 +441,7 @@ async def get_chat(
         session: SafeJSONSession dependency
 
     Returns:
-        ChatHistory with messages and status (idle/running)
+        ChatHistory with messages and status (idle/running/stopping)
 
     Raises:
         HTTPException: If chat not found (404)

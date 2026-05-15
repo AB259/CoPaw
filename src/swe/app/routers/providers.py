@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+from pathlib import Path as PathlibPath
 from typing import List, Literal, Optional
 from copy import deepcopy
 
@@ -20,16 +22,17 @@ from pydantic import BaseModel, Field
 
 from ...config.context import (
     get_current_effective_tenant_id,
+    resolve_effective_tenant_id,
 )
 from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
 )
+from ...constant import SECRET_DIR
 from ...providers.models import ModelSlotConfig
 from ...providers.provider import ProviderInfo, ModelInfo
 from ...providers.provider_manager import ActiveModelsInfo, ProviderManager
 from ..workspace.tenant_initializer import TenantInitializer
-
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +158,60 @@ def _request_tenant_working_dir(request: Request):
 
 def _request_source_id(request: Request) -> str | None:
     return getattr(request.state, "source_id", None)
+
+
+def _get_effective_tenant_id(request: Request) -> str | None:
+    """从请求上下文获取有效租户 ID。"""
+    tenant_id = _request_tenant_id(request)
+    if tenant_id is None:
+        return None
+    return resolve_effective_tenant_id(tenant_id, _request_source_id(request))
+
+
+def _distribute_providers_to_tenant(
+    *,
+    source_providers_dir: PathlibPath,
+    target_tenant_id: str,
+    source_working_dir: PathlibPath,
+    source_id: str | None,
+) -> ProvidersDistributionTenantResult:
+    """分发 providers 目录到单个目标租户。
+
+    Args:
+        source_providers_dir: 源租户的 providers 目录路径。
+        target_tenant_id: 目标租户 ID。
+        source_working_dir: 源租户的工作目录父路径。
+        source_id: 租户初始化使用的 source 标识。
+
+    Returns:
+        分发结果。
+    """
+    # 安全校验
+    target_tenant_id = _validate_target_tenant_id(target_tenant_id)
+
+    initializer = TenantInitializer(
+        source_working_dir.parent,
+        target_tenant_id,
+        source_id=source_id,
+    )
+    was_bootstrapped = initializer.has_seeded_bootstrap()
+    if not was_bootstrapped:
+        initializer.ensure_seeded_bootstrap()
+
+    target_providers_dir = SECRET_DIR / target_tenant_id / "providers"
+
+    # Remove existing target directory if exists
+    if target_providers_dir.exists():
+        shutil.rmtree(target_providers_dir)
+
+    # Copy entire providers directory
+    shutil.copytree(source_providers_dir, target_providers_dir)
+
+    return ProvidersDistributionTenantResult(
+        tenant_id=target_tenant_id,
+        success=True,
+        bootstrapped=not was_bootstrapped,
+    )
 
 
 def _validate_target_tenant_id(tenant_id: str) -> str:
@@ -392,6 +449,44 @@ class ActiveModelDistributionResponse(BaseModel):
     source_active_llm: ModelSlotConfig
     results: List[ActiveModelDistributionTenantResult] = Field(
         default_factory=list,
+    )
+
+
+class ProvidersDistributionRequest(BaseModel):
+    """Request body for distributing entire providers directory."""
+
+    target_tenant_ids: List[str] = Field(
+        default_factory=list,
+        description="Target tenant IDs to distribute providers to",
+    )
+    overwrite: bool = Field(
+        ...,
+        description="Must be true for providers distribution",
+    )
+
+
+class ProvidersDistributionTenantResult(BaseModel):
+    """Per-tenant providers distribution result."""
+
+    tenant_id: str = Field(..., description="Target tenant ID")
+    success: bool = Field(..., description="Whether distribution succeeded")
+    bootstrapped: bool = Field(
+        default=False,
+        description="Whether the target tenant was bootstrapped during distribution",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if failed",
+    )
+
+
+class ProvidersDistributionResponse(BaseModel):
+    """Response payload for providers distribution requests."""
+
+    source_tenant_id: str = Field(..., description="Source tenant ID")
+    results: List[ProvidersDistributionTenantResult] = Field(
+        default_factory=list,
+        description="Per-tenant distribution results",
     )
 
 
@@ -673,7 +768,7 @@ async def set_active_model(
 )
 async def list_active_model_distribution_tenants(
     request: Request,
-) -> (DistributionTenantListResponse):
+) -> DistributionTenantListResponse:
     return DistributionTenantListResponse(
         tenant_ids=await list_logical_tenant_ids(
             _request_source_id(request),
@@ -731,6 +826,85 @@ async def distribute_active_model(
 
     return ActiveModelDistributionResponse(
         source_active_llm=source_active_model,
+        results=results,
+    )
+
+
+@router.post(
+    "/distribution/providers",
+    response_model=ProvidersDistributionResponse,
+    summary="Distribute entire providers directory to target tenants",
+)
+async def distribute_providers(
+    request: Request,
+    body: ProvidersDistributionRequest = Body(...),
+) -> ProvidersDistributionResponse:
+    """从当前租户全量分发 providers 目录到目标租户。
+
+    该端点执行完全覆盖，包括 builtin/、custom/ 和 active_model.json。
+
+    Args:
+        request: FastAPI 请求对象。
+        body: 分发请求，包含目标租户 ID 列表。
+
+    Returns:
+        每个目标租户的分发结果。
+
+    Raises:
+        HTTPException: 400 如果 overwrite 为 False、无目标租户、
+            或源 providers 目录不存在。
+    """
+    if not body.overwrite:
+        raise HTTPException(
+            status_code=400,
+            detail="overwrite=true is required for providers distribution",
+        )
+    if not body.target_tenant_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No target tenant IDs provided",
+        )
+
+    # 获取源租户的有效租户 ID
+    effective_tenant_id = _get_effective_tenant_id(request)
+    if effective_tenant_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No tenant ID in request context",
+        )
+
+    # 获取源 providers 目录
+    source_providers_dir = SECRET_DIR / effective_tenant_id / "providers"
+    if not source_providers_dir.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source providers directory not found for tenant '{effective_tenant_id}'",
+        )
+
+    source_working_dir = _request_tenant_working_dir(request)
+    source_id = _request_source_id(request)
+
+    results: list[ProvidersDistributionTenantResult] = []
+    for tenant_id in body.target_tenant_ids:
+        try:
+            result = _distribute_providers_to_tenant(
+                source_providers_dir=source_providers_dir,
+                target_tenant_id=tenant_id,
+                source_working_dir=source_working_dir,
+                source_id=source_id,
+            )
+            results.append(result)
+        except Exception as exc:
+            results.append(
+                ProvidersDistributionTenantResult(
+                    tenant_id=str(tenant_id),
+                    success=False,
+                    error=str(exc),
+                ),
+            )
+
+    return ProvidersDistributionResponse(
+        source_tenant_id=effective_tenant_id,
         results=results,
     )
 

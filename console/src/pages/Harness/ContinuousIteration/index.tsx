@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -18,6 +18,7 @@ import {
   Select,
   Row,
   Col,
+  Alert,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -32,6 +33,7 @@ import {
   DatabaseOutlined,
   FilterOutlined,
   DeleteOutlined,
+  LoadingOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import ReactMarkdown from "react-markdown";
@@ -48,9 +50,11 @@ import BackupFiles from "./components/BackupFiles";
 import OrphanFiles from "./components/OrphanFiles";
 import styles from "./index.module.less";
 
-const { Panel } = Collapse;
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
+
+const POLL_INTERVAL = 2000;
+const POLL_TIMEOUT = 30 * 60 * 1000;
 
 export default function ContinuousIterationPage() {
   const { t } = useTranslation();
@@ -64,6 +68,16 @@ export default function ContinuousIterationPage() {
   const [selectedRecord, setSelectedRecord] = useState<DreamLogRecord | null>(null);
   const [selectedFilename, setSelectedFilename] = useState<string>("");
 
+  // 已回退文件追踪（解决单文件回退后其他文件无法回退的问题）
+  const [rolledBackFiles, setRolledBackFiles] = useState<Record<string, Set<string>>>({});
+
+  // 运行状态轮询
+  const [isRunning, setIsRunning] = useState(false);
+  const [runningStartedAt, setRunningStartedAt] = useState<string | null>(null);
+  const [runningTrigger, setRunningTrigger] = useState<"cron" | "manual" | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Filter state
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -71,6 +85,8 @@ export default function ContinuousIterationPage() {
 
   useEffect(() => {
     fetchData();
+    checkStatus();
+    return () => stopPolling();
   }, [page, pageSize]);
 
   const fetchData = async () => {
@@ -87,20 +103,76 @@ export default function ContinuousIterationPage() {
     }
   };
 
+  // 查询运行状态
+  const checkStatus = async () => {
+    try {
+      const result = await dreamLogsApi.status();
+      if (result.running) {
+        setIsRunning(true);
+        setRunningStartedAt(result.started_at || null);
+        setRunningTrigger(result.trigger || null);
+        startPolling();
+      }
+    } catch {
+      // 后端未实现 /status 接口时静默忽略
+    }
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    const startTime = Date.now();
+    pollingRef.current = setInterval(async () => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setElapsedSeconds(elapsed);
+
+      if (elapsed * 1000 >= POLL_TIMEOUT) {
+        stopPolling();
+        setIsRunning(false);
+        fetchData();
+        return;
+      }
+
+      try {
+        const result = await dreamLogsApi.status();
+        if (!result.running) {
+          stopPolling();
+          setIsRunning(false);
+          setElapsedSeconds(0);
+          fetchData();
+        }
+      } catch {
+        stopPolling();
+        setIsRunning(false);
+        fetchData();
+      }
+    }, POLL_INTERVAL);
+  };
+
+  const stopPolling = () => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  };
+
+  const formatElapsed = (seconds: number): string => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
   // Filter records based on date range and status
   const filteredRecords = records.filter((record) => {
-    // Date filter
     if (dateRange && dateRange[0] && dateRange[1]) {
       const recordDate = dayjs(record.timestamp);
-      if (recordDate < dateRange[0] || recordDate > dateRange[1].endOf('day')) {
+      if (recordDate < dateRange[0] || recordDate > dateRange[1].endOf("day")) {
         return false;
       }
     }
-    // Status filter
     if (statusFilter && record.status !== statusFilter) {
       return false;
     }
-    // Trigger filter
     if (triggerFilter && record.trigger !== triggerFilter) {
       return false;
     }
@@ -108,7 +180,6 @@ export default function ContinuousIterationPage() {
   });
 
   const handleFilterChange = () => {
-    // Reset to first page when filter changes
     setPage(1);
   };
 
@@ -124,13 +195,16 @@ export default function ContinuousIterationPage() {
       const result = await dreamLogsApi.trigger();
       if (result.success) {
         message.success(t("dreamLogs.triggerNow") + " - " + result.message);
-        // Refresh data after a delay since optimization runs in background
-        setTimeout(fetchData, 5000);
+        setIsRunning(true);
+        setRunningTrigger("manual");
+        setRunningStartedAt(new Date().toISOString());
+        setElapsedSeconds(0);
+        startPolling();
       } else {
         message.error(result.message);
       }
     } catch (error) {
-      message.error("Failed to trigger dream optimization");
+      message.error("Failed to trigger governance optimization");
     }
   };
 
@@ -145,6 +219,15 @@ export default function ContinuousIterationPage() {
           const result = await dreamLogsApi.rollback(recordId, files);
           if (result.success) {
             message.success(t("dreamLogs.rollback.success"));
+            // 将回退文件标记到本地状态，而非依赖记录级 status
+            if (files) {
+              setRolledBackFiles((prev) => {
+                const next = { ...prev };
+                if (!next[recordId]) next[recordId] = new Set();
+                files.forEach((f) => next[recordId].add(f));
+                return next;
+              });
+            }
             fetchData();
           } else {
             message.error(result.message);
@@ -229,7 +312,11 @@ export default function ContinuousIterationPage() {
       key: "space_saved",
       width: 120,
       render: (value: number) => (
-        <Text type="success">{formatSize(value)}</Text>
+        <Text type={value > 0 ? "success" : value < 0 ? "danger" : undefined}>
+          {value > 0 && "-"}
+          {value < 0 && "+"}
+          {formatSize(Math.abs(value))}
+        </Text>
       ),
     },
     {
@@ -265,11 +352,13 @@ export default function ContinuousIterationPage() {
   ];
 
   const renderFileStats = (record: DreamLogRecord) => {
-    // Filter files with actual changes (size_saved > 0 or lines_removed > 0)
+    // 显示所有有变更的文件（包括变大的）
     const fileEntries = Object.entries(record.file_stats).filter(
-      ([, stats]) => stats.size_saved > 0 || stats.lines_removed > 0
+      ([, stats]) => stats.size_saved !== 0 || stats.lines_removed > 0
     );
     if (fileEntries.length === 0) return null;
+
+    const rolledBack = rolledBackFiles[record.id] || new Set<string>();
 
     const fileColumns: ColumnsType<[string, FileStats]> = [
       {
@@ -301,6 +390,8 @@ export default function ContinuousIterationPage() {
         render: (stats: FileStats) =>
           stats.size_saved > 0 ? (
             <Tag color="green">-{formatSize(stats.size_saved)}</Tag>
+          ) : stats.size_saved < 0 ? (
+            <Tag color="red">+{formatSize(Math.abs(stats.size_saved))}</Tag>
           ) : (
             <Text type="secondary">0</Text>
           ),
@@ -324,7 +415,7 @@ export default function ContinuousIterationPage() {
               size="small"
               icon={<RollbackOutlined />}
               onClick={() => handleRollback(record.id, [filename])}
-              disabled={record.status === "rollback"}
+              disabled={rolledBack.has(filename)}
             >
               {t("dreamLogs.rollback.single")}
             </Button>
@@ -334,8 +425,7 @@ export default function ContinuousIterationPage() {
     ];
 
     return (
-      <Space direction="vertical" style={{ width: "100%" }}>
-        <Text strong>{t("dreamLogs.filesOptimized")}:</Text>
+      <Space direction="vertical" style={{ width: "100%" }} className={styles.expandedContent}>
         <Table
           columns={fileColumns}
           dataSource={fileEntries}
@@ -346,6 +436,7 @@ export default function ContinuousIterationPage() {
         {record.summary && (
           <Collapse
             style={{ marginTop: 12 }}
+            className={styles.summaryCollapse}
             items={[
               {
                 key: "summary",
@@ -368,7 +459,31 @@ export default function ContinuousIterationPage() {
   const renderRecordsContent = () => (
     <>
       {stats && <StatsCards stats={stats} />}
+
+      {/* 运行中状态提示 */}
+      {isRunning && (
+        <Alert
+          className={styles.runningBanner}
+          type="info"
+          showIcon
+          icon={<LoadingOutlined />}
+          message={
+            <Space>
+              <Text strong>
+                {runningTrigger === "cron"
+                  ? t("dreamLogs.running.autoTitle")
+                  : t("dreamLogs.running.title")}
+              </Text>
+              <Text type="secondary">
+                {t("dreamLogs.running.elapsed")}: {formatElapsed(elapsedSeconds)}
+              </Text>
+            </Space>
+          }
+        />
+      )}
+
       <Card
+        className={styles.recordsCard}
         title={
           <Space>
             <HistoryOutlined />
@@ -377,16 +492,19 @@ export default function ContinuousIterationPage() {
         }
         extra={
           <Button
+            className={styles.triggerBtn}
             type="primary"
-            icon={<PlayCircleOutlined />}
+            icon={isRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
             onClick={handleTrigger}
+            loading={isRunning}
+            disabled={isRunning}
           >
-            {t("dreamLogs.triggerNow")}
+            {isRunning ? t("dreamLogs.running.triggering") : t("dreamLogs.triggerNow")}
           </Button>
         }
       >
         {/* Filter controls */}
-        <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Row gutter={16} className={styles.filterRow}>
           <Col>
             <Space>
               <FilterOutlined />
@@ -447,6 +565,7 @@ export default function ContinuousIterationPage() {
             </Empty>
           ) : (
             <Table
+              className={styles.customTable}
               columns={columns}
               dataSource={filteredRecords}
               rowKey="id"
@@ -463,7 +582,7 @@ export default function ContinuousIterationPage() {
                 expandedRowRender: renderFileStats,
                 rowExpandable: (record) =>
                   Object.entries(record.file_stats).some(
-                    ([, stats]) => stats.size_saved > 0 || stats.lines_removed > 0
+                    ([, stats]) => stats.size_saved !== 0 || stats.lines_removed > 0
                   ),
               }}
               scroll={{ x: 700 }}
@@ -509,7 +628,7 @@ export default function ContinuousIterationPage() {
 
   return (
     <div className={styles.container}>
-      <Tabs defaultActiveKey="records" items={tabItems} />
+      <Tabs className={styles.customTabs} defaultActiveKey="records" items={tabItems} />
       <FileDiffModal
         visible={diffModalVisible}
         record={selectedRecord}

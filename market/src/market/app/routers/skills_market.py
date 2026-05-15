@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """管理员市场 API."""
+
 import asyncio
 import io
 import json
@@ -10,7 +11,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 
 from fastapi import (
     APIRouter,
@@ -22,7 +23,7 @@ from fastapi import (
     status,
 )
 
-from ...marketplace.fs import get_skill_dir
+from ...marketplace.fs import get_skill_dir, _atomic_write_json
 from ...marketplace.schemas import (
     DistributeRequest,
     DistributeResponse,
@@ -40,6 +41,20 @@ from .skills_browse import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class _InitUserSkillsResult(TypedDict):
+    """init_user_skills 返回结果类型."""
+
+    dry_run: bool
+    processed_users: int
+    processed_workspaces: int
+    processed_skills: int
+    created_skill_json: int
+    updated_source: int
+    skipped_marketplace: int
+    errors: list[dict[str, str]]
+    details: list[dict[str, str]]
 
 
 def _require_manager(x_manager: Optional[str]) -> None:
@@ -135,11 +150,14 @@ def _copy_skill_to_market(
     if skill_md:
         (market_skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
-    # 复制其他文件
+    # 复制其他文件（处理已存在的目录）
     for f in skill_dir.iterdir():
         if f.name not in ("skill.json", "SKILL.md"):
             target = market_skill_dir / f.name
             if f.is_dir():
+                # 目标目录已存在时先删除，再复制
+                if target.exists():
+                    shutil.rmtree(target)
                 shutil.copytree(f, target)
             else:
                 shutil.copy2(f, target)
@@ -221,6 +239,8 @@ def _process_single_skill(
     Returns:
         (imported_name, conflict_info, parsed_name_for_first)
     """
+    from ...marketplace.service import _bump_patch
+
     skill_json, skill_md, name, description = _parse_skill_metadata(
         skill_dir,
         skill_name,
@@ -229,18 +249,35 @@ def _process_single_skill(
     # 检查市场是否已存在同名技能
     items = load_index(svc.marketplace_root, source_id)
     existing = next((i for i in items if i.name == name), None)
-    if existing:
-        return None, {"skill_name": name, "suggested_name": f"{name}_1"}, name
 
-    # 创建市场条目
-    item = _create_market_item(
-        name,
-        description,
-        user_id,
-        user_name,
-        category_id,
-    )
-    items.append(item)
+    if existing:
+        # active 状态的同名技能返回冲突，建议改名
+        if existing.status == "active":
+            return (
+                None,
+                {"skill_name": name, "suggested_name": f"{name}_1"},
+                name,
+            )
+
+        # inactive 状态的同名技能，复用条目并重新激活（与 publish_skill API 一致）
+        existing.status = "active"
+        existing.description = description
+        existing.version = _bump_patch(existing.version)
+        existing.creator_id = user_id
+        existing.creator_name = user_name
+        existing.category_id = category_id
+        existing.updated_at = datetime.now(timezone.utc).isoformat()
+        item = existing
+    else:
+        # 创建新市场条目
+        item = _create_market_item(
+            name,
+            description,
+            user_id,
+            user_name,
+            category_id,
+        )
+        items.append(item)
 
     # 复制技能文件到市场目录
     market_skill_dir = get_skill_dir(
@@ -284,7 +321,11 @@ async def publish_skill_upload(
     data = await _read_validated_zip_upload(file)
 
     # 解压 zip 文件
-    tmp_dir, found_skills = await asyncio.to_thread(_extract_zip_skills, data)
+    tmp_dir, found_skills = await asyncio.to_thread(
+        _extract_zip_skills,
+        data,
+        file.filename,
+    )
     if not found_skills:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -442,3 +483,173 @@ async def distribute_skill(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return result
+
+
+def _process_user_skill(
+    skill_dir: Path,
+    skill_name: str,
+    user_id: str,
+    agent_id: str,
+    dry_run: bool,
+    results: _InitUserSkillsResult,
+) -> None:
+    """处理单个技能的初始化逻辑."""
+    skill_json_path = skill_dir / "skill.json"
+
+    try:
+        if not skill_json_path.exists():
+            # 无 skill.json，创建新文件
+            skill_data = {
+                "schema_version": "workspace-skill.v1",
+                "name": skill_name,
+                "source": "customized",
+                "description": "",
+                "version": "1.0.0",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            results["created_skill_json"] += 1
+            results["details"].append(
+                {
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "skill_name": skill_name,
+                    "action": "created",
+                },
+            )
+
+            if not dry_run:
+                _atomic_write_json(skill_json_path, skill_data)
+            return
+
+        # 已有 skill.json，检查 source 字段
+        try:
+            skill_data = json.loads(
+                skill_json_path.read_text(encoding="utf-8"),
+            )
+        except json.JSONDecodeError as e:
+            results["errors"].append(
+                {
+                    "user_id": user_id,
+                    "skill_name": skill_name,
+                    "error": f"JSON decode error: {e}",
+                },
+            )
+            return
+
+        current_source = skill_data.get("source", "")
+
+        if current_source.startswith("marketplace:"):
+            # 已是分发技能，跳过
+            results["skipped_marketplace"] += 1
+            return
+
+        if current_source == "customized":
+            # 已是正确的值，跳过
+            return
+
+        # 需要更新 source
+        skill_data["source"] = "customized"
+        results["updated_source"] += 1
+        results["details"].append(
+            {
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "skill_name": skill_name,
+                "action": "updated",
+                "old_source": current_source,
+            },
+        )
+
+        if not dry_run:
+            _atomic_write_json(skill_json_path, skill_data)
+
+    except Exception as e:
+        results["errors"].append(
+            {
+                "user_id": user_id,
+                "skill_name": skill_name,
+                "error": str(e),
+            },
+        )
+
+
+def _process_workspace_skills(
+    workspace_dir: Path,
+    user_id: str,
+    dry_run: bool,
+    results: _InitUserSkillsResult,
+) -> None:
+    """处理单个 workspace 下的所有技能."""
+    agent_id = workspace_dir.name
+    skills_dir = workspace_dir / "skills"
+    if not skills_dir.exists():
+        return
+
+    results["processed_workspaces"] += 1
+
+    for skill_dir in skills_dir.iterdir():
+        if not skill_dir.is_dir():
+            continue
+        skill_name = skill_dir.name
+        results["processed_skills"] += 1
+        _process_user_skill(
+            skill_dir,
+            skill_name,
+            user_id,
+            agent_id,
+            dry_run,
+            results,
+        )
+
+
+@router.post(
+    "/market/admin/skills/init-user-skills",
+)
+async def init_user_skills(
+    request: Request,
+    dry_run: bool = True,
+):
+    """初始化所有租户的历史技能数据为「我创建的」.
+
+    处理逻辑：
+    1. 遍历 SWE_ROOT 下所有用户目录
+    2. 对于每个用户的技能目录：
+       - 无 skill.json：创建文件，设置 source=customized
+       - 有 skill.json 但 source 为空或非 marketplace:：设置 source=customized
+       - 已是 marketplace: 开头：跳过（保持为「我接收的」）
+
+    Args:
+        dry_run: True 仅预览变更，不实际写入；False 执行写入
+    """
+    svc = request.app.state.marketplace
+    swe_root = svc.swe_root
+
+    results: _InitUserSkillsResult = {
+        "dry_run": dry_run,
+        "processed_users": 0,
+        "processed_workspaces": 0,
+        "processed_skills": 0,
+        "created_skill_json": 0,
+        "updated_source": 0,
+        "skipped_marketplace": 0,
+        "errors": [],
+        "details": [],
+    }
+
+    # 遍历所有用户目录
+    for user_dir in swe_root.iterdir():
+        if not user_dir.is_dir():
+            continue
+        user_id = user_dir.name
+        results["processed_users"] += 1
+
+        workspace_base = user_dir / "workspaces"
+        if not workspace_base.exists():
+            continue
+
+        for workspace_dir in workspace_base.iterdir():
+            if not workspace_dir.is_dir():
+                continue
+            _process_workspace_skills(workspace_dir, user_id, dry_run, results)
+
+    return results

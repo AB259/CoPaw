@@ -64,7 +64,7 @@ export default function CronOverviewPage() {
   const [jobs, setJobs] = useState<CronJobItem[]>([]);
   const [jobsTotal, setJobsTotal] = useState(0);
   const [jobsPage, setJobsPage] = useState(1);
-  const [jobsPageSize, setJobsPageSize] = useState(20);
+  const [jobsPageSize, setJobsPageSize] = useState(10);
   const [jobsTenantFilter, setJobsTenantFilter] = useState<string>("");
   const [jobsBbkFilter, setJobsBbkFilter] = useState<string>("");
   const [jobsSourceFilter, setJobsSourceFilter] = useState<string>("");
@@ -75,7 +75,7 @@ export default function CronOverviewPage() {
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [execsTotal, setExecsTotal] = useState(0);
   const [execsPage, setExecsPage] = useState(1);
-  const [execsPageSize, setExecsPageSize] = useState(20);
+  const [execsPageSize, setExecsPageSize] = useState(10);
   const [execsJobIdFilter, setExecsJobIdFilter] = useState<string>("");
   const [execsTenantFilter, setExecsTenantFilter] = useState<string>("");
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");
@@ -116,8 +116,8 @@ export default function CronOverviewPage() {
         job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
-        start_time: execsTimeRange[0]?.toISOString() || undefined,
-        end_time: execsTimeRange[1]?.toISOString() || undefined,
+        start_time: execsTimeRange[0]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
+        end_time: execsTimeRange[1]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
       });
       setExecutions(result.items);
       setExecsTotal(result.total);
@@ -190,8 +190,8 @@ export default function CronOverviewPage() {
         job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
-        start_time: execsTimeRange[0]?.toISOString() || undefined,
-        end_time: execsTimeRange[1]?.toISOString() || undefined,
+        start_time: execsTimeRange[0]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
+        end_time: execsTimeRange[1]?.format("YYYY-MM-DDTHH:mm:ss") || undefined,
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -231,6 +231,12 @@ export default function CronOverviewPage() {
       title: "租户ID",
       dataIndex: "tenant_id",
       key: "tenant_id",
+      width: 150,
+    },
+    {
+      title: "租户姓名",
+      dataIndex: "tenant_name",
+      key: "tenant_name",
       width: 150,
     },
     {
@@ -459,7 +465,7 @@ export default function CronOverviewPage() {
                         setJobsPageSize(pageSize);
                       },
                     }}
-                    scroll={{ x: 1700 }}
+                    scroll={{ x: 1850 }}
                   />
                 </>
               ),

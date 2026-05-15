@@ -1,8 +1,9 @@
 import { request } from "../request";
-import { buildAuthHeaders } from "../authHeaders";
+import { mergeHeaders } from "../mergeHeaders";
 
 export interface MySkill {
-  skill_name: string;
+  skill_name: string;  // 目录名，用于 API 操作标识
+  display_name: string;  // 展示名称
   source: string;
   description: string;
   version: string | null;
@@ -33,214 +34,125 @@ export interface BatchOperationResponse {
   failed_count: number;
 }
 
-function mergeHeaders(extra?: Record<string, string>): RequestInit {
-  const base = buildAuthHeaders();
-  const merged: Record<string, string> = { ...base, ...(extra || {}) };
-  return { headers: new Headers(merged) };
-}
-
 export const mySkillsApi = {
-  getCreatedSkills: async (
-    sourceId: string,
-    userId: string
-  ): Promise<MySkill[]> => {
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-    });
+  getCreatedSkills: async (): Promise<MySkill[]> => {
+    const opts = mergeHeaders();
     const all = await request<MySkill[]>("/market/skills/mine", opts);
     return all.filter((s) => !s.is_received);
   },
 
-  getReceivedSkills: async (
-    sourceId: string,
-    userId: string
-  ): Promise<MySkill[]> => {
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-    });
+  getReceivedSkills: async (): Promise<MySkill[]> => {
+    const opts = mergeHeaders();
     const all = await request<MySkill[]>("/market/skills/received", opts);
     return all.filter((s) => s.is_received);
   },
 
-  listSkillFiles: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
-    skillName: string
-  ): Promise<FileTreeNode[]> => {
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-      "X-User-Name": encodeURIComponent(userName),
-      "X-Bbk-Id": bbkId,
-    });
+  listSkillFiles: async (skillName: string): Promise<FileTreeNode[]> => {
+    const opts = mergeHeaders();
+    const encodedName = encodeURIComponent(skillName);
     return request<FileTreeNode[]>(
-      `/market/skills/mine/${skillName}/files`,
+      `/market/skills/mine/${encodedName}/files`,
       opts
     );
   },
 
   readSkillFile: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     skillName: string,
     filePath: string
   ): Promise<FileContentResponse> => {
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-      "X-User-Name": encodeURIComponent(userName),
-      "X-Bbk-Id": bbkId,
-    });
+    const opts = mergeHeaders();
+    const encodedName = encodeURIComponent(skillName);
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
     return request<FileContentResponse>(
-      `/market/skills/mine/${skillName}/files/${filePath}`,
+      `/market/skills/mine/${encodedName}/files/${encodedPath}`,
       opts
     );
   },
 
   saveSkillFile: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     skillName: string,
     filePath: string,
     content: string
   ): Promise<void> => {
+    const encodedName = encodeURIComponent(skillName);
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
     const opts: RequestInit = {
       method: "PUT",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      })),
       body: JSON.stringify({ content }),
     };
-    await request<void>(`/market/skills/mine/${skillName}/files/${filePath}`, opts);
+    await request<void>(`/market/skills/mine/${encodedName}/files/${encodedPath}`, opts);
   },
 
-  deleteSkill: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
-    skillName: string
-  ): Promise<void> => {
+  deleteSkill: async (skillName: string): Promise<void> => {
     const opts: RequestInit = {
       method: "DELETE",
-      headers: new Headers({
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}`, opts);
   },
 
-  enableSkill: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
-    skillName: string
-  ): Promise<void> => {
+  enableSkill: async (skillName: string): Promise<void> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}/enable`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}/enable`, opts);
   },
 
-  disableSkill: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
-    skillName: string
-  ): Promise<void> => {
+  disableSkill: async (skillName: string): Promise<void> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}/disable`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}/disable`, opts);
   },
 
   batchDeleteSkills: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     skillNames: string[]
   ): Promise<BatchOperationResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      })),
       body: JSON.stringify({ skills: skillNames }),
     };
     return request<BatchOperationResponse>(`/market/skills/mine/batch-delete`, opts);
   },
 
   batchEnableSkills: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     skillNames: string[]
   ): Promise<BatchOperationResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      })),
       body: JSON.stringify({ skills: skillNames }),
     };
     return request<BatchOperationResponse>(`/market/skills/mine/batch-enable`, opts);
   },
 
   batchDisableSkills: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     skillNames: string[]
   ): Promise<BatchOperationResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
-        "X-Bbk-Id": bbkId,
-      }),
+      })),
       body: JSON.stringify({ skills: skillNames }),
     };
     return request<BatchOperationResponse>(`/market/skills/mine/batch-disable`, opts);

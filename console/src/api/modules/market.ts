@@ -1,10 +1,15 @@
 import { request } from "../request";
-import { buildAuthHeaders } from "../authHeaders";
+import { mergeHeaders } from "../mergeHeaders";
 import { getApiUrl } from "../config";
+import type {
+  FileContentResponse,
+  FileTreeNode,
+} from "./mySkills";
 
 export interface MarketSkill {
   item_id: string;
   name: string;
+  chinese_name?: string;
   description: string;
   version: string;
   creator_id: string;
@@ -52,12 +57,6 @@ export interface DistributeRequest {
 export interface DistributeResponse {
   distributed_count: number;
   item_id: string;
-}
-
-function mergeHeaders(extra?: Record<string, string>): RequestInit {
-  const base = buildAuthHeaders();
-  const merged: Record<string, string> = { ...base, ...(extra || {}) };
-  return { headers: new Headers(merged) };
 }
 
 /**
@@ -118,7 +117,6 @@ export const marketApi = {
 
   listMarketSkills: async (
     sourceId: string,
-    bbkId: string,
     categoryId?: number
   ): Promise<MarketSkill[]> => {
     let url = "/market/skills";
@@ -129,43 +127,59 @@ export const marketApi = {
     if (params.toString()) {
       url += `?${params.toString()}`;
     }
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-Bbk-Id": bbkId,
-    });
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
     return request<MarketSkill[]>(url, opts);
   },
 
   getSkillDetail: async (
     sourceId: string,
     itemId: string,
-    bbkId: string
   ): Promise<MarketSkillDetail | null> => {
-    const opts = mergeHeaders({
-      "X-Source-Id": sourceId,
-      "X-Bbk-Id": bbkId,
-    });
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
     return request<MarketSkillDetail | null>(
       `/market/skills/${itemId}`,
       opts
     );
   },
 
+  listSkillFiles: async (
+    sourceId: string,
+    itemId: string,
+  ): Promise<FileTreeNode[]> => {
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
+    return request<FileTreeNode[]>(
+      `/market/skills/${itemId}/files`,
+      opts,
+    );
+  },
+
+  readSkillFile: async (
+    sourceId: string,
+    itemId: string,
+    filePath: string,
+  ): Promise<FileContentResponse> => {
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    return request<FileContentResponse>(
+      `/market/skills/${itemId}/files/${encodedPath}`,
+      opts,
+    );
+  },
+
   publishSkill: async (
     sourceId: string,
-    userId: string,
-    userName: string,
     data: PublishSkillRequest
   ): Promise<MarketSkill> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
         "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<MarketSkill>("/market/skills", opts);
@@ -174,17 +188,13 @@ export const marketApi = {
   unpublishSkill: async (
     sourceId: string,
     itemId: string,
-    userId: string,
-    userName: string
   ): Promise<void> => {
     const opts: RequestInit = {
       method: "DELETE",
-      headers: new Headers({
+      ...(mergeHeaders({
         "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
     };
     return request<void>(`/market/skills/${itemId}`, opts);
   },
@@ -192,19 +202,15 @@ export const marketApi = {
   distributeSkill: async (
     sourceId: string,
     itemId: string,
-    userId: string,
-    userName: string,
     data: DistributeRequest
   ): Promise<DistributeResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
         "X-Source-Id": sourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<DistributeResponse>(
@@ -215,9 +221,6 @@ export const marketApi = {
 
   uploadSkillToWorkspace: async (
     sourceId: string,
-    userId: string,
-    userName: string,
-    bbkId: string,
     file: File,
     options?: {
       enable?: boolean;
@@ -235,16 +238,15 @@ export const marketApi = {
     conflicts?: Array<{
       reason: string;
       skill_name: string;
+      original_name?: string;
       suggested_name: string;
     }>;
   }> => {
-    const headers = {
-      ...buildAuthHeaders(),
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-      "X-User-Name": encodeURIComponent(userName),
-      "X-Bbk-Id": bbkId,
-    };
+    const headers = Object.fromEntries(
+      (mergeHeaders({
+        "X-Source-Id": sourceId,
+      }).headers as Headers).entries(),
+    );
     return _uploadZipToMarket("/market/skills/upload", file, headers, options) as Promise<{
       imported: string[];
       count: number;
@@ -261,8 +263,6 @@ export const marketApi = {
 
   uploadSkillToMarket: async (
     sourceId: string,
-    userId: string,
-    userName: string,
     file: File,
     options?: {
       category_id?: number;
@@ -278,13 +278,12 @@ export const marketApi = {
       suggested_name: string;
     }>;
   }> => {
-    const headers = {
-      ...buildAuthHeaders(),
-      "X-Source-Id": sourceId,
-      "X-User-Id": userId,
-      "X-User-Name": encodeURIComponent(userName),
-      "X-Manager": "true",
-    };
+    const headers = Object.fromEntries(
+      (mergeHeaders({
+        "X-Source-Id": sourceId,
+        "X-Manager": "true",
+      }).headers as Headers).entries(),
+    );
     return _uploadZipToMarket("/market/skills/publish-upload", file, headers, options) as Promise<{
       imported: string[];
       count: number;
