@@ -47,6 +47,7 @@ heartbeat_module.run_heartbeat_once = _run_heartbeat_once
 sys.modules["swe.app.crons.heartbeat"] = heartbeat_module
 
 config_module = types.ModuleType("swe.config")
+config_module.__path__ = [str(SRC_ROOT / "swe" / "config")]
 config_module.get_heartbeat_config = (
     lambda agent_id=None: types.SimpleNamespace(
         enabled=False,
