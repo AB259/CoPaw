@@ -15,6 +15,7 @@ from pathlib import Path
 import time
 from typing import Optional
 
+from ...config.context import resolve_runtime_identity
 from .tenant_initializer import TenantInitializer
 from .workspace import Workspace
 
@@ -204,9 +205,16 @@ class TenantWorkspacePool:
                     init_source = "default"
                 else:
                     init_source = initializer.template_name
+                (
+                    logical_tenant_id,
+                    resolved_source_id,
+                    _scope_id,
+                ) = resolve_runtime_identity(tenant_id, source_id)
+                # DB 映射服务于运维侧按来源查询，应保存逻辑租户，
+                # 不能把运行时隔离目录使用的 opaque scope 暴露出去。
                 await self._record_init_source_mapping(
-                    tenant_id,
-                    source_id,
+                    logical_tenant_id or tenant_id,
+                    resolved_source_id or source_id,
                     init_source,
                     tenant_name=tenant_name,
                     bbk_id=bbk_id,

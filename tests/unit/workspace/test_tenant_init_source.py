@@ -120,6 +120,23 @@ class TestTenantInitializerSourceId:
         assert initializer.effective_tenant_id == scope_id
         assert initializer.tenant_dir == tmp_path / scope_id
 
+    def test_encoded_scope_with_source_keeps_scope_directory(self, tmp_path):
+        """已解析的 scope 进入初始化器时不能再次编码成嵌套 scope。"""
+        default_dir = tmp_path / "default"
+        default_dir.mkdir()
+        (default_dir / "config.json").write_text("{}", encoding="utf-8")
+        scope_id = encode_scope_id("user-001", "ruice")
+
+        initializer = TenantInitializer(
+            tmp_path,
+            scope_id,
+            source_id="ruice",
+        )
+
+        assert initializer.template_name == "default_ruice"
+        assert initializer.effective_tenant_id == scope_id
+        assert initializer.tenant_dir == tmp_path / scope_id
+
     def test_source_id_creates_template_from_default_when_missing(
         self,
         tmp_path,

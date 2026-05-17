@@ -200,15 +200,20 @@ def resolve_runtime_tenant_id(
     tenant_id: str | None,
     source_id: str | None,
 ) -> str | None:
-    """Resolve the tenant ID used by runtime-scoped storage and workspaces.
+    """解析运行时存储和工作区使用的租户标识。
 
-    Unlike :func:`resolve_effective_tenant_id`, this helper is tolerant of
-    missing ``source_id`` and simply returns the original ``tenant_id`` in that
-    case. This makes it safe for generic runtime code paths that may run in
-    both source-scoped and non-source-scoped contexts.
+    该函数需要同时兼容逻辑租户和已编码的 scope。调用方可能已经通过
+    middleware 解析过 ``scope_id``，这里必须保持幂等，避免把 scope 当作
+    普通租户再次和 ``source_id`` 组合编码。
     """
     if tenant_id is None:
         return None
+    try:
+        decode_scope_id(tenant_id)
+    except ValueError:
+        pass
+    else:
+        return tenant_id
     scope_id = resolve_scope_id(tenant_id, source_id)
     if scope_id is not None:
         return scope_id

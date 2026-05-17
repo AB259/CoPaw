@@ -33,6 +33,7 @@ from swe.config.context import (
     get_current_tenant_id_strict,
     get_current_user_id_strict,
     get_current_workspace_dir_strict,
+    resolve_runtime_tenant_id,
     resolve_runtime_identity,
     tenant_context,
     TenantContextError,
@@ -405,3 +406,11 @@ class TestRuntimeIdentityResolution:
             "source-a",
             encode_scope_id("tenant-a", "source-a"),
         )
+
+    def test_runtime_tenant_resolution_keeps_encoded_scope_id(self):
+        """已编码 scope 再次解析时必须保持幂等，避免二次编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        resolved = resolve_runtime_tenant_id(scope_id, "source-a")
+
+        assert resolved == scope_id
