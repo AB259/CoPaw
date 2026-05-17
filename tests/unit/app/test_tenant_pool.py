@@ -95,6 +95,19 @@ class TestTenantWorkspaceCreation:
 
         assert workspace.agent_id == "default"
 
+    async def test_get_or_create_uses_pool_workspace_dir(
+        self,
+        mock_working_dir,
+    ):
+        """get_or_create 返回的 workspace 必须落在 pool 目录下。"""
+        pool = TenantWorkspacePool(mock_working_dir)
+
+        workspace = await pool.get_or_create("tenant-1")
+
+        assert workspace.workspace_dir == (
+            mock_working_dir / "tenant-1" / "workspaces" / "default"
+        )
+
     async def test_get_or_create_creates_tenant_dir(self, tmp_path):
         """get_or_create creates tenant workspace directory."""
         pool = TenantWorkspacePool(tmp_path / "tenants")

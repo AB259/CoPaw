@@ -323,19 +323,41 @@ class TenantWorkspacePool:
             tenant_id,
         )
 
-        from ..multi_agent_manager import MultiAgentManager
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
 
-        # Ensure tenant is bootstrapped first
         await self.ensure_bootstrap(tenant_id)
 
-        # Delegate workspace creation and startup to MultiAgentManager
-        # Note: This creates a new MultiAgentManager instance each time,
-        # which breaks caching semantics. This is why the method is deprecated.
-        multi_agent_manager = MultiAgentManager()
-        return await multi_agent_manager.get_agent(
-            agent_id,
-            tenant_id=tenant_id,
-        )
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
+
+            workspace = Workspace(
+                agent_id=agent_id,
+                workspace_dir=str(
+                    self._get_tenant_workspace_dir(tenant_id)
+                    / "workspaces"
+                    / agent_id,
+                ),
+                tenant_id=tenant_id,
+            )
+
+            if entry is None:
+                entry = TenantWorkspaceEntry(
+                    tenant_id=tenant_id,
+                    workspace=workspace,
+                )
+                self._workspaces[tenant_id] = entry
+            else:
+                entry.workspace = workspace
+
+            self._mark_access(entry)
+            return workspace
 
     async def get(self, tenant_id: str) -> Optional[Workspace]:
         """Get existing workspace for tenant if it exists.
