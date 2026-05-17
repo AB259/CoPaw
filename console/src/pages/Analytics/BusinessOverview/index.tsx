@@ -5,9 +5,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
 import {
+  ArrowUpRight,
   CalendarDays,
   CheckSquare,
   ChevronRight,
+  Clock3,
   Coins,
   MessageCircleMore,
   RotateCw,
@@ -15,6 +17,7 @@ import {
   TrendingDown,
   TrendingUp,
   UserRound,
+  Users,
   Zap,
 } from "lucide-react";
 import { DatePicker, Select, message } from "antd";
@@ -1112,25 +1115,29 @@ export default function BusinessOverviewPage() {
               <div key={card.key} className={styles.depthCard}>
                 <div className={styles.depthIconWrap}>
                   {card.key === "avg-rounds" && <MessageCircleMore size={19} />}
-                  {card.key === "multi-round" && <UserRound size={19} />}
-                  {card.key === "avg-stay" && <Sparkles size={19} />}
-                  {card.key === "avg-sessions" && <CheckSquare size={19} />}
+                  {card.key === "multi-round" && <Users size={19} />}
+                  {card.key === "avg-stay" && <Clock3 size={19} />}
+                  {card.key === "avg-sessions" && <ArrowUpRight size={19} />}
                 </div>
-                <div className={styles.depthTitle}>{card.title}</div>
-                <div className={styles.depthValue}>{card.valueText}</div>
-                <div
-                  className={
-                    card.changeDirection === "up"
-                      ? styles.metricChangeUp
-                      : card.changeDirection === "down"
-                      ? styles.metricChangeDown
-                      : styles.metricChangeFlat
-                  }
-                >
-                  环比
-                  {card.changeDirection === "up" && <TrendingUp size={12} />}
-                  {card.changeDirection === "down" && <TrendingDown size={12} />}
-                  {card.changeText}
+                <div className={styles.depthBody}>
+                  <div className={styles.depthTitle}>{card.title}</div>
+                  <div className={styles.depthValue}>{card.valueText}</div>
+                  <div
+                    className={
+                      card.changeDirection === "up"
+                        ? styles.metricChangeUp
+                        : card.changeDirection === "down"
+                        ? styles.metricChangeDown
+                        : styles.metricChangeFlat
+                    }
+                  >
+                    环比
+                    {card.changeDirection === "up" && <TrendingUp size={12} />}
+                    {card.changeDirection === "down" && (
+                      <TrendingDown size={12} />
+                    )}
+                    {card.changeText}
+                  </div>
                 </div>
               </div>
             ))}
@@ -1206,10 +1213,6 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelMedium}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>技能使用TOP5</h3>
-            <button type="button" className={styles.detailLink}>
-              查看详情
-              <ChevronRight size={14} />
-            </button>
           </div>
           <div className={styles.skillList} onScroll={handleSkillsScroll}>
             {skills.length === 0 ? (

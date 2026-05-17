@@ -249,14 +249,14 @@
 
 .analysisGrid {
   display: grid;
-  grid-template-columns: 2.2fr 1.95fr 1.9fr;
+  grid-template-columns: 2.2fr 1.72fr 2.13fr;
   gap: 16px;
   margin-bottom: 16px;
 }
 
 .summaryGrid {
   display: grid;
-  grid-template-columns: 2.2fr 1.95fr 1.9fr;
+  grid-template-columns: 2.2fr 1.72fr 2.13fr;
   gap: 16px;
 }
 
@@ -388,6 +388,10 @@
   font-weight: 600;
 }
 
+.rankHeader span:last-child {
+  text-align: right;
+}
+
 .rankList {
   display: flex;
   flex-direction: column;
@@ -428,19 +432,20 @@
 }
 
 .rankBadge {
-  background: #94a3b8;
+  color: #475569;
+  background: #e2e8f0;
 }
 
 .rankBadgeGold {
-  background: #f59e0b;
+  background: #f2b63d;
 }
 
 .rankBadgeSilver {
-  background: #94a3b8;
+  background: #6f7f97;
 }
 
 .rankBadgeBronze {
-  background: #ef4444;
+  background: #bf7b4b;
 }
 
 .rankUser {
@@ -478,6 +483,10 @@
 }
 
 .depthCard {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
   min-height: 102px;
   padding: 16px;
   background: #f9fbff;
@@ -491,23 +500,34 @@
   justify-content: center;
   width: 38px;
   height: 38px;
-  margin-bottom: 10px;
   border-radius: 50%;
   color: #4f46e5;
   background: #eef2ff;
 }
 
+.depthBody {
+  display: grid;
+  grid-template-rows: repeat(3, auto);
+  align-content: center;
+  min-width: 0;
+}
+
 .depthTitle {
+  overflow: hidden;
   color: #475569;
+  text-overflow: ellipsis;
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .depthValue {
-  margin-top: 8px;
+  margin-top: 6px;
   color: #111827;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
@@ -597,6 +617,10 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .legendLabel i {
