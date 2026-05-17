@@ -91,9 +91,7 @@ class ApprovalService:
     def _matches_scope(self, pending: PendingApproval) -> bool:
         """Check whether a pending/completed record is visible in scope."""
         scope_id = self._get_current_scope_id()
-        if scope_id is None:
-            return True
-        return pending.scope_id == scope_id
+        return scope_id is not None and pending.scope_id == scope_id
 
     # ------------------------------------------------------------------
     # Core approval lifecycle
@@ -144,7 +142,14 @@ class ApprovalService:
     ) -> PendingApproval | None:
         """Resolve one pending approval request."""
         async with self._lock:
-            pending = self._pending.pop(request_id, None)
+            pending = self._pending.get(request_id)
+            if pending is None or not self._matches_scope(pending):
+                completed = self._completed.get(request_id)
+                if completed is None or not self._matches_scope(completed):
+                    return None
+                return completed
+
+            pending = self._pending.pop(request_id)
             if pending is None:
                 return self._completed.get(request_id)
 

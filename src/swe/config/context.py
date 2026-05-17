@@ -558,21 +558,9 @@ def resolve_effective_tenant_id(
     tenant_id: str,
     source_id: str | None,
 ) -> str:
-    """Resolve the effective tenant ID considering source isolation.
+    """兼容旧调用方的 runtime tenant 解析别名。
 
-    - Default tenant with source_id: effective = ``default_{source_id}``
-    - Default tenant without source_id: effective = ``default``
-    - Non-default tenant: effective = tenant_id (unchanged)
-
-    Args:
-        tenant_id: The original tenant ID from X-Tenant-Id header.
-        source_id: The source ID from X-Source-Id header.
-
-    Returns:
-        The effective tenant ID to use for directory resolution.
+    新运行时统一使用编码后的 scope_id；保留该函数仅用于兼容历史导入，
+    避免调用方通过旧名称重新引入 ``default_{source}`` 目录语义。
     """
-    if tenant_id == "default":
-        if source_id:
-            return f"default_{source_id}"
-        return "default"
-    return tenant_id
+    return resolve_runtime_tenant_id(tenant_id, source_id) or tenant_id

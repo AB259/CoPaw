@@ -87,6 +87,13 @@ def test_distribute_providers_success(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return True
@@ -150,6 +157,13 @@ def test_distribute_providers_uses_request_scope_for_source_dir(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return True
@@ -175,6 +189,12 @@ def test_distribute_providers_uses_request_scope_for_source_dir(
 
     assert observed["tenant_id"] == scope_id
     assert result.source_tenant_id == scope_id
+    assert result.results[0].success is True
+    assert (
+        secret_dir
+        / providers_router.resolve_runtime_tenant_id("tenant-target", "ruice")
+        / "providers"
+    ).exists()
 
 
 def test_distribute_providers_multiple_tenants(
@@ -200,6 +220,13 @@ def test_distribute_providers_multiple_tenants(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return True
@@ -401,6 +428,13 @@ def test_distribute_providers_bootstraps_tenant(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return False

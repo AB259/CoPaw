@@ -671,18 +671,26 @@ class TestResolveEffectiveTenantId:
         assert resolve_effective_tenant_id("default", None) == "default"
 
     def test_default_with_source_returns_source_tenant(self):
-        """default + source_id → default_{source_id}."""
-        from swe.config.context import resolve_effective_tenant_id
+        """default + source_id 应返回统一编码后的 scope_id。"""
+        from swe.config.context import (
+            encode_scope_id,
+            resolve_effective_tenant_id,
+        )
 
-        assert (
-            resolve_effective_tenant_id("default", "ruice") == "default_ruice"
+        assert resolve_effective_tenant_id("default", "ruice") == (
+            encode_scope_id("default", "ruice")
         )
 
     def test_non_default_with_source_returns_original(self):
-        """Non-default tenant with source_id → original tenant_id."""
-        from swe.config.context import resolve_effective_tenant_id
+        """非 default tenant 也应返回统一编码后的 scope_id。"""
+        from swe.config.context import (
+            encode_scope_id,
+            resolve_effective_tenant_id,
+        )
 
-        assert resolve_effective_tenant_id("user-001", "ruice") == "user-001"
+        assert resolve_effective_tenant_id("user-001", "ruice") == (
+            encode_scope_id("user-001", "ruice")
+        )
 
     def test_non_default_without_source_returns_original(self):
         """Non-default tenant without source_id → original tenant_id."""
