@@ -203,7 +203,9 @@ def _distribute_providers_to_tenant(
     if not was_bootstrapped:
         initializer.ensure_seeded_bootstrap()
 
-    target_providers_dir = SECRET_DIR / target_tenant_id / "providers"
+    target_providers_dir = (
+        SECRET_DIR / initializer.effective_tenant_id / "providers"
+    )
 
     # Remove existing target directory if exists
     if target_providers_dir.exists():

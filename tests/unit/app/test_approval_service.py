@@ -172,3 +172,36 @@ async def test_runner_approves_requested_pending_id_not_fifo_head(
     )
     assert (await service.get_request(first.request_id)).status == "pending"
     assert (await service.get_request(second.request_id)).status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_requested_pending_id_from_other_source(
+    monkeypatch,
+) -> None:
+    service = ApprovalService()
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        pending = await service.create_pending(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            tool_name="execute_shell_command",
+            result=_result(),
+        )
+    monkeypatch.setattr(
+        "swe.app.approvals.service._approval_service",
+        service,
+    )
+    runner = AgentRunner()
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+        response, consumed, approved_tool_call = (
+            await runner._resolve_pending_approval(
+                "session-1",
+                f"/approve {pending.request_id}",
+            )
+        )
+
+    assert response is None
+    assert consumed is False
+    assert approved_tool_call is None
+    assert (await service.get_request(pending.request_id)).status == "pending"

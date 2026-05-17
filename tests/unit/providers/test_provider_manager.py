@@ -19,7 +19,7 @@ sys.modules.setdefault("fcntl", fcntl_stub)
 import swe.providers.provider_manager as provider_manager_module
 import swe.tenant_models.manager as tenant_models_manager_module
 from swe.providers.anthropic_provider import AnthropicProvider
-from swe.config.context import tenant_context
+from swe.config.context import encode_scope_id, tenant_context
 from swe.providers.models import ModelSlotConfig
 from swe.providers.openai_provider import OpenAIProvider
 from swe.providers.provider import ModelInfo
@@ -257,6 +257,27 @@ def test_get_instance_isolated_by_source_for_non_default_tenant(
 
     assert manager_a is not manager_b
     assert manager_a.tenant_id != manager_b.tenant_id
+
+
+def test_get_instance_uses_requested_tenant_with_current_source(
+    isolated_secret_dir,
+) -> None:
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        manager = ProviderManager.get_instance("tenant-b")
+
+    assert manager.tenant_id == encode_scope_id("tenant-b", "source-a")
+
+
+def test_ensure_storage_uses_requested_tenant_with_current_source(
+    isolated_secret_dir,
+) -> None:
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        ProviderManager.ensure_tenant_provider_storage("tenant-b")
+
+    target_scope_id = encode_scope_id("tenant-b", "source-a")
+    current_scope_id = encode_scope_id("tenant-a", "source-a")
+    assert (isolated_secret_dir / target_scope_id / "providers").exists()
+    assert not (isolated_secret_dir / current_scope_id / "providers").exists()
 
 
 async def test_remove_custom_provider_missing_file_is_safe(

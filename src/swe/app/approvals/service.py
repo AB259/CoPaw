@@ -159,11 +159,14 @@ class ApprovalService:
         return pending
 
     async def get_request(self, request_id: str) -> PendingApproval | None:
-        """Get a request by id whether pending or already resolved."""
+        """按当前 scope 获取 pending 或已完成的审批请求。"""
         async with self._lock:
-            return self._pending.get(request_id) or self._completed.get(
+            pending = self._pending.get(request_id) or self._completed.get(
                 request_id,
             )
+            if pending is None or not self._matches_scope(pending):
+                return None
+            return pending
 
     async def get_pending_by_session(
         self,
