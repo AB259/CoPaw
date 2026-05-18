@@ -24,13 +24,13 @@ def test_resolve_bound_identity_uses_payload_source_meta() -> None:
 def test_resolve_bound_identity_decodes_workspace_scope_before_source() -> (
     None
 ):
-    """后台消费已绑定 scope 的 workspace 时，不能再把 source 编第二次。"""
+    """后台消费只有 source_id 时，也必须识别 workspace 上已有的 scope。"""
     scope_id = encode_scope_id("tenant-a", "source-a")
     channel = object.__new__(BaseChannel)
     channel._workspace = SimpleNamespace(tenant_id=scope_id)
     request = SimpleNamespace(
         source_id=None,
-        scope_id=scope_id,
+        scope_id=None,
         channel_meta=None,
     )
     payload = {"meta": {"source_id": "source-a"}}

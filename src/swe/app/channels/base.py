@@ -887,6 +887,15 @@ class BaseChannel(ABC):
         )
         if scope_id is not None:
             return resolve_runtime_identity(scope_id)
+        logical_tenant_id, resolved_source_id, resolved_scope_id = (
+            resolve_runtime_identity(runtime_tenant_id)
+        )
+        if resolved_scope_id is not None:
+            return (
+                logical_tenant_id,
+                resolved_source_id,
+                resolved_scope_id,
+            )
         return resolve_runtime_identity(runtime_tenant_id, source_id)
 
     async def _run_process_loop(

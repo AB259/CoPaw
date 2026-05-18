@@ -231,6 +231,17 @@ def resolve_runtime_tenant_id(
     return tenant_id
 
 
+def resolve_scope_preferred_tenant_id(
+    tenant_id: str | None,
+    source_id: str | None = None,
+    scope_id: str | None = None,
+) -> str | None:
+    """统一解析运行时隔离键，优先使用显式 scope_id。"""
+    if scope_id is not None:
+        return canonicalize_scope_id(scope_id)
+    return resolve_runtime_tenant_id(tenant_id, source_id)
+
+
 def resolve_runtime_identity(
     runtime_tenant_id: str | None,
     source_id: str | None = None,

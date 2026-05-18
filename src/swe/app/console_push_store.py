@@ -27,16 +27,17 @@ def _resolve_store_key(tenant_id: Optional[str] = None) -> str:
     """Resolve the isolation key for transient console messages."""
     try:
         from swe.config.context import (
-            canonicalize_scope_id,
             get_current_scope_id,
-            resolve_runtime_tenant_id,
+            resolve_scope_preferred_tenant_id,
         )
 
-        scope_id = get_current_scope_id()
-        if scope_id:
-            return canonicalize_scope_id(scope_id)
-        if tenant_id is not None:
-            return resolve_runtime_tenant_id(tenant_id, None) or tenant_id
+        store_key = resolve_scope_preferred_tenant_id(
+            tenant_id,
+            None,
+            get_current_scope_id(),
+        )
+        if store_key is not None:
+            return store_key
     except Exception:
         pass
     return tenant_id or "default"

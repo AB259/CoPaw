@@ -37,6 +37,7 @@ from swe.config.context import (
     get_current_workspace_dir_strict,
     resolve_runtime_tenant_id,
     resolve_runtime_identity,
+    resolve_scope_preferred_tenant_id,
     tenant_context,
     TenantContextError,
 )
@@ -459,6 +460,16 @@ class TestRuntimeIdentityResolution:
         resolved = resolve_runtime_tenant_id(scope_id, None)
 
         assert resolved == scope_id
+
+    def test_scope_preferred_tenant_resolution_uses_explicit_scope_id(self):
+        """统一 helper 必须始终以显式 scope_id 为准。"""
+        resolved = resolve_scope_preferred_tenant_id(
+            tenant_id="tenant-a",
+            source_id="source-b",
+            scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        )
+
+        assert resolved == "dGVuYW50LWE.c291cmNlLWE"
 
     def test_scope_like_raw_tenant_still_combines_with_source(self):
         """形似 scope 的 raw tenant 也必须继续参与 source 隔离。"""
