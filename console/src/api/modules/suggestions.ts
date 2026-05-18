@@ -1,37 +1,13 @@
 import { buildAuthHeaders } from "@/api/authHeaders";
 
-export interface BackendSuggestionsRequest {
-  sessionId: string;
-}
-
-export interface GeneratedSuggestionsRequest {
+export interface SuggestionsRequest {
   chatId: string;
   turnId: string;
   userMessage: string;
   assistantMessage: string;
 }
 
-export interface QAContentRequest {
-  chatId: string;
-  userMessage: string;
-}
-
-export interface QAContentResponse {
-  success: boolean;
-  qa_content?: {
-    user_message: string;
-    assistant_response: string;
-  };
-}
-
-interface BackendSuggestionsResponse {
-  suggestions?: Array<{
-    id?: string;
-    suggestions?: unknown;
-  }>;
-}
-
-interface GeneratedSuggestionsResponse {
+interface SuggestionsResponse {
   returnCode?: string;
   errorMsg?: string;
   body?: {
@@ -64,7 +40,7 @@ function normalizeSuggestions(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function buildMockSuggestions(request: GeneratedSuggestionsRequest): string[] {
+function buildMockSuggestions(request: SuggestionsRequest): string[] {
   const trimmedUserMessage = request.userMessage.trim();
   if (!trimmedUserMessage) {
     return MOCK_SUGGESTIONS;
@@ -77,40 +53,8 @@ function buildMockSuggestions(request: GeneratedSuggestionsRequest): string[] {
   ];
 }
 
-export async function fetchBackendSuggestions(
-  request: BackendSuggestionsRequest,
-): Promise<string[]> {
-  try {
-    const baseUrl = window.__env__?.baseUrl || "";
-    const apiUrl = `${baseUrl}/api/console/suggestions?session_id=${encodeURIComponent(
-      request.sessionId,
-    )}`;
-
-    const response = await fetch(apiUrl, {
-      method: "GET",
-      headers: {
-        ...buildAuthHeaders(),
-      },
-    });
-
-    if (!response.ok) {
-      console.error("[Suggestions] API request failed:", response.status);
-      return [];
-    }
-
-    const result: BackendSuggestionsResponse = await response.json();
-    const firstEntry = Array.isArray(result.suggestions)
-      ? result.suggestions[0]
-      : undefined;
-    return normalizeSuggestions(firstEntry?.suggestions);
-  } catch (error) {
-    console.error("[Suggestions] API request error:", error);
-    return [];
-  }
-}
-
-export async function fetchGeneratedSuggestions(
-  request: GeneratedSuggestionsRequest,
+export async function fetchSuggestions(
+  request: SuggestionsRequest,
 ): Promise<string[]> {
   try {
     const baseUrl = window.__env__?.baseUrl || "";
@@ -138,53 +82,17 @@ export async function fetchGeneratedSuggestions(
     });
 
     if (!response.ok) {
-      console.error(
-        "[Suggestions] generated API request failed:",
-        response.status,
-      );
+      console.error("[Suggestions] API request failed:", response.status);
       return [];
     }
 
-    const result: GeneratedSuggestionsResponse = await response.json();
+    const result: SuggestionsResponse = await response.json();
     return normalizeSuggestions(
       result.body?.output?.result?.suggestions ??
         result.body?.output?.result?.questions,
     );
   } catch (error) {
-    console.error("[Suggestions] generated API request error:", error);
+    console.error("[Suggestions] API request error:", error);
     return [];
   }
 }
-
-export async function fetchQAContent(
-  request: QAContentRequest,
-): Promise<QAContentResponse> {
-  try {
-    const baseUrl = window.__env__?.baseUrl || "";
-    const apiUrl = `${baseUrl}/api/console/suggestions/qa-content`;
-
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildAuthHeaders(),
-      },
-      body: JSON.stringify({
-        chat_id: request.chatId,
-        user_message: request.userMessage,
-      }),
-    });
-
-    if (!response.ok) {
-      console.error("[Suggestions] fetchQAContent failed:", response.status);
-      return { success: false };
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error("[Suggestions] fetchQAContent error:", error);
-    return { success: false };
-  }
-}
-
-export const fetchSuggestions = fetchBackendSuggestions;

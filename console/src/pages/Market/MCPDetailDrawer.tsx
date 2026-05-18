@@ -14,18 +14,16 @@ import {
   Typography,
   message,
 } from "antd";
-import {
-  DeleteOutlined,
-  EditOutlined,
-  RocketOutlined,
-  ThunderboltOutlined,
-} from "@ant-design/icons";
+import { ThunderboltOutlined } from "@ant-design/icons";
 import {
   Calendar,
   GitBranch,
   Info,
   Link as LinkIcon,
   TerminalSquare,
+  Send,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { marketMcpApi } from "../../api/modules/marketMcp";
 import type { MarketMCPDetail, MCPTestResult } from "../../api/types";
@@ -34,10 +32,11 @@ const { Title, Paragraph, Text } = Typography;
 
 interface MCPDetailDrawerProps {
   mcp: MarketMCPDetail | null;
-  onDistribute: () => void;
+  onDistribute?: () => void;
   onEdit?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   canEdit?: boolean;
+  isManager?: boolean;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -51,12 +50,23 @@ function formatDateTime(value?: string | null): string {
   )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+const footerButtonStyle = {
+  height: 28,
+  padding: "0 12px",
+  borderRadius: 8,
+  fontSize: 12,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+};
+
 export function MCPDetailDrawer({
   mcp,
   onDistribute,
   onEdit,
   onDelete,
   canEdit = false,
+  isManager = false,
 }: MCPDetailDrawerProps) {
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<MCPTestResult | null>(null);
@@ -132,7 +142,7 @@ export function MCPDetailDrawer({
       >
         <div
           style={{
-            border: "1px solid #ece7dd",
+            border: "1px solid #f0f0f0",
             borderRadius: 18,
             background: "#ffffff",
             overflow: "hidden",
@@ -141,7 +151,7 @@ export function MCPDetailDrawer({
           <div
             style={{
               padding: 16,
-              borderBottom: "1px solid #f0ebe1",
+              borderBottom: "1px solid #f0f0f0",
               display: "flex",
               alignItems: "flex-start",
               justifyContent: "space-between",
@@ -158,7 +168,7 @@ export function MCPDetailDrawer({
             </div>
           </div>
 
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0ebe1" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
             <Button
               icon={<ThunderboltOutlined />}
               loading={testLoading}
@@ -192,7 +202,7 @@ export function MCPDetailDrawer({
             ) : null}
           </div>
 
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0ebe1" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
             <p style={{ margin: 0, fontSize: 12, color: "#87867f", lineHeight: 1.7 }}>
               MCP 连接器可访问你配置的数据与工具。请仅添加你信任的服务器。
             </p>
@@ -248,9 +258,9 @@ export function MCPDetailDrawer({
         <div style={{ display: "grid", gap: 12 }}>
           <div
             style={{
-              border: "1px solid #e8e6dc",
+              border: "1px solid #f0f0f0",
               borderRadius: 18,
-              background: "#faf9f5",
+              background: "#fff",
               padding: 16,
               boxShadow: "rgba(0,0,0,0.04) 0px 4px 16px",
             }}
@@ -268,38 +278,58 @@ export function MCPDetailDrawer({
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid #e8e6dc", background: "#f5f4ed", fontSize: 12, color: "#5e5d59" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid #e8e8e8", background: "#f5f5f5", fontSize: 12, color: "#5e5d59" }}>
                   <GitBranch size={12} />
                   <span>v{mcp.version || "1.0.0"}</span>
                 </div>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid #e8e6dc", background: "#f5f4ed", fontSize: 12, color: "#5e5d59" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid #e8e8e8", background: "#f5f5f5", fontSize: 12, color: "#5e5d59" }}>
                   <Calendar size={12} />
                   <span>{formatDateTime(mcp.created_at)}</span>
                 </div>
               </div>
 
               <Space wrap size={8}>
-                <Button
-                  icon={<RocketOutlined />}
-                  type="primary"
-                  onClick={onDistribute}
-                  style={{ borderRadius: 10, background: "#c4956a", borderColor: "#c4956a" }}
-                >
-                  分发
-                </Button>
-                {canEdit ? (
-                  <Button icon={<EditOutlined />} onClick={onEdit} style={{ borderRadius: 10 }}>
+                {isManager && onDistribute && (
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={onDistribute}
+                    style={{ ...footerButtonStyle }}
+                  >
+                    <Send size={12} />
+                    分发
+                  </Button>
+                )}
+                {canEdit && onEdit && (
+                  <Button
+                    size="small"
+                    onClick={onEdit}
+                    style={{
+                      ...footerButtonStyle,
+                      color: "#5e5d59",
+                      border: "1px solid #e8e8e8",
+                      backgroundColor: "#f5f5f5",
+                    }}
+                  >
+                    <Pencil size={12} />
                     编辑
                   </Button>
-                ) : null}
-                <Popconfirm
-                  title="确认删除此 MCP？删除后不影响已分发用户"
-                  onConfirm={onDelete}
-                >
-                  <Button danger icon={<DeleteOutlined />} style={{ borderRadius: 10 }}>
-                    删除
-                  </Button>
-                </Popconfirm>
+                )}
+                {isManager && onDelete && (
+                  <Popconfirm
+                    title="确认删除此 MCP？删除后不影响已分发用户"
+                    onConfirm={onDelete}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      style={{ ...footerButtonStyle }}
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </Button>
+                  </Popconfirm>
+                )}
               </Space>
             </div>
           </div>
@@ -312,7 +342,7 @@ export function MCPDetailDrawer({
 
           <div
             style={{
-              border: "1px solid #f0ebe1",
+              border: "1px solid #f0f0f0",
               borderRadius: 16,
               background: "#ffffff",
               overflow: "hidden",
@@ -330,7 +360,7 @@ export function MCPDetailDrawer({
                   gridTemplateColumns: "88px 1fr",
                   gap: 12,
                   padding: "12px 14px",
-                  borderBottom: index === arr.length - 1 ? "none" : "1px solid #f5f2ea",
+                  borderBottom: index === arr.length - 1 ? "none" : "1px solid #f0f0f0",
                 }}
               >
                 <div style={{ fontSize: 12, color: "#87867f" }}>{row.label}</div>

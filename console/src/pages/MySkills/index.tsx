@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, RocketOutlined } from "@ant-design/icons";
+import { Power, Trash2, Pencil } from "lucide-react";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
@@ -13,6 +15,7 @@ import { useConflictRenameModal } from "../Agent/Skills/components";
 const { Title, Text } = Typography;
 
 export default function MySkillsPage() {
+  const navigate = useNavigate();
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
@@ -99,9 +102,9 @@ export default function MySkillsPage() {
         if (conflicts.length > 0) {
           message.destroy("upload");
           const resolveResult = await showConflictRenameModal(
-            conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
-              key: c.skill_name || "",
-              label: c.skill_name || "",
+            conflicts.map((c: { skill_name?: string; original_name?: string; suggested_name?: string }) => ({
+              key: c.original_name || c.skill_name || "",
+              label: c.original_name || c.skill_name || "",
               suggested_name: c.suggested_name || "",
             }))
           );
@@ -177,13 +180,25 @@ export default function MySkillsPage() {
     setIsEditing(false);
 
     // Load skill files if not cached
-    if (!skillFiles[skillName]) {
-      try {
-        const files = await mySkillsApi.listSkillFiles(skillName);
-        setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
-      } catch (err) {
-        console.error("Failed to load skill files:", err);
+    try {
+      const files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
+
+      // 自动选择 SKILL.md（如果存在）
+      const skillMdFile = files.find((f) => f.name === "SKILL.md" && f.type === "file");
+      if (skillMdFile) {
+        try {
+          const res = await mySkillsApi.readSkillFile(skillName, "SKILL.md");
+          setSelectedFile("SKILL.md");
+          setFileContent(res.content);
+          setFileType(res.file_type);
+        } catch (err) {
+          console.error("Failed to load SKILL.md:", err);
+          setFileContent("");
+        }
       }
+    } catch (err) {
+      console.error("Failed to load skill files:", err);
     }
   }, [skillFiles]);
 
@@ -210,8 +225,12 @@ export default function MySkillsPage() {
     }
   }, []);
 
+  const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
+
   const handleToggleEnabled = useCallback(async (skill: MySkill) => {
+    if (togglingSkill) return;
     const action = skill.enabled ? "disable" : "enable";
+    setTogglingSkill(skill.skill_name);
     try {
       if (skill.enabled) {
         await mySkillsApi.disableSkill(skill.skill_name);
@@ -222,8 +241,10 @@ export default function MySkillsPage() {
       refresh();
     } catch (err) {
       message.error(`${action === "enable" ? "启用" : "禁用"}失败`);
+    } finally {
+      setTogglingSkill(null);
     }
-  }, [refresh]);
+  }, [refresh, togglingSkill]);
 
   const handleDelete = useCallback(async (skill: MySkill) => {
     try {
@@ -302,7 +323,7 @@ export default function MySkillsPage() {
 
   // Navigate to marketplace
   const goToMarketplace = () => {
-    message.info("跳转到应用市场功能开发中");
+    navigate("/market");
   };
 
   // Sync skill to market
@@ -339,7 +360,7 @@ export default function MySkillsPage() {
       message.destroy("sync");
 
       setPublishInitialData({
-        skillName: skill.skill_name,
+        skillName: skill.display_name || skill.skill_name,
         description: skill.description || "",
         skillJson,
         skillMd,
@@ -474,11 +495,8 @@ export default function MySkillsPage() {
               textDecoration: isDisabled ? "line-through" : "none",
             }}
           >
-            {skill.skill_name}
+            {skill.display_name || skill.skill_name}
           </Text>
-          {skill.version && (
-            <Tag style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>v{skill.version}</Tag>
-          )}
           {skill.is_received && (
             <Tag color="orange" style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>接收的</Tag>
           )}
@@ -656,11 +674,8 @@ export default function MySkillsPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
               <Text strong style={{ fontSize: 16, color: "#262626" }}>
-                {skill.skill_name}
+                {skill.display_name || skill.skill_name}
               </Text>
-              {skill.version && (
-                <Tag style={{ fontSize: 11, borderRadius: 4 }}>v{skill.version}</Tag>
-              )}
               {skill.source === "customized" && (
                 <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
               )}
@@ -685,15 +700,54 @@ export default function MySkillsPage() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <Popconfirm
+              title="删除技能"
+              description={`确定删除技能「${skill.display_name || skill.skill_name}」？删除后不可恢复。`}
+              onConfirm={() => handleDelete(skill)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                icon={<Trash2 style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              >
+                删除
+              </Button>
+            </Popconfirm>
             {canEdit && fileContent !== null && !isEditing && (
-              <Button size="small" icon={<EditOutlined />} onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}>
+              <Button
+                size="small"
+                icon={<Pencil style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}
+              >
                 编辑
               </Button>
             )}
+            <Button
+              size="small"
+              type={skill.enabled ? "primary" : "default"}
+              icon={<Power style={{ width: 12, height: 12 }} />}
+              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              onClick={() => handleToggleEnabled(skill)}
+              loading={togglingSkill === skill.skill_name}
+            >
+              {skill.enabled ? "已启用" : "已禁用"}
+            </Button>
             {isManager && canEdit && (
               <Button
                 size="small"
-                icon={<CloudUploadOutlined />}
+                icon={<RocketOutlined style={{ fontSize: 12 }} />}
+                style={{
+                  height: 28,
+                  fontSize: 12,
+                  borderRadius: 8,
+                  background: "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
+                  border: "none",
+                  color: "#fff",
+                }}
                 onClick={() => handleSyncToMarket(skill)}
               >
                 同步到市场
@@ -701,33 +755,25 @@ export default function MySkillsPage() {
             )}
             {isEditing && (
               <>
-                <Button size="small" onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }} disabled={isSaving}>
+                <Button
+                  size="small"
+                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                  onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }}
+                  disabled={isSaving}
+                >
                   取消
                 </Button>
-                <Button size="small" type="primary" onClick={handleSaveContent} loading={isSaving}>
+                <Button
+                  size="small"
+                  type="primary"
+                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                  onClick={handleSaveContent}
+                  loading={isSaving}
+                >
                   保存
                 </Button>
               </>
             )}
-            <Button
-              size="small"
-              icon={isDisabled ? <CheckCircleOutlined /> : <StopOutlined />}
-              onClick={() => handleToggleEnabled(skill)}
-            >
-              {isDisabled ? "已禁用" : "已启用"}
-            </Button>
-            <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => {
-                if (window.confirm(`确定删除「${skill.skill_name}」？`)) {
-                  handleDelete(skill);
-                }
-              }}
-            >
-              删除
-            </Button>
           </div>
         </div>
 
@@ -739,7 +785,7 @@ export default function MySkillsPage() {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
+        <div style={{ flex: "1 1 0", padding: 16, overflow: "auto", minHeight: 0 }}>
           {isLoading ? (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 100 }}>
               <Spin />
@@ -751,13 +797,13 @@ export default function MySkillsPage() {
               style={{
                 width: "100%",
                 height: "100%",
-                minHeight: 300,
                 fontFamily: "monospace",
                 fontSize: 13,
                 padding: 12,
                 borderRadius: 8,
                 border: "1px solid #d9d9d9",
                 resize: "none",
+                boxSizing: "border-box",
               }}
             />
           ) : fileContent === null ? (
@@ -767,10 +813,11 @@ export default function MySkillsPage() {
                 border: "1px solid #f0f0f0",
                 backgroundColor: "#f5f5f5",
                 padding: 16,
-                minHeight: 200,
+                height: "100%",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                boxSizing: "border-box",
               }}
             >
               <Text type="secondary">选择文件查看内容</Text>
@@ -786,7 +833,8 @@ export default function MySkillsPage() {
                 overflow: "auto",
                 fontSize: 12,
                 fontFamily: "monospace",
-                maxHeight: "calc(100vh - 300px)",
+                height: "100%",
+                boxSizing: "border-box",
               }}
             >
               {fileContent}
@@ -827,19 +875,21 @@ export default function MySkillsPage() {
             >
               上传技能
             </Button>
-            <Button
-              icon={<ShopOutlined />}
-              onClick={goToMarketplace}
-              style={{ flex: 1 }}
-            >
-              去应用市场
-              <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
-            </Button>
+            {isManager && (
+              <Button
+                icon={<ShopOutlined />}
+                onClick={goToMarketplace}
+                style={{ flex: 1 }}
+              >
+                去应用市场
+                <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
+              </Button>
+            )}
           </div>
         </div>
 
         {/* Batch operation bar */}
-        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Button
             size="small"
             onClick={() => {
@@ -857,9 +907,17 @@ export default function MySkillsPage() {
               <Button size="small" onClick={handleBatchDisable} disabled={selectedForBatch.size === 0}>
                 批量禁用
               </Button>
-              <Button size="small" danger onClick={handleBatchDelete} disabled={selectedForBatch.size === 0}>
-                批量删除
-              </Button>
+              <Popconfirm
+                title="批量删除"
+                description={`确定删除选中的 ${selectedForBatch.size} 个技能？删除后不可恢复。`}
+                onConfirm={handleBatchDelete}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button size="small" danger disabled={selectedForBatch.size === 0}>
+                  批量删除
+                </Button>
+              </Popconfirm>
               <Text type="secondary" style={{ marginLeft: 8 }}>
                 已选择 {selectedForBatch.size} 个
               </Text>

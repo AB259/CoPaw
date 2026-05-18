@@ -15,6 +15,8 @@ import type {
   DiscoverModelsResponse,
   ProbeMultimodalResponse,
   DistributionTenantListResponse,
+  ProvidersDistributionRequest,
+  ProvidersDistributionResponse,
 } from "../types";
 
 function buildActiveModelQuery(params?: GetActiveModelsRequest): string {
@@ -56,6 +58,12 @@ export const providerApi = {
 
   distributeActiveLlm: (body: ActiveModelDistributionRequest) =>
     request<ActiveModelDistributionResponse>("/models/distribution/active-llm", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  distributeProviders: (body: ProvidersDistributionRequest) =>
+    request<ProvidersDistributionResponse>("/models/distribution/providers", {
       method: "POST",
       body: JSON.stringify(body),
     }),

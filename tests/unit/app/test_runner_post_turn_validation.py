@@ -188,7 +188,7 @@ async def test_query_handler_auto_runs_then_stores_pending_continuation(
 
 
 @pytest.mark.asyncio
-async def test_query_handler_auto_run_completion_generates_suggestions(
+async def test_query_handler_auto_run_completion_skips_backend_suggestions(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -226,7 +226,7 @@ async def test_query_handler_auto_run_completion_generates_suggestions(
         outputs.append(item)
 
     assert [item[0].content for item in outputs] == ["我先继续处理", "最终答案"]
-    assert generate_suggestions.await_count == 1
+    assert generate_suggestions.await_count == 0
     pending = await peek_latest_pending_continuation(
         session_id="session-1",
         tenant_id=None,
@@ -269,7 +269,7 @@ async def test_query_handler_resume_consumes_pending_and_strips_hidden_prompt(
         outputs.append(item)
 
     assert [item[0].content for item in outputs] == ["最终答案"]
-    assert generate_suggestions.await_count == 1
+    assert generate_suggestions.await_count == 0
     assert (
         await peek_latest_pending_continuation(
             session_id="session-1",

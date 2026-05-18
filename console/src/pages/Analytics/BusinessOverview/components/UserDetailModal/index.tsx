@@ -4,13 +4,14 @@ import { User } from "lucide-react";
 import {
   tracingApi,
   UserStats,
+  SessionStats,
   SessionListItem,
   TraceListItem,
 } from "../../../../../api/modules/tracing";
 import { UserDetailModalProps } from "../../types";
 import UserStatsHeader from "./UserStatsHeader";
 import SessionCardList from "./SessionCardList";
-import SessionTracesFlow from "./SessionTracesFlow";
+import ReadOnlySessionChat from "./ReadOnlySessionChat";
 import styles from "./index.module.less";
 
 export default function UserDetailModal({
@@ -25,12 +26,18 @@ export default function UserDetailModal({
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [userLoading, setUserLoading] = useState(false);
 
+  // 会话统计状态
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [statsCollapsed, setStatsCollapsed] = useState(false);
+
   // 会话列表状态
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [sessionsTotal, setSessionsTotal] = useState(0);
   const [sessionsPage, setSessionsPage] = useState(1);
   const [sessionsPageSize] = useState(10);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const [hasAutoSelectedSession, setHasAutoSelectedSession] = useState(false);
 
   // 对话列表状态
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -68,10 +75,6 @@ export default function UserDetailModal({
       });
       setSessions(data.items || []);
       setSessionsTotal(data.total || 0);
-      // 默认选中第一个会话
-      if (data.items && data.items.length > 0 && !selectedSessionId) {
-        setSelectedSessionId(data.items[0].session_id);
-      }
     } catch (error) {
       console.error("Failed to fetch sessions:", error);
       message.error("获取会话列表失败");
@@ -79,6 +82,22 @@ export default function UserDetailModal({
       setSessionsLoading(false);
     }
   }, [userId, startDate, endDate, sourceId, sessionsPageSize]);
+
+  // 获取会话统计
+  const fetchSessionStats = useCallback(async (sessionId: string) => {
+    try {
+      const data = await tracingApi.getSessionStats(
+        sessionId,
+        startDate,
+        endDate,
+        sourceId,
+      );
+      setSessionStats(data);
+    } catch (error) {
+      console.error("Failed to fetch session stats:", error);
+      message.error("获取会话统计失败");
+    }
+  }, [startDate, endDate, sourceId]);
 
   // 获取对话列表
   const fetchTraces = useCallback(async (sessionId: string, page: number) => {
@@ -107,23 +126,54 @@ export default function UserDetailModal({
       fetchUserStats();
       fetchSessions(1);
       setSessionsPage(1);
+      setHasAutoSelectedSession(false);
     }
   }, [open, userId, fetchUserStats, fetchSessions]);
+
+  // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
+  useEffect(() => {
+    if (
+      !open ||
+      hasAutoSelectedSession ||
+      selectedSessionId ||
+      sessions.length === 0
+    ) {
+      return;
+    }
+
+    const firstSessionId = sessions[0].session_id;
+    setHasAutoSelectedSession(true);
+    setSelectedSessionId(firstSessionId);
+    fetchSessionStats(firstSessionId);
+  }, [
+    open,
+    hasAutoSelectedSession,
+    selectedSessionId,
+    sessions,
+    fetchSessionStats,
+  ]);
 
   // 选中会话变化时加载对话
   useEffect(() => {
     if (selectedSessionId) {
       fetchTraces(selectedSessionId, 1);
       setTracesPage(1);
+    } else {
+      setTraces([]);
+      setTracesTotal(0);
     }
   }, [selectedSessionId, fetchTraces]);
 
   // 关闭时重置状态
   const handleClose = () => {
     setUserStats(null);
+    setSessionStats(null);
+    setStatsCollapsed(false);
     setSessions([]);
     setSessionsTotal(0);
     setSessionsPage(1);
+    setSessionsCollapsed(false);
+    setHasAutoSelectedSession(false);
     setSelectedSessionId(null);
     setTraces([]);
     setTracesTotal(0);
@@ -137,9 +187,17 @@ export default function UserDetailModal({
     fetchSessions(page);
   };
 
-  // 会话选中变化
+  // 会话选中变化 - 点击已选中的会话则取消选中
   const handleSessionSelect = (sessionId: string) => {
-    setSelectedSessionId(sessionId);
+    if (selectedSessionId === sessionId) {
+      // 取消选中
+      setSelectedSessionId(null);
+      setSessionStats(null);
+    } else {
+      // 选中新会话
+      setSelectedSessionId(sessionId);
+      fetchSessionStats(sessionId);
+    }
   };
 
   // 对话分页变化
@@ -150,19 +208,32 @@ export default function UserDetailModal({
     }
   };
 
+  // 判断当前显示的是用户级还是会话级统计
+  const showSessionStats = selectedSessionId !== null && sessionStats !== null;
+
   return (
     <Modal
       title={
-        <span>
-          <User size={18} style={{ marginRight: 8 }} />
-          用户详情
-        </span>
+        <div className={styles.modalTitleBlock}>
+          <span className={styles.modalTitleIcon}>
+            <User size={18} />
+          </span>
+          <div className={styles.modalTitleText}>
+            <div className={styles.modalTitle}>用户详情</div>
+            <div className={styles.modalSubtitle}>
+              调用排行 · 运营看板 · 只读审计视图
+            </div>
+          </div>
+        </div>
       }
       open={open}
       onCancel={handleClose}
-      width={800}
+      width="100vw"
       footer={null}
       destroyOnClose
+      className={styles.userDetailModal}
+      classNames={{ body: styles.userDetailModalBody }}
+      style={{ top: 0, paddingBottom: 0 }}
     >
       {userLoading ? (
         <div className={styles.loading}>
@@ -170,14 +241,23 @@ export default function UserDetailModal({
         </div>
       ) : userStats ? (
         <div className={styles.modalContent}>
-          {/* 顶部：用户统计 */}
+          {/* 顶部：统计信息 */}
           <div className={styles.topSection}>
-            <UserStatsHeader userStats={userStats} />
+            <UserStatsHeader
+              userStats={userStats}
+              sessionStats={showSessionStats ? sessionStats : null}
+              collapsed={statsCollapsed}
+              onToggleCollapsed={() => setStatsCollapsed((value) => !value)}
+            />
           </div>
 
           {/* 下方：会话列表 + 对话流 */}
           <div className={styles.bottomSection}>
-            <div className={styles.leftPanel}>
+            <div
+              className={`${styles.leftPanel} ${
+                sessionsCollapsed ? styles.leftPanelCollapsed : ""
+              }`}
+            >
               <SessionCardList
                 sessions={sessions}
                 total={sessionsTotal}
@@ -185,17 +265,23 @@ export default function UserDetailModal({
                 pageSize={sessionsPageSize}
                 loading={sessionsLoading}
                 selectedSessionId={selectedSessionId}
+                collapsed={sessionsCollapsed}
                 onSelect={handleSessionSelect}
                 onPageChange={handleSessionsPageChange}
+                onToggleCollapsed={() =>
+                  setSessionsCollapsed((value) => !value)
+                }
               />
             </div>
             <div className={styles.rightPanel}>
-              <SessionTracesFlow
+              <ReadOnlySessionChat
+                selectedSessionId={selectedSessionId}
+                userId={userId}
                 traces={traces}
                 total={tracesTotal}
                 page={tracesPage}
                 pageSize={tracesPageSize}
-                loading={tracesLoading}
+                tracesLoading={tracesLoading}
                 onPageChange={handleTracesPageChange}
               />
             </div>

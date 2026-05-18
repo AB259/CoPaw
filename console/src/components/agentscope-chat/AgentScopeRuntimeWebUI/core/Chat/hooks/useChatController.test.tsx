@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   cancelActiveRequest: vi.fn(),
   updateMessage: vi.fn(),
   getMessages: vi.fn(() => [{ id: "message-1" }]),
+  hasMessage: vi.fn(() => true),
   getHistoryMessages: vi.fn(() => []),
   createRequestMessage: vi.fn(),
   createApprovalMessage: vi.fn(),
@@ -91,6 +92,7 @@ vi.mock("./useChatMessageHandler", () => ({
     return {
       updateMessage: mocks.updateMessage,
       getMessages: mocks.getMessages,
+      hasMessage: mocks.hasMessage,
       getHistoryMessages: mocks.getHistoryMessages,
       createRequestMessage: mocks.createRequestMessage,
       createApprovalMessage: mocks.createApprovalMessage,

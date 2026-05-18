@@ -6,29 +6,27 @@
  * - 只保留 MCP 市场自己的动作：详情 / 分发 / 删除
  */
 import { Button } from "antd";
-import {
-  DeleteOutlined,
-  EditOutlined,
-  EyeOutlined,
-  RocketOutlined,
-} from "@ant-design/icons";
-import { Calendar, GitBranch } from "lucide-react";
+import { Calendar, GitBranch, Eye, Send, Trash2, Pencil, Users } from "lucide-react";
 import type { MarketMCPItem } from "../../api/types";
 
 interface MCPCardProps {
   mcp: MarketMCPItem;
   onOpenDetail: () => void;
-  onDistribute: () => void;
+  onDistribute?: () => void;
   onEdit?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   canEdit?: boolean;
+  isManager?: boolean;
 }
 
 const footerButtonStyle = {
   height: 28,
-  paddingInline: 12,
-  borderRadius: 10,
+  padding: "0 12px",
+  borderRadius: 8,
   fontSize: 12,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
 };
 
 function formatDate(value?: string | null): string {
@@ -46,6 +44,7 @@ export function MCPCard({
   onEdit,
   onDelete,
   canEdit = false,
+  isManager = false,
 }: MCPCardProps) {
   return (
     <div
@@ -54,19 +53,19 @@ export function MCPCard({
         padding: 20,
         borderRadius: 20,
         border: "1px solid #f0eee6",
-        background: "#faf9f5",
+        background: "#fff",
         cursor: "pointer",
         transition: "all 0.2s ease",
         boxShadow: "rgba(0, 0, 0, 0) 0px 0px 0px",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = "#ffffff";
+        event.currentTarget.style.background = "#faf9f5";
         event.currentTarget.style.borderColor = "#e8e6dc";
         event.currentTarget.style.boxShadow =
           "rgba(0, 0, 0, 0.06) 0px 4px 20px";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = "#faf9f5";
+        event.currentTarget.style.background = "#fff";
         event.currentTarget.style.borderColor = "#f0eee6";
         event.currentTarget.style.boxShadow =
           "rgba(0, 0, 0, 0) 0px 0px 0px";
@@ -112,6 +111,7 @@ export function MCPCard({
                 WebkitLineClamp: 2,
                 WebkitBoxOrient: "vertical",
                 overflow: "hidden",
+                wordBreak: "break-word",
               }}
             >
               {mcp.description}
@@ -162,6 +162,19 @@ export function MCPCard({
             <GitBranch size={12} />
             <span>v{mcp.version || "1.0.0"}</span>
           </div>
+          {mcp.creator_name && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Users size={12} />
+              <span>{mcp.creator_name}</span>
+            </div>
+          )}
         </div>
 
         <div
@@ -169,63 +182,59 @@ export function MCPCard({
           onClick={(event) => event.stopPropagation()}
         >
           <Button
-            icon={<EyeOutlined />}
+            size="small"
             onClick={onOpenDetail}
             style={{
               ...footerButtonStyle,
               color: "#5e5d59",
-              borderColor: "#e8e6dc",
-              background: "#f5f4ed",
-              boxShadow:
-                "#e8e6dc 0px 0px 0px 0px, #d1cfc5 0px 0px 0px 1px",
+              border: "1px solid #e8e6dc",
+              backgroundColor: "#f5f4ed",
             }}
           >
+            <Eye size={12} />
             详情
           </Button>
-          <Button
-            type="primary"
-            icon={<RocketOutlined />}
-            onClick={onDistribute}
-            style={{
-              ...footerButtonStyle,
-              background: "#c4956a",
-              borderColor: "#c4956a",
-              color: "#faf9f5",
-              boxShadow:
-                "#c4956a 0px 0px 0px 0px, #c4956a 0px 0px 0px 1px",
-            }}
-          >
-            分发
-          </Button>
-          {canEdit ? (
+          {isManager && onDistribute && (
             <Button
-              icon={<EditOutlined />}
+              size="small"
+              type="primary"
+              onClick={onDistribute}
+              style={{
+                ...footerButtonStyle,
+              }}
+            >
+              <Send size={12} />
+              分发
+            </Button>
+          )}
+          {canEdit && onEdit && (
+            <Button
+              size="small"
               onClick={onEdit}
               style={{
                 ...footerButtonStyle,
                 color: "#5e5d59",
-                borderColor: "#e8e6dc",
-                background: "#f5f4ed",
-                boxShadow:
-                  "#e8e6dc 0px 0px 0px 0px, #d1cfc5 0px 0px 0px 1px",
+                border: "1px solid #e8e6dc",
+                backgroundColor: "#f5f4ed",
               }}
             >
+              <Pencil size={12} />
               编辑
             </Button>
-          ) : null}
-          <Button
-            danger
-            icon={<DeleteOutlined />}
-            onClick={onDelete}
-            style={{
-              ...footerButtonStyle,
-              borderColor: "#fad4d4",
-              color: "#b53333",
-              background: "#ffffff",
-            }}
-          >
-            删除
-          </Button>
+          )}
+          {isManager && onDelete && (
+            <Button
+              size="small"
+              danger
+              onClick={onDelete}
+              style={{
+                ...footerButtonStyle,
+              }}
+            >
+              <Trash2 size={12} />
+              删除
+            </Button>
+          )}
         </div>
       </div>
     </div>
