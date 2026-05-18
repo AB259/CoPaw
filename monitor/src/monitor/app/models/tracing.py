@@ -243,7 +243,12 @@ class OverviewStats(BaseModel):
     output_tokens: int = 0
     total_sessions: int = 0
     total_conversations: int = 0
+    total_cron_tasks: int = 0  # 定时任务执行次数
+    total_skill_calls: int = 0  # 技能调用总次数
     avg_duration_ms: int = 0
+    # 使用深度真实统计
+    multi_round_session_ratio: float = 0.0  # 多轮会话占比(>3轮)百分比
+    avg_user_stay_seconds: int = 0  # 用户平均停留时长（秒）
     top_tools: list[ToolUsage] = Field(default_factory=list)
     top_skills: list[SkillUsage] = Field(default_factory=list)
     top_mcp_tools: list[MCPToolUsage] = Field(default_factory=list)
@@ -274,6 +279,7 @@ class OverviewBranchBreakdown(BaseModel):
     sessions: list[BranchMetricItem] = Field(default_factory=list)
     tokens: list[BranchMetricItem] = Field(default_factory=list)
     skills: list[BranchMetricItem] = Field(default_factory=list)
+    cron_tasks: list[BranchMetricItem] = Field(default_factory=list)
 
 
 class TaskStatusBreakdown(BaseModel):

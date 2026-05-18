@@ -20,6 +20,7 @@ export default function UserDetailModal({
   startDate,
   endDate,
   sourceId,
+  bbkIds,
   onClose,
 }: UserDetailModalProps) {
   // 用户统计状态
@@ -49,7 +50,7 @@ export default function UserDetailModal({
     if (!userId) return;
     setUserLoading(true);
     try {
-      const data = await tracingApi.getUserStats(userId, startDate, endDate, sourceId);
+      const data = await tracingApi.getUserStats(userId, startDate, endDate, sourceId, bbkIds);
       setUserStats(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
@@ -57,7 +58,7 @@ export default function UserDetailModal({
     } finally {
       setUserLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId]);
+  }, [userId, startDate, endDate, sourceId, bbkIds]);
 
   // 获取会话列表
   const fetchSessions = useCallback(async (page: number) => {
@@ -69,6 +70,7 @@ export default function UserDetailModal({
         start_date: startDate,
         end_date: endDate,
         source_id: sourceId,
+        bbk_ids: bbkIds,
       });
       setSessions(data.items || []);
       setSessionsTotal(data.total || 0);
@@ -78,7 +80,7 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, sessionsPageSize]);
+  }, [userId, startDate, endDate, sourceId, sessionsPageSize, bbkIds]);
 
   // 获取会话统计
   const fetchSessionStats = useCallback(async (sessionId: string) => {
@@ -88,13 +90,14 @@ export default function UserDetailModal({
         startDate,
         endDate,
         sourceId,
+        bbkIds,
       );
       setSessionStats(data);
     } catch (error) {
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
     }
-  }, [startDate, endDate, sourceId]);
+  }, [startDate, endDate, sourceId, bbkIds]);
 
   // 获取对话列表
   const fetchTraces = useCallback(async (sessionId: string, page: number) => {
@@ -106,6 +109,7 @@ export default function UserDetailModal({
         start_date: startDate,
         end_date: endDate,
         source_id: sourceId,
+        bbk_ids: bbkIds,
       });
       setTraces(data.items || []);
       setTracesTotal(data.total || 0);
@@ -115,7 +119,7 @@ export default function UserDetailModal({
     } finally {
       setTracesLoading(false);
     }
-  }, [startDate, endDate, sourceId, tracesPageSize]);
+  }, [startDate, endDate, sourceId, tracesPageSize, bbkIds]);
 
   // Modal 打开时加载数据
   useEffect(() => {

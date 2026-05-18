@@ -12,7 +12,12 @@ export interface OverviewStats {
   output_tokens: number;
   total_sessions: number;
   total_conversations: number;
+  total_cron_tasks: number;  // 定时任务执行次数
+  total_skill_calls: number;  // 技能调用总次数
   avg_duration_ms: number;
+  // 使用深度真实统计
+  multi_round_session_ratio: number;  // 多轮会话占比(>3轮)百分比
+  avg_user_stay_seconds: number;  // 用户平均停留时长（秒）
   top_tools: ToolUsage[];
   top_skills: SkillUsage[];
   top_mcp_tools: MCPToolUsage[];
@@ -35,6 +40,7 @@ export interface OverviewBranchBreakdown {
   sessions: BranchMetricItem[];
   tokens: BranchMetricItem[];
   skills: BranchMetricItem[];
+  cron_tasks: BranchMetricItem[];
 }
 
 export interface TaskStatusBreakdown {
@@ -293,13 +299,13 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/overview?${params.toString()}`);
   },
 
@@ -313,7 +319,7 @@ export const tracingApi = {
       source_id?: string;
       sort_by?: string;
       filter_user_type?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -343,11 +349,13 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkIds?: string,
   ): Promise<UserStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
       `/monitor/tracing/users/${encodeURIComponent(userId)}${query}`,
@@ -364,7 +372,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -422,7 +430,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -446,11 +454,13 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkIds?: string,
   ): Promise<SessionStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
       `/monitor/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
@@ -467,7 +477,7 @@ export const tracingApi = {
       end_date?: string;
       query?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -494,7 +504,7 @@ export const tracingApi = {
       end_date?: string;
       query?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {
@@ -570,20 +580,26 @@ export const tracingApi = {
     endDate: string,
     timeRange: string = "day",
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     callsGrowth: number | null;
     tokensGrowth: number | null;
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
+    // 深度指标环比
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgStayGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/growth-stats?${params.toString()}`);
   },
 
@@ -591,7 +607,7 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
   }> => {
@@ -599,7 +615,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
   },
@@ -609,7 +625,7 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
   }> => {
@@ -617,7 +633,7 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/hourly-trend${query}`);
   },
@@ -629,7 +645,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: SkillUsage[];
@@ -657,7 +673,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -688,7 +704,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: MCPServerUsage[];

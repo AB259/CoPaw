@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Clock3,
   Coins,
+  Database,
   MessageCircleMore,
   RotateCw,
   Sparkles,
@@ -20,7 +21,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { DatePicker, Select, message } from "antd";
+import { DatePicker, Select, Tooltip, message } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
@@ -33,8 +34,7 @@ import {
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
-import { BBK_ID_MAP } from "../../../constants/bbk";
-import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
 import { useIframeStore } from "../../../stores/iframeStore";
 import {
   formatChange,
@@ -52,6 +52,7 @@ import {
   type TrendDatum,
   type UserRow,
 } from "./types";
+import {DEFAULT_SOURCE_ID} from "@/constants/identity.ts";
 const { Option } = Select;
 
 const PLATFORM_NAME_MAP: Record<string, string> = {
@@ -73,6 +74,15 @@ const METRIC_ACCENT_COLORS = [
   "#7c3aed",
 ];
 
+// 技能使用TOP5的颜色数组
+const SKILL_BAR_COLORS = [
+  "#2563eb", // 蓝色
+  "#22c55e", // 绿色
+  "#f97316", // 橙色
+  "#7c3aed", // 紫色
+  "#06b6d4", // 青色
+];
+
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
 
 const safeNumber = (value: unknown): number =>
@@ -89,20 +99,10 @@ const iconMap = {
   skills: Zap,
 };
 
-function buildPlaceholderBreakdown(): BreakdownItem[] {
-  return [
-    { name: "总行", value: 8, valueText: "--" },
-    { name: "北京分行", value: 8, valueText: "--" },
-    { name: "上海分行", value: 8, valueText: "--" },
-    { name: "深圳分行", value: 8, valueText: "--" },
-    { name: "广州分行", value: 8, valueText: "--" },
-  ];
-}
-
 function mapBreakdown(
   rows: BranchMetricItem[] | undefined,
   formatter?: (value: number) => string,
-): BreakdownItem[] {
+): BreakdownItem[] | null {
   const mapped = (rows || []).slice(0, 5).map((item) => ({
     name: item.bbk_name || item.bbk_id || "-",
     value: Math.max(item.percent || 0, 8),
@@ -111,15 +111,9 @@ function mapBreakdown(
       : formatPercent(item.percent || 0),
   }));
 
+  // 无真实数据时返回 null，由渲染层显示空状态
   if (mapped.length === 0) {
-    return buildPlaceholderBreakdown();
-  }
-
-  if (mapped.length < 5) {
-    return [
-      ...mapped,
-      ...buildPlaceholderBreakdown().slice(0, 5 - mapped.length),
-    ];
+    return null;
   }
 
   return mapped;
@@ -133,13 +127,10 @@ function buildMetricCards(
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
   },
   skills: SkillUsage[],
 ): OverviewMetricCard[] {
-  const totalSkillCalls = (
-    skills.length ? skills : overviewStats?.top_skills || []
-  ).reduce((sum, item) => sum + safeNumber(item.count), 0);
-
   return [
     {
       key: "users",
@@ -151,22 +142,22 @@ function buildMetricCards(
       breakdown: mapBreakdown(overviewStats?.branch_breakdown?.users),
     },
     {
-      key: "conversations",
-      title: "总会话数",
-      valueText: formatNumber(overviewStats?.total_conversations ?? 0),
-      changeText: formatChange(growthStats.callsGrowth),
-      changeDirection: toChangeDirection(growthStats.callsGrowth),
-      accentColor: METRIC_ACCENT_COLORS[1],
-      breakdown: mapBreakdown(overviewStats?.branch_breakdown?.conversations),
-    },
-    {
       key: "sessions",
-      title: "定制任务数",
+      title: "总会话数",
       valueText: formatNumber(overviewStats?.total_sessions ?? 0),
       changeText: formatChange(growthStats.sessionGrowth),
       changeDirection: toChangeDirection(growthStats.sessionGrowth),
-      accentColor: METRIC_ACCENT_COLORS[2],
+      accentColor: METRIC_ACCENT_COLORS[1],
       breakdown: mapBreakdown(overviewStats?.branch_breakdown?.sessions),
+    },
+    {
+      key: "cron_tasks",
+      title: "定时任务数",
+      valueText: formatNumber(overviewStats?.total_cron_tasks ?? 0),
+      changeText: formatChange(growthStats.cronGrowth),
+      changeDirection: toChangeDirection(growthStats.cronGrowth),
+      accentColor: METRIC_ACCENT_COLORS[2],
+      breakdown: mapBreakdown(overviewStats?.branch_breakdown?.cron_tasks),
     },
     {
       key: "tokens",
@@ -180,7 +171,7 @@ function buildMetricCards(
     {
       key: "skills",
       title: "技能调用次数",
-      valueText: formatNumber(totalSkillCalls),
+      valueText: formatNumber(overviewStats?.total_skill_calls ?? 0),
       changeText: formatChange(growthStats.skillGrowth),
       changeDirection: toChangeDirection(growthStats.skillGrowth),
       accentColor: METRIC_ACCENT_COLORS[4],
@@ -196,17 +187,22 @@ function buildDepthCards(
     tokensGrowth: number | null;
     sessionGrowth: number | null;
     userGrowth: number | null;
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgStayGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   },
 ): DepthStatCard[] {
   const totalConversations = safeNumber(overviewStats?.total_conversations);
   const totalSessions = Math.max(safeNumber(overviewStats?.total_sessions), 1);
   const totalUsers = Math.max(safeNumber(overviewStats?.total_users), 1);
+  // 真实统计：单次会话平均轮数
   const avgRounds = totalConversations / totalSessions;
-  const multiRoundRatio = Math.min(92, Math.max(18, avgRounds * 14.8));
-  const avgStaySeconds = Math.max(
-    60,
-    (safeNumber(overviewStats?.avg_duration_ms) / 1000) * 12,
-  );
+  // 真实统计：多轮会话占比(>3轮)
+  const multiRoundRatio = safeNumber(overviewStats?.multi_round_session_ratio);
+  // 真实统计：用户平均停留时长
+  const avgStaySeconds = safeNumber(overviewStats?.avg_user_stay_seconds);
+  // 真实统计：人均会话数
   const avgSessionsPerUser = totalSessions / totalUsers;
 
   return [
@@ -214,29 +210,29 @@ function buildDepthCards(
       key: "avg-rounds",
       title: "单次会话平均轮数",
       valueText: avgRounds.toFixed(1),
-      changeText: formatChange(growthStats.callsGrowth / 2),
-      changeDirection: toChangeDirection(growthStats.callsGrowth / 2),
+      changeText: formatChange(growthStats.avgRoundsGrowth),
+      changeDirection: toChangeDirection(growthStats.avgRoundsGrowth),
     },
     {
       key: "multi-round",
       title: "多轮会话占比(>3轮)",
       valueText: formatPercent(multiRoundRatio),
-      changeText: formatChange(growthStats.userGrowth / 2),
-      changeDirection: toChangeDirection(growthStats.userGrowth / 2),
+      changeText: formatChange(growthStats.multiRoundRatioGrowth),
+      changeDirection: toChangeDirection(growthStats.multiRoundRatioGrowth),
     },
     {
       key: "avg-stay",
       title: "用户平均停留时长",
       valueText: formatDuration(avgStaySeconds),
-      changeText: formatChange(growthStats.sessionGrowth / 1.5),
-      changeDirection: toChangeDirection(growthStats.sessionGrowth / 1.5),
+      changeText: formatChange(growthStats.avgStayGrowth),
+      changeDirection: toChangeDirection(growthStats.avgStayGrowth),
     },
     {
       key: "avg-sessions",
       title: "人均会话数",
       valueText: avgSessionsPerUser.toFixed(1),
-      changeText: formatChange(growthStats.tokensGrowth / 1.7),
-      changeDirection: toChangeDirection(growthStats.tokensGrowth / 1.7),
+      changeText: formatChange(growthStats.avgSessionsPerUserGrowth),
+      changeDirection: toChangeDirection(growthStats.avgSessionsPerUserGrowth),
     },
   ];
 }
@@ -259,7 +255,7 @@ function buildExecutionSummary(
     },
     {
       key: "running",
-      label: "执行中",
+      label: "已取消/跳过",
       value: safeNumber(overviewStats?.task_status_breakdown?.running),
       color: DONUT_COLORS[2],
     },
@@ -275,13 +271,12 @@ function buildMcpSummary(mcpServers: MCPServerUsage[]): SummaryLegendItem[] {
     (sum, item) => sum + safeNumber(item.error_count),
     0,
   );
-  const cancelled = Math.max(0, Math.round(totalCalls * 0.031));
 
   return [
     {
       key: "mcp-success",
       label: "成功运行",
-      value: Math.max(totalCalls - totalErrors - cancelled, 0),
+      value: Math.max(totalCalls - totalErrors, 0),
       color: DONUT_COLORS[0],
     },
     {
@@ -289,12 +284,6 @@ function buildMcpSummary(mcpServers: MCPServerUsage[]): SummaryLegendItem[] {
       label: "报错",
       value: totalErrors,
       color: DONUT_COLORS[1],
-    },
-    {
-      key: "mcp-cancelled",
-      label: "超时/取消",
-      value: cancelled,
-      color: DONUT_COLORS[2],
     },
   ];
 }
@@ -397,14 +386,31 @@ function buildTrendSvgData(trendData: TrendDatum[]) {
 export default function BusinessOverviewPage() {
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
   const userSource = useIframeStore((state) => state.source);
+  const userBbk = useIframeStore((state) => state.bbk);
 
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
   const [startDate, setStartDate] = useState<Dayjs>(dayjs());
   const [endDate, setEndDate] = useState<Dayjs>(dayjs());
-  const [platform, setPlatform] = useState<string>(
-    isSuperManager ? "all" : userSource || DEFAULT_SOURCE_ID || "all",
-  );
-  const [bbkId, setBbkId] = useState<string>("all");
+    // 非超级管理员的平台初始值为用户所属平台，超级管理员默认为 "all"
+  const [platform, setPlatform] = useState<string>(() => {
+    // 初始化时从 sessionStorage 获取，避免闪烁
+    try {
+      const stored = sessionStorage.getItem("swe-iframe-context");
+      if (stored) {
+        const ctx = JSON.parse(stored);
+        if (ctx.state?.isSuperManager) {
+          return "all";
+        }
+        return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
+      }
+    } catch {
+      // ignore
+    }
+    // 非 iframe 模式下使用默认 source
+    return DEFAULT_SOURCE_ID || "all";
+  });
+  // 管理员多选分行；非管理员使用用户所属分行
+  const [bbkIds, setBbkIds] = useState<string[]>([]);
 
   const [sources, setSources] = useState<string[]>([]);
   const [overviewStats, setOverviewStats] = useState<OverviewStats | null>(
@@ -416,12 +422,22 @@ export default function BusinessOverviewPage() {
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgStayGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   }>({
     callsGrowth: null,
     tokensGrowth: null,
     sessionGrowth: null,
     userGrowth: null,
     skillGrowth: null,
+    cronGrowth: null,
+    avgRoundsGrowth: null,
+    multiRoundRatioGrowth: null,
+    avgStayGrowth: null,
+    avgSessionsPerUserGrowth: null,
   });
   const [trendData, setTrendData] = useState<TrendDatum[]>([]);
   const [activeUsers, setActiveUsers] = useState<UserRow[]>([]);
@@ -430,8 +446,6 @@ export default function BusinessOverviewPage() {
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
   const [skills, setSkills] = useState<SkillUsage[]>([]);
-  const [skillsPage, setSkillsPage] = useState(1);
-  const [skillsHasMore, setSkillsHasMore] = useState(true);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const skillsLoadingRef = useRef(false);
   const [mcpServers, setMcpServers] = useState<MCPServerUsage[]>([]);
@@ -467,7 +481,10 @@ export default function BusinessOverviewPage() {
     [calculatedEndDate],
   );
   const effectiveSourceId = platform === "all" ? undefined : platform;
-  const effectiveBbkId = bbkId === "all" ? undefined : bbkId;
+  // 非管理员：使用用户 bbk；管理员：使用选择的 bbkIds（空数组表示全部）
+  const effectiveBbkIds = isSuperManager
+    ? bbkIds.length === 0 ? undefined : bbkIds
+    : userBbk ? [userBbk] : undefined;
 
   const transformUserData = useCallback(
     (items: Record<string, unknown>[]): UserRow[] =>
@@ -485,14 +502,26 @@ export default function BusinessOverviewPage() {
     [],
   );
 
+  // 获取平台列表
   const fetchSources = useCallback(async () => {
     try {
-      const result = await tracingApi.getSources();
-      setSources(result.sources || []);
+      // 超级管理员：加载所有平台选项
+      if (isSuperManager) {
+        const res = await tracingApi.getSources();
+        setSources(res.sources || []);
+      } else {
+        // 非超级管理员：只显示用户所属平台
+        const effectiveSource = userSource || DEFAULT_SOURCE_ID;
+        if (effectiveSource) {
+          setSources([effectiveSource]);
+        } else {
+          setSources([]);
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch sources:", error);
     }
-  }, []);
+  }, [isSuperManager, userSource]);
 
   const fetchDashboard = useCallback(async () => {
     const isSingleDay = startDate.isSame(calculatedEndDate, "day");
@@ -503,27 +532,27 @@ export default function BusinessOverviewPage() {
           startDateText,
           endDateText,
           effectiveSourceId,
-          effectiveBbkId,
+          effectiveBbkIds?.join(","),
         ),
         tracingApi.getGrowthStats(
           startDateText,
           endDateText,
           timeRange,
           effectiveSourceId,
-          effectiveBbkId,
+          effectiveBbkIds?.join(","),
         ),
         isSingleDay
           ? tracingApi.getHourlyTrend(
               startDateText,
               endDateText,
               effectiveSourceId,
-              effectiveBbkId,
+              effectiveBbkIds?.join(","),
             )
           : tracingApi.getDailyTrend(
               startDateText,
               endDateText,
               effectiveSourceId,
-              effectiveBbkId,
+              effectiveBbkIds?.join(","),
             ),
       ]);
 
@@ -542,7 +571,7 @@ export default function BusinessOverviewPage() {
     }
   }, [
     calculatedEndDate,
-    effectiveBbkId,
+    effectiveBbkIds,
     effectiveSourceId,
     endDateText,
     startDate,
@@ -563,7 +592,7 @@ export default function BusinessOverviewPage() {
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
           sort_by: "conversations",
           filter_user_type: "filtered",
         });
@@ -581,11 +610,11 @@ export default function BusinessOverviewPage() {
         setActiveLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText, transformUserData],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData],
   );
 
   const fetchSkills = useCallback(
-    async (page: number, append = false) => {
+    async () => {
       if (skillsLoadingRef.current) {
         return;
       }
@@ -593,15 +622,15 @@ export default function BusinessOverviewPage() {
       setSkillsLoading(true);
 
       try {
-        const result = await tracingApi.getSkills(page, 10, {
+        // 只请求TOP5数据
+        const result = await tracingApi.getSkills(1, 5, {
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
         });
         const rows = result.items || [];
-        setSkills((previous) => (append ? [...previous, ...rows] : rows));
-        setSkillsHasMore(rows.length === 10);
+        setSkills(rows);
       } catch (error) {
         console.error("Failed to fetch skills:", error);
       } finally {
@@ -609,7 +638,7 @@ export default function BusinessOverviewPage() {
         setSkillsLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText],
   );
 
   const fetchMcpServers = useCallback(
@@ -625,7 +654,7 @@ export default function BusinessOverviewPage() {
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
         });
         const rows = result.items || [];
         setMcpServers((previous) => (append ? [...previous, ...rows] : rows));
@@ -637,7 +666,7 @@ export default function BusinessOverviewPage() {
         setMcpLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText],
   );
 
   useEffect(() => {
@@ -647,10 +676,9 @@ export default function BusinessOverviewPage() {
   useEffect(() => {
     fetchDashboard();
     setActivePage(1);
-    setSkillsPage(1);
     setMcpPage(1);
     fetchActiveUsers(1, false);
-    fetchSkills(1, false);
+    fetchSkills();
     fetchMcpServers(1, false);
   }, [fetchActiveUsers, fetchDashboard, fetchMcpServers, fetchSkills]);
 
@@ -719,22 +747,6 @@ export default function BusinessOverviewPage() {
       }
     },
     [activeHasMore, activePage, fetchActiveUsers],
-  );
-
-  const handleSkillsScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      const target = event.currentTarget;
-      if (
-        target.scrollHeight - target.scrollTop <= target.clientHeight + 40 &&
-        skillsHasMore &&
-        !skillsLoadingRef.current
-      ) {
-        const nextPage = skillsPage + 1;
-        setSkillsPage(nextPage);
-        fetchSkills(nextPage, true);
-      }
-    },
-    [fetchSkills, skillsHasMore, skillsPage],
   );
 
   const handleMcpScroll = useCallback(
@@ -850,10 +862,19 @@ export default function BusinessOverviewPage() {
           <div className={styles.toolbarRight}>
             <Select
               className={styles.scopeSelect}
-              value={bbkId}
-              onChange={setBbkId}
+              mode="multiple"
+              value={isSuperManager ? bbkIds : (userBbk ? [userBbk] : [])}
+              onChange={setBbkIds}
+              placeholder="全部分行"
+              maxTagCount="responsive"
+              maxTagPlaceholder={(omittedValues) => (
+                <Tooltip title={omittedValues.map((item: { value: string }) => BBK_ID_TO_NAME_MAP[item.value] || item.value).join("、")}>
+                  <span>+{omittedValues.length} 个分行</span>
+                </Tooltip>
+              )}
+              allowClear
+              disabled={!isSuperManager}
             >
-              <Option value="all">全部分行</Option>
               {BBK_ID_MAP.map((item) => (
                 <Option key={item.value} value={item.value}>
                   {item.label}
@@ -864,6 +885,7 @@ export default function BusinessOverviewPage() {
               className={styles.scopeSelect}
               value={platform}
               onChange={setPlatform}
+              disabled={!isSuperManager}
             >
               <Option value="all">全部平台</Option>
               {sources.map((source) => (
@@ -878,7 +900,7 @@ export default function BusinessOverviewPage() {
               onClick={() => {
                 fetchDashboard();
                 fetchActiveUsers(1, false);
-                fetchSkills(1, false);
+                fetchSkills();
                 fetchMcpServers(1, false);
               }}
             >
@@ -929,30 +951,37 @@ export default function BusinessOverviewPage() {
                 </div>
               </div>
               <div className={styles.breakdownTitle}>Top5分行</div>
-              <div className={styles.breakdownList}>
-                {card.breakdown.map((item) => (
-                  <div
-                    key={`${card.key}-${item.name}`}
-                    className={styles.breakdownRow}
-                  >
-                    <span className={styles.breakdownName}>
-                      {truncateName(item.name, 6)}
-                    </span>
-                    <div className={styles.breakdownTrack}>
-                      <div
-                        className={styles.breakdownBar}
-                        style={{
-                          width: `${Math.max(item.value, 10)}%`,
-                          background: card.accentColor,
-                        }}
-                      />
+              {card.breakdown && card.breakdown.length > 0 ? (
+                <div className={styles.breakdownList}>
+                  {card.breakdown.map((item) => (
+                    <div
+                      key={`${card.key}-${item.name}`}
+                      className={styles.breakdownRow}
+                    >
+                      <span className={styles.breakdownName}>
+                        {truncateName(item.name, 6)}
+                      </span>
+                      <div className={styles.breakdownTrack}>
+                        <div
+                          className={styles.breakdownBar}
+                          style={{
+                            width: `${Math.max(item.value, 10)}%`,
+                            background: card.accentColor,
+                          }}
+                        />
+                      </div>
+                      <span className={styles.breakdownValue}>
+                        {item.valueText}
+                      </span>
                     </div>
-                    <span className={styles.breakdownValue}>
-                      {item.valueText}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.emptyBreakdown}>
+                  <Database className={styles.emptyBreakdownIcon} />
+                  <span className={styles.emptyBreakdownText}>暂无分行数据</span>
+                </div>
+              )}
             </article>
           );
         })}
@@ -1120,7 +1149,9 @@ export default function BusinessOverviewPage() {
                   {card.key === "avg-sessions" && <ArrowUpRight size={19} />}
                 </div>
                 <div className={styles.depthBody}>
-                  <div className={styles.depthTitle}>{card.title}</div>
+                  <Tooltip title={card.title} placement="top">
+                    <div className={styles.depthTitle}>{card.title}</div>
+                  </Tooltip>
                   <div className={styles.depthValue}>{card.valueText}</div>
                   <div
                     className={
@@ -1181,7 +1212,7 @@ export default function BusinessOverviewPage() {
               </svg>
               <div className={styles.donutCenter}>
                 <strong>
-                  {formatNumber(overviewStats?.total_sessions ?? 0)}
+                  {formatNumber(overviewStats?.total_cron_tasks ?? 0)}
                 </strong>
                 <span>总任务数</span>
               </div>
@@ -1214,12 +1245,13 @@ export default function BusinessOverviewPage() {
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>技能使用TOP5</h3>
           </div>
-          <div className={styles.skillList} onScroll={handleSkillsScroll}>
+          <div className={styles.skillList}>
             {skills.length === 0 ? (
               <div className={styles.emptyState}>暂无数据</div>
             ) : (
-              skills.map((skill) => {
+              skills.slice(0, 5).map((skill, index) => {
                 const percent = (safeNumber(skill.count) / skillsTotal) * 100;
+                const barColor = SKILL_BAR_COLORS[index] || SKILL_BAR_COLORS[0];
                 return (
                   <button
                     key={skill.skill_name}
@@ -1236,7 +1268,7 @@ export default function BusinessOverviewPage() {
                     <div className={styles.skillTrack}>
                       <div
                         className={styles.skillBar}
-                        style={{ width: `${Math.max(percent, 10)}%` }}
+                        style={{ width: `${Math.max(percent, 10)}%`, background: barColor }}
                       />
                     </div>
                     <span className={styles.skillStat}>
@@ -1328,6 +1360,7 @@ export default function BusinessOverviewPage() {
         startDate={startDate.format("YYYY-MM-DD")}
         endDate={calculatedEndDate.format("YYYY-MM-DD")}
         sourceId={effectiveSourceId}
+        bbkIds={effectiveBbkIds?.join(",")}
         onClose={() => {
           setModalOpen(false);
           setSelectedUserId(null);

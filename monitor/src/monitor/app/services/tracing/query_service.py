@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from ...database import get_db_connection, DatabaseConnection
+from ....utils.bbk import get_bbk_name_by_id
 from ...models.tracing import (
     EventType,
     ModelUsage,
@@ -38,6 +39,44 @@ logger = logging.getLogger(__name__)
 EXCLUDED_SOURCE_IDS = ["default"]
 
 
+def build_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
+    """构建 bbk IN 过滤条件，支持逗号分隔的多值.
+
+    Args:
+        bbk_ids: 逗号分隔的 bbk_id 字符串，如 "100,200,201"
+
+    Returns:
+        (filter_sql, params) - 如 " AND bbk_id IN (%s, %s, %s)", ["100", "200", "201"]
+        无值时返回 ("", [])
+    """
+    if not bbk_ids:
+        return "", []
+    ids = [id.strip() for id in bbk_ids.split(",") if id.strip()]
+    if not ids:
+        return "", []
+    placeholders = ", ".join(["%s"] * len(ids))
+    return f" AND bbk_id IN ({placeholders})", ids
+
+
+def build_cron_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
+    """构建定时任务表 bbk IN 过滤条件，支持逗号分隔的多值.
+
+    Args:
+        bbk_ids: 逗号分隔的 bbk_id 字符串，如 "100,200,201"
+
+    Returns:
+        (filter_sql, params) - 如 " AND j.bbk_id IN (%s, %s, %s)", ["100", "200", "201"]
+        无值时返回 ("", [])
+    """
+    if not bbk_ids:
+        return "", []
+    ids = [id.strip() for id in bbk_ids.split(",") if id.strip()]
+    if not ids:
+        return "", []
+    placeholders = ", ".join(["%s"] * len(ids))
+    return f" AND j.bbk_id IN ({placeholders})", ids
+
+
 class TracingQueryService:
     """运营看板查询服务."""
 
@@ -62,7 +101,7 @@ class TracingQueryService:
         source_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> OverviewStats:
         """获取运营概览统计."""
         if start_date is None:
@@ -70,7 +109,7 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        # 并行获取各项统计数据
+        # 并行获取当前周期各项统计数据
         (
             total_users,
             (online_users, online_user_ids),
@@ -81,8 +120,15 @@ class TracingQueryService:
             (top_mcp_tools, mcp_servers),
             branch_breakdown,
             task_status_breakdown,
+            total_cron_tasks,
+            total_skill_calls,
+            multi_round_ratio,
+            avg_user_stay_seconds,
         ) = await self._fetch_overview_data(
-            source_id, start_date, end_date, bbk_id,
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
         )
 
         return self._build_overview_stats(
@@ -97,6 +143,10 @@ class TracingQueryService:
             mcp_servers=mcp_servers,
             branch_breakdown=branch_breakdown,
             task_status_breakdown=task_status_breakdown,
+            total_cron_tasks=total_cron_tasks,
+            total_skill_calls=total_skill_calls,
+            multi_round_ratio=multi_round_ratio,
+            avg_user_stay_seconds=avg_user_stay_seconds,
         )
 
     async def _fetch_overview_data(
@@ -104,19 +154,53 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list:
         """并行获取运营概览的各项数据."""
         return await asyncio.gather(
-            self._get_total_users(source_id, start_date, end_date, bbk_id),
-            self._get_online_users(source_id, bbk_id),
-            self._get_token_stats(source_id, start_date, end_date, bbk_id),
-            self._get_model_distribution(source_id, start_date, end_date, bbk_id),
-            self._get_top_tools(source_id, start_date, end_date, bbk_id),
-            self._get_top_skills(source_id, start_date, end_date, bbk_id),
-            self._get_mcp_stats(source_id, start_date, end_date, bbk_id),
-            self._get_branch_breakdown(source_id, start_date, end_date, bbk_id),
-            self._get_task_status_breakdown(source_id, start_date, end_date, bbk_id),
+            self._get_total_users(source_id, start_date, end_date, bbk_ids),
+            self._get_online_users(source_id, bbk_ids),
+            self._get_token_stats(source_id, start_date, end_date, bbk_ids),
+            self._get_model_distribution(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_top_tools(source_id, start_date, end_date, bbk_ids),
+            self._get_top_skills(source_id, start_date, end_date, bbk_ids),
+            self._get_mcp_stats(source_id, start_date, end_date, bbk_ids),
+            self._get_branch_breakdown(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_task_status_breakdown(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_cron_tasks_count(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_total_skill_calls(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_multi_round_ratio(
+                source_id,
+                start_date,
+                end_date,
+                bbk_ids,
+            ),
+            self._get_avg_user_stay(source_id, start_date, end_date, bbk_ids),
         )
 
     def _build_overview_stats(
@@ -132,6 +216,10 @@ class TracingQueryService:
         mcp_servers: list,
         branch_breakdown: Any,
         task_status_breakdown: Any,
+        total_cron_tasks: int = 0,
+        total_skill_calls: int = 0,
+        multi_round_ratio: float = 0.0,
+        avg_user_stay_seconds: int = 0,
     ) -> OverviewStats:
         """构建运营概览统计对象."""
         return OverviewStats(
@@ -148,7 +236,11 @@ class TracingQueryService:
             total_conversations=(
                 token_row["total_traces"] or 0 if token_row else 0
             ),
+            total_cron_tasks=total_cron_tasks,
+            total_skill_calls=total_skill_calls,
             avg_duration_ms=self._extract_avg_duration(token_row),
+            multi_round_session_ratio=multi_round_ratio,
+            avg_user_stay_seconds=avg_user_stay_seconds,
             top_tools=top_tools,
             top_skills=top_skills,
             top_mcp_tools=top_mcp_tools,
@@ -169,7 +261,7 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> Any:
         """获取分行级别统计数据."""
         from ...models.tracing import (
@@ -177,8 +269,8 @@ class TracingQueryService:
             OverviewBranchBreakdown,
         )
 
-        # 构建查询条件
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        # 构建查询条件 - 使用辅助函数处理多值过滤
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -187,37 +279,39 @@ class TracingQueryService:
                 start_time >= %s AND start_time < %s
                 AND source_id NOT IN ({exclude_placeholders})
                 AND user_id != 'default'
-                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter}
+                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter_sql}
             """
-            trace_params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                trace_params = (*trace_params, bbk_id)
+            trace_params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_params,
+            )
             span_where = f"""
                 start_time >= %s AND start_time < %s
                 AND source_id NOT IN ({exclude_placeholders})
                 AND user_id != 'default'
-                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter}
+                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter_sql}
             """
-            span_params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                span_params = (*span_params, bbk_id)
+            span_params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_params,
+            )
         else:
             trace_where = f"""
                 source_id = %s AND start_time >= %s AND start_time < %s
                 AND user_id != 'default'
-                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter}
+                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter_sql}
             """
-            trace_params = (source_id, start_date, end_date)
-            if bbk_id:
-                trace_params = (*trace_params, bbk_id)
+            trace_params = (source_id, start_date, end_date, *bbk_params)
             span_where = f"""
                 source_id = %s AND start_time >= %s AND start_time < %s
                 AND user_id != 'default'
-                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter}
+                AND bbk_id IS NOT NULL AND bbk_id != ''{bbk_filter_sql}
             """
-            span_params = (source_id, start_date, end_date)
-            if bbk_id:
-                span_params = (*span_params, bbk_id)
+            span_params = (source_id, start_date, end_date, *bbk_params)
 
         # 各项分行统计查询
         users_query = f"""
@@ -263,50 +357,63 @@ class TracingQueryService:
             LIMIT 5
         """
 
+        # 定时任务分行统计查询
+        cron_bbk_filter_sql, cron_bbk_params = build_cron_bbk_in_filter(
+            bbk_ids,
+        )
+        cron_exclude_placeholders = ", ".join(
+            ["%s"] * len(EXCLUDED_SOURCE_IDS),
+        )
+        if source_id == "all":
+            cron_query = f"""
+                SELECT j.bbk_id, COUNT(*) AS value
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.source_id NOT IN ({cron_exclude_placeholders})
+                  AND j.tenant_id != 'default'
+                  AND j.bbk_id IS NOT NULL AND j.bbk_id != ''
+                  {cron_bbk_filter_sql}
+                GROUP BY j.bbk_id
+                ORDER BY value DESC
+                LIMIT 5
+            """
+            cron_params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *cron_bbk_params,
+            )
+        else:
+            cron_query = f"""
+                SELECT j.bbk_id, COUNT(*) AS value
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.tenant_id != 'default'
+                  AND j.bbk_id IS NOT NULL AND j.bbk_id != ''
+                  AND j.source_id = %s
+                  {cron_bbk_filter_sql}
+                GROUP BY j.bbk_id
+                ORDER BY value DESC
+                LIMIT 5
+            """
+            cron_params = (start_date, end_date, source_id, *cron_bbk_params)
+
         # 执行查询
         users_rows = await self._db.fetch_all(users_query, trace_params)
         conversations_rows = await self._db.fetch_all(
-            conversations_query, trace_params,
+            conversations_query,
+            trace_params,
         )
         sessions_rows = await self._db.fetch_all(sessions_query, trace_params)
         tokens_rows = await self._db.fetch_all(tokens_query, trace_params)
         skills_rows = await self._db.fetch_all(skills_query, span_params)
-
-        # 获取分行名称
-        def get_bbk_name(bbk_id: str) -> str:
-            try:
-                # 简单映射，可以根据需要扩展
-                bbk_map = {
-                    "010": "北京分行",
-                    "020": "天津分行",
-                    "030": "河北分行",
-                    "040": "山西分行",
-                    "100": "总行",
-                    "110": "辽宁分行",
-                    "120": "吉林分行",
-                    "130": "黑龙江分行",
-                    "200": "北京分行",
-                    "201": "上海分行",
-                    "202": "深圳分行",
-                    "203": "广州分行",
-                    "204": "杭州分行",
-                    "205": "苏州分行",
-                    "206": "南京分行",
-                    "210": "上海分行",
-                    "220": "江苏分行",
-                    "230": "浙江分行",
-                    "310": "山东分行",
-                    "320": "河南分行",
-                    "330": "湖北分行",
-                    "340": "湖南分行",
-                    "350": "广东分行",
-                    "410": "四川分行",
-                    "420": "重庆分行",
-                    "510": "陕西分行",
-                }
-                return bbk_map.get(bbk_id, bbk_id)
-            except Exception:
-                return bbk_id
+        cron_rows = await self._db.fetch_all(cron_query, cron_params)
 
         def build_branch_items(rows: list) -> list[BranchMetricItem]:
             total = sum(float(r.get("value") or 0) for r in rows)
@@ -314,13 +421,14 @@ class TracingQueryService:
             for row in rows:
                 value = float(row.get("value") or 0)
                 percent = (value / total * 100) if total > 0 else 0
+                bbk_id = row.get("bbk_id") or ""
                 result.append(
                     BranchMetricItem(
-                        bbk_id=row.get("bbk_id") or "",
-                        bbk_name=get_bbk_name(row.get("bbk_id") or ""),
+                        bbk_id=bbk_id,
+                        bbk_name=get_bbk_name_by_id(bbk_id) or bbk_id,
                         value=value,
                         percent=percent,
-                    )
+                    ),
                 )
             return result
 
@@ -330,6 +438,7 @@ class TracingQueryService:
             sessions=build_branch_items(sessions_rows),
             tokens=build_branch_items(tokens_rows),
             skills=build_branch_items(skills_rows),
+            cron_tasks=build_branch_items(cron_rows),
         )
 
     async def _get_task_status_breakdown(
@@ -337,46 +446,70 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> Any:
-        """获取任务状态统计."""
+        """获取定时任务执行状态统计.
+
+        从 swe_cron_executions 表查询定时任务的执行状态分布。
+        """
         from ...models.tracing import TaskStatusBreakdown
 
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(bbk_ids)
+        cron_exclude_placeholders = ", ".join(
+            ["%s"] * len(EXCLUDED_SOURCE_IDS),
+        )
         if source_id == "all":
-            exclude_placeholders = ", ".join(
-                ["%s"] * len(EXCLUDED_SOURCE_IDS),
-            )
             query = f"""
-                SELECT status, COUNT(*) AS count
-                FROM swe_tracing_traces
-                WHERE start_time >= %s AND start_time < %s
-                  AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
-                GROUP BY status
+                SELECT e.status, COUNT(*) AS count
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.source_id NOT IN ({cron_exclude_placeholders})
+                  AND j.tenant_id != 'default'
+                  {bbk_filter_sql}
+                GROUP BY e.status
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
         else:
             query = f"""
-                SELECT status, COUNT(*) AS count
-                FROM swe_tracing_traces
-                WHERE source_id = %s AND start_time >= %s AND start_time < %s
-                  AND user_id != 'default'{bbk_filter}
-                GROUP BY status
+                SELECT e.status, COUNT(*) AS count
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.tenant_id != 'default'
+                  AND j.source_id = %s
+                  {bbk_filter_sql}
+                GROUP BY e.status
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (start_date, end_date, source_id, *bbk_filter_params)
 
         rows = await self._db.fetch_all(query, params)
         status_map = {row["status"]: row["count"] for row in rows}
 
+        # 定时任务状态映射：
+        # success -> 成功
+        # error, timeout -> 失败
+        # cancelled, skipped -> 已取消/跳过
+        success = status_map.get("success", 0)
+        failed = status_map.get("error", 0) + status_map.get("timeout", 0)
+        cancelled = status_map.get("cancelled", 0) + status_map.get(
+            "skipped",
+            0,
+        )
+
         return TaskStatusBreakdown(
-            success=status_map.get("completed", 0),
-            failed=status_map.get("error", 0),
-            running=status_map.get("running", 0),
+            success=success,
+            failed=failed,
+            running=cancelled,  # 使用 running 字段存储已取消/跳过
         )
 
     async def get_growth_stats(
@@ -385,7 +518,7 @@ class TracingQueryService:
         start_date: datetime,
         end_date: datetime,
         time_range: str = "day",
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> dict[str, Any]:
         """获取环比增长统计."""
         # Calculate previous period based on time_range
@@ -402,6 +535,9 @@ class TracingQueryService:
         # 避免使用 timedelta(seconds=1) 造成的时间间隙问题
         prev_end = start_date
 
+        # 预构建 bbk IN 过滤条件，供内部函数使用
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+
         async def get_stats(
             s: datetime,
             e: datetime,
@@ -409,7 +545,6 @@ class TracingQueryService:
         ) -> dict:
             # 对于上一周期，使用 < 比较；对于当前周期，使用 <= 比较
             time_compare = "<" if is_prev else "<="
-            bbk_filter = " AND bbk_id = %s" if bbk_id else ""
             if source_id == "all":
                 exclude_placeholders = ", ".join(
                     ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -423,11 +558,9 @@ class TracingQueryService:
                     FROM swe_tracing_traces
                     WHERE start_time >= %s AND start_time {time_compare} %s
                       AND source_id NOT IN ({exclude_placeholders})
-                      AND user_id != 'default'{bbk_filter}
+                      AND user_id != 'default'{bbk_filter_sql}
                 """
-                params = (s, e, *EXCLUDED_SOURCE_IDS)
-                if bbk_id:
-                    params = (*params, bbk_id)
+                params = (s, e, *EXCLUDED_SOURCE_IDS, *bbk_filter_params)
                 row = await self._db.fetch_one(query, params)
             else:
                 query = f"""
@@ -438,11 +571,9 @@ class TracingQueryService:
                         COUNT(DISTINCT user_id) as users
                     FROM swe_tracing_traces
                     WHERE source_id = %s AND start_time >= %s AND start_time {time_compare} %s
-                      AND user_id != 'default'{bbk_filter}
+                      AND user_id != 'default'{bbk_filter_sql}
                 """
-                params = (source_id, s, e)
-                if bbk_id:
-                    params = (*params, bbk_id)
+                params = (source_id, s, e, *bbk_filter_params)
                 row = await self._db.fetch_one(query, params)
 
             if row is None:
@@ -465,7 +596,6 @@ class TracingQueryService:
             is_prev: bool = False,
         ) -> int:
             time_compare = "<" if is_prev else "<="
-            bbk_filter = " AND bbk_id = %s" if bbk_id else ""
             if source_id == "all":
                 exclude_placeholders = ", ".join(
                     ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -477,11 +607,9 @@ class TracingQueryService:
                       AND source_id NOT IN ({exclude_placeholders})
                       AND user_id != 'default'
                       AND event_type = 'skill_invocation'
-                      AND skill_name IS NOT NULL{bbk_filter}
+                      AND skill_name IS NOT NULL{bbk_filter_sql}
                 """
-                params = (s, e, *EXCLUDED_SOURCE_IDS)
-                if bbk_id:
-                    params = (*params, bbk_id)
+                params = (s, e, *EXCLUDED_SOURCE_IDS, *bbk_filter_params)
                 row = await self._db.fetch_one(query, params)
             else:
                 query = f"""
@@ -490,12 +618,57 @@ class TracingQueryService:
                     WHERE source_id = %s AND start_time >= %s AND start_time {time_compare} %s
                       AND user_id != 'default'
                       AND event_type = 'skill_invocation'
-                      AND skill_name IS NOT NULL{bbk_filter}
+                      AND skill_name IS NOT NULL{bbk_filter_sql}
                 """
-                params = (source_id, s, e)
-                if bbk_id:
-                    params = (*params, bbk_id)
+                params = (source_id, s, e, *bbk_filter_params)
                 row = await self._db.fetch_one(query, params)
+            return int((row or {}).get("total") or 0)
+
+        async def get_cron_tasks_count(
+            s: datetime,
+            e: datetime,
+            is_prev: bool = False,
+        ) -> int:
+            """查询定时任务执行次数（cron_executions 表）."""
+            time_compare = "<" if is_prev else "<="
+            bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(
+                bbk_ids,
+            )
+            cron_exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            if source_id == "all":
+                query = f"""
+                    SELECT COUNT(*) as total
+                    FROM swe_cron_executions e
+                    INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                    WHERE e.actual_time >= %s AND e.actual_time {time_compare} %s
+                      AND j.status != 'deleted'
+                      AND j.deleted_at IS NULL
+                      AND j.source_id NOT IN ({cron_exclude_placeholders})
+                      AND j.tenant_id != 'default'
+                      {bbk_filter_sql}
+                """
+                query_params = (
+                    s,
+                    e,
+                    *EXCLUDED_SOURCE_IDS,
+                    *bbk_filter_params,
+                )
+            else:
+                query = f"""
+                    SELECT COUNT(*) as total
+                    FROM swe_cron_executions e
+                    INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                    WHERE e.actual_time >= %s AND e.actual_time {time_compare} %s
+                      AND j.status != 'deleted'
+                      AND j.deleted_at IS NULL
+                      AND j.tenant_id != 'default'
+                      AND j.source_id = %s
+                      {bbk_filter_sql}
+                """
+                query_params = (s, e, source_id, *bbk_filter_params)
+            row = await self._db.fetch_one(query, query_params)
             return int((row or {}).get("total") or 0)
 
         curr = await get_stats(start_date, end_date, is_prev=False)
@@ -510,6 +683,42 @@ class TracingQueryService:
             prev_end,
             is_prev=True,
         )
+        curr_cron_tasks = await get_cron_tasks_count(
+            start_date,
+            end_date,
+            is_prev=False,
+        )
+        prev_cron_tasks = await get_cron_tasks_count(
+            prev_start,
+            prev_end,
+            is_prev=True,
+        )
+
+        # 获取深度指标的当前周期和上一周期数据
+        curr_multi_round_ratio = await self._get_multi_round_ratio(
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
+        )
+        prev_multi_round_ratio = await self._get_multi_round_ratio(
+            source_id,
+            prev_start,
+            prev_end,
+            bbk_ids,
+        )
+        curr_avg_user_stay = await self._get_avg_user_stay(
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
+        )
+        prev_avg_user_stay = await self._get_avg_user_stay(
+            source_id,
+            prev_start,
+            prev_end,
+            bbk_ids,
+        )
 
         def calc_growth(curr_val: float, prev_val: float) -> float | None:
             if prev_val == 0:
@@ -519,12 +728,41 @@ class TracingQueryService:
                 return None
             return round(((curr_val - prev_val) / prev_val) * 100, 1)
 
+        # 计算深度指标环比
+        # 1. 单次会话平均轮数环比 = (calls/sessions) 的环比
+        curr_avg_rounds = curr["calls"] / max(curr["sessions"], 1)
+        prev_avg_rounds = prev["calls"] / max(prev["sessions"], 1)
+        avg_rounds_growth = calc_growth(curr_avg_rounds, prev_avg_rounds)
+
+        # 2. 多轮会话占比环比
+        multi_round_ratio_growth = calc_growth(
+            curr_multi_round_ratio,
+            prev_multi_round_ratio,
+        )
+
+        # 3. 用户平均停留时长环比
+        avg_stay_growth = calc_growth(curr_avg_user_stay, prev_avg_user_stay)
+
+        # 4. 人均会话数环比 = (sessions/users) 的环比
+        curr_avg_sessions_per_user = curr["sessions"] / max(curr["users"], 1)
+        prev_avg_sessions_per_user = prev["sessions"] / max(prev["users"], 1)
+        avg_sessions_per_user_growth = calc_growth(
+            curr_avg_sessions_per_user,
+            prev_avg_sessions_per_user,
+        )
+
         return {
             "callsGrowth": calc_growth(curr["calls"], prev["calls"]),
             "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),
             "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),
             "userGrowth": calc_growth(curr["users"], prev["users"]),
             "skillGrowth": calc_growth(curr_skill_calls, prev_skill_calls),
+            "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),
+            # 深度指标环比
+            "avgRoundsGrowth": avg_rounds_growth,
+            "multiRoundRatioGrowth": multi_round_ratio_growth,
+            "avgStayGrowth": avg_stay_growth,
+            "avgSessionsPerUserGrowth": avg_sessions_per_user_growth,
         }
 
     async def get_daily_trend(
@@ -532,7 +770,7 @@ class TracingQueryService:
         source_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """获取日趋势数据."""
         if start_date is None:
@@ -540,7 +778,7 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -552,13 +790,16 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY DATE(start_time)
                 ORDER BY date
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -569,13 +810,11 @@ class TracingQueryService:
                     COUNT(DISTINCT user_id) as users
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY DATE(start_time)
                 ORDER BY date
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
 
         return [
@@ -595,7 +834,7 @@ class TracingQueryService:
         source_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """获取单日按小时聚合的趋势数据。"""
         if start_date is None:
@@ -608,7 +847,7 @@ class TracingQueryService:
         if end_date is None:
             end_date = start_date + timedelta(days=1)
 
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -620,13 +859,16 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY HOUR(start_time)
                 ORDER BY hour_bucket
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -637,13 +879,11 @@ class TracingQueryService:
                     COUNT(DISTINCT user_id) as users
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY HOUR(start_time)
                 ORDER BY hour_bucket
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
 
         hour_map = {
@@ -773,7 +1013,7 @@ class TracingQueryService:
         end_date: Optional[datetime] = None,
         sort_by: Optional[str] = None,
         filter_user_type: Optional[str] = "filtered",
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[UserListItem], int]:
         """获取用户列表.
 
@@ -808,9 +1048,12 @@ class TracingQueryService:
         if user_id:
             where_clauses.append("user_id LIKE %s")
             params.append(f"%{user_id}%")
-        if bbk_id:
-            where_clauses.append("bbk_id = %s")
-            params.append(bbk_id)
+        if bbk_ids:
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -840,7 +1083,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
@@ -864,7 +1107,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
@@ -882,7 +1125,7 @@ class TracingQueryService:
             UserListItem(
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
+                bbk_ids=row["bbk_ids"],
                 total_sessions=row["total_sessions"] or 0,
                 total_conversations=row["total_conversations"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -899,6 +1142,7 @@ class TracingQueryService:
         user_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
     ) -> UserStats:
         """获取用户统计详情."""
         if start_date is None:
@@ -911,6 +1155,7 @@ class TracingQueryService:
             user_id,
             start_date,
             end_date,
+            bbk_ids,
         )
         model_usage, tools_used, skills_used, mcp_tools_used = (
             await self._fetch_user_usage_data(
@@ -918,6 +1163,7 @@ class TracingQueryService:
                 user_id,
                 start_date,
                 end_date,
+                bbk_ids,
             )
         )
 
@@ -936,10 +1182,12 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> Optional[dict]:
         """获取用户统计行数据."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
-            query = """
+            query = f"""
                 SELECT
                     COUNT(DISTINCT session_id) as total_sessions,
                     COUNT(*) as total_conversations,
@@ -948,14 +1196,14 @@ class TracingQueryService:
                     SUM(total_tokens) as total_tokens,
                     AVG(duration_ms) as avg_duration
                 FROM swe_tracing_traces
-                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s{bbk_filter_sql}
             """
             return await self._db.fetch_one(
                 query,
-                (user_id, start_date, end_date),
+                (user_id, start_date, end_date, *bbk_filter_params),
             )
 
-        query = """
+        query = f"""
             SELECT
                 COUNT(DISTINCT session_id) as total_sessions,
                 COUNT(*) as total_conversations,
@@ -964,11 +1212,11 @@ class TracingQueryService:
                 SUM(total_tokens) as total_tokens,
                 AVG(duration_ms) as avg_duration
             FROM swe_tracing_traces
-            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s{bbk_filter_sql}
         """
         return await self._db.fetch_one(
             query,
-            (source_id, user_id, start_date, end_date),
+            (source_id, user_id, start_date, end_date, *bbk_filter_params),
         )
 
     async def _fetch_user_usage_data(
@@ -977,6 +1225,7 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> tuple:
         """并行获取用户使用数据."""
         return await asyncio.gather(
@@ -985,24 +1234,28 @@ class TracingQueryService:
                 user_id,
                 start_date,
                 end_date,
+                bbk_ids,
             ),
             self._get_user_tool_usage(
                 source_id,
                 user_id,
                 start_date,
                 end_date,
+                bbk_ids,
             ),
             self._get_user_skill_usage(
                 source_id,
                 user_id,
                 start_date,
                 end_date,
+                bbk_ids,
             ),
             self._get_user_mcp_tool_usage(
                 source_id,
                 user_id,
                 start_date,
                 end_date,
+                bbk_ids,
             ),
         )
 
@@ -1041,10 +1294,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> int:
         """获取用户总数."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1052,52 +1305,49 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             row = await self._db.fetch_one(query, params)
         else:
             query = f"""
                 SELECT COUNT(DISTINCT user_id) as total_users
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             row = await self._db.fetch_one(query, params)
         return row["total_users"] if row else 0
 
     async def _get_online_users(
         self,
         source_id: str,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[int, list[str]]:
         """获取在线用户."""
         online_threshold = datetime.now() - timedelta(minutes=5)
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             query = f"""
                 SELECT DISTINCT user_id
                 FROM swe_tracing_spans
-                WHERE start_time >= %s AND user_id IS NOT NULL AND user_id != ''{bbk_filter}
+                WHERE start_time >= %s AND user_id IS NOT NULL AND user_id != ''{bbk_filter_sql}
             """
-            params = (online_threshold,)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (online_threshold, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
                 SELECT DISTINCT user_id
                 FROM swe_tracing_spans
-                WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''{bbk_filter}
+                WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''{bbk_filter_sql}
             """
-            params = (source_id, online_threshold)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, online_threshold, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         user_ids = [row["user_id"] for row in rows if row["user_id"]]
         return len(user_ids), user_ids
@@ -1107,10 +1357,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> Optional[dict]:
         """获取 Token 统计."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1124,11 +1374,14 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             return await self._db.fetch_one(query, params)
         else:
             query = f"""
@@ -1141,22 +1394,79 @@ class TracingQueryService:
                     AVG(duration_ms) as avg_duration
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             return await self._db.fetch_one(query, params)
+
+    async def _get_cron_tasks_count(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_ids: Optional[str] = None,
+    ) -> int:
+        """获取定时任务执行次数.
+
+        从 swe_cron_executions 表查询指定时间范围内的执行记录数。
+
+        Args:
+            source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+            start_date: 开始时间
+            end_date: 结束时间
+            bbk_ids: 可选的分行ID过滤（逗号分隔多值）
+
+        Returns:
+            定时任务执行次数
+        """
+        bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(bbk_ids)
+        cron_exclude_placeholders = ", ".join(
+            ["%s"] * len(EXCLUDED_SOURCE_IDS),
+        )
+        if source_id == "all":
+            query = f"""
+                SELECT COUNT(*) as total
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.source_id NOT IN ({cron_exclude_placeholders})
+                  AND j.tenant_id != 'default'
+                  {bbk_filter_sql}
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+        else:
+            query = f"""
+                SELECT COUNT(*) as total
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.tenant_id != 'default'
+                  AND j.source_id = %s
+                  {bbk_filter_sql}
+            """
+            params = (start_date, end_date, source_id, *bbk_filter_params)
+
+        result = await self._db.fetch_one(query, params)
+        return result["total"] if result else 0
 
     async def _get_model_distribution(
         self,
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[ModelUsage]:
         """获取模型分布."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1167,14 +1477,17 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY model_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -1184,14 +1497,12 @@ class TracingQueryService:
                        SUM(total_tokens) as total_tokens
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY model_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         return [
             ModelUsage(
@@ -1209,10 +1520,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[ToolUsage]:
         """获取热门工具."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1225,14 +1536,17 @@ class TracingQueryService:
                   AND tool_name IS NOT NULL
                   AND mcp_server IS NULL
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY tool_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -1244,14 +1558,12 @@ class TracingQueryService:
                   AND event_type = 'tool_call_end'
                   AND tool_name IS NOT NULL
                   AND mcp_server IS NULL
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY tool_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         return [
             ToolUsage(
@@ -1268,10 +1580,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[SkillUsage]:
         """获取热门技能."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1282,14 +1594,17 @@ class TracingQueryService:
                   AND event_type = 'skill_invocation'
                   AND skill_name IS NOT NULL
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY skill_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -1299,14 +1614,12 @@ class TracingQueryService:
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'skill_invocation'
                   AND skill_name IS NOT NULL
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY skill_name
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         return [
             SkillUsage(
@@ -1317,6 +1630,164 @@ class TracingQueryService:
             for row in rows
         ]
 
+    async def _get_total_skill_calls(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_ids: Optional[str] = None,
+    ) -> int:
+        """获取技能调用总次数（无 LIMIT）."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT COUNT(*) as total
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'{bbk_filter_sql}
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+            row = await self._db.fetch_one(query, params)
+        else:
+            query = f"""
+                SELECT COUNT(*) as total
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                  AND user_id != 'default'{bbk_filter_sql}
+            """
+            params = (source_id, start_date, end_date, *bbk_filter_params)
+            row = await self._db.fetch_one(query, params)
+        return int((row or {}).get("total") or 0)
+
+    async def _get_multi_round_ratio(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_ids: Optional[str] = None,
+    ) -> float:
+        """获取多轮会话占比(>3轮)的真实百分比.
+
+        统计每个 session 的 trace 数量，计算超过3轮的 session 占比。
+        """
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT
+                    COUNT(*) as total_sessions,
+                    SUM(CASE WHEN trace_count > 3 THEN 1 ELSE 0 END) as multi_round_sessions
+                FROM (
+                    SELECT session_id, COUNT(*) as trace_count
+                    FROM swe_tracing_traces
+                    WHERE start_time >= %s AND start_time <= %s
+                      AND source_id NOT IN ({exclude_placeholders})
+                      AND user_id != 'default'
+                      AND session_id IS NOT NULL AND session_id != ''
+                      {bbk_filter_sql}
+                    GROUP BY session_id
+                ) AS session_counts
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+            row = await self._db.fetch_one(query, params)
+        else:
+            query = f"""
+                SELECT
+                    COUNT(*) as total_sessions,
+                    SUM(CASE WHEN trace_count > 3 THEN 1 ELSE 0 END) as multi_round_sessions
+                FROM (
+                    SELECT session_id, COUNT(*) as trace_count
+                    FROM swe_tracing_traces
+                    WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                      AND user_id != 'default'
+                      AND session_id IS NOT NULL AND session_id != ''
+                      {bbk_filter_sql}
+                    GROUP BY session_id
+                ) AS session_counts
+            """
+            params = (source_id, start_date, end_date, *bbk_filter_params)
+            row = await self._db.fetch_one(query, params)
+
+        total_sessions = int((row or {}).get("total_sessions") or 0)
+        multi_round_sessions = int(
+            (row or {}).get("multi_round_sessions") or 0,
+        )
+        if total_sessions == 0:
+            return 0.0
+        return round(multi_round_sessions / total_sessions * 100, 1)
+
+    async def _get_avg_user_stay(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_ids: Optional[str] = None,
+    ) -> int:
+        """获取用户平均停留时长（秒）.
+
+        统计每个用户在时间范围内从第一次请求到最后一次请求的时间差，
+        然后计算平均值。
+        """
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT AVG(stay_seconds) as avg_stay
+                FROM (
+                    SELECT user_id,
+                           TIMESTAMPDIFF(SECOND, MIN(start_time), MAX(start_time)) as stay_seconds
+                    FROM swe_tracing_traces
+                    WHERE start_time >= %s AND start_time <= %s
+                      AND source_id NOT IN ({exclude_placeholders})
+                      AND user_id != 'default'
+                      {bbk_filter_sql}
+                    GROUP BY user_id
+                    HAVING stay_seconds > 0
+                ) AS user_stays
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+            row = await self._db.fetch_one(query, params)
+        else:
+            query = f"""
+                SELECT AVG(stay_seconds) as avg_stay
+                FROM (
+                    SELECT user_id,
+                           TIMESTAMPDIFF(SECOND, MIN(start_time), MAX(start_time)) as stay_seconds
+                    FROM swe_tracing_traces
+                    WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                      AND user_id != 'default'
+                      {bbk_filter_sql}
+                    GROUP BY user_id
+                    HAVING stay_seconds > 0
+                ) AS user_stays
+            """
+            params = (source_id, start_date, end_date, *bbk_filter_params)
+            row = await self._db.fetch_one(query, params)
+
+        avg_stay = float((row or {}).get("avg_stay") or 0)
+        return int(avg_stay)
+
     async def get_skills_paginated(
         self,
         source_id: str,
@@ -1324,7 +1795,7 @@ class TracingQueryService:
         page_size: int = 10,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[SkillUsage], int]:
         """获取技能调用排行榜（分页）."""
         if start_date is None:
@@ -1332,7 +1803,7 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         # 构建基础查询条件
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
@@ -1341,21 +1812,27 @@ class TracingQueryService:
                 AND event_type = 'skill_invocation'
                 AND skill_name IS NOT NULL
                 AND source_id NOT IN ({exclude_placeholders})
-                AND user_id != 'default'{bbk_filter}
+                AND user_id != 'default'{bbk_filter_sql}
             """
-            count_params = [start_date, end_date, *EXCLUDED_SOURCE_IDS]
-            if bbk_id:
-                count_params.append(bbk_id)
+            count_params = [
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            ]
         else:
             base_where = f"""
                 source_id = %s AND start_time >= %s AND start_time <= %s
                 AND event_type = 'skill_invocation'
                 AND skill_name IS NOT NULL
-                AND user_id != 'default'{bbk_filter}
+                AND user_id != 'default'{bbk_filter_sql}
             """
-            count_params = [source_id, start_date, end_date]
-            if bbk_id:
-                count_params.append(bbk_id)
+            count_params = [
+                source_id,
+                start_date,
+                end_date,
+                *bbk_filter_params,
+            ]
 
         # 查询总数
         count_query = f"""
@@ -1397,7 +1874,7 @@ class TracingQueryService:
         page_size: int = 10,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[MCPServerUsage], int]:
         """获取 MCP 服务调用排行榜（分页）."""
         if start_date is None:
@@ -1405,7 +1882,7 @@ class TracingQueryService:
         if end_date is None:
             end_date = datetime.now() + timedelta(days=1)
 
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         # 构建基础查询条件
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
@@ -1414,21 +1891,27 @@ class TracingQueryService:
                 AND event_type = 'tool_call_end'
                 AND mcp_server IS NOT NULL
                 AND source_id NOT IN ({exclude_placeholders})
-                AND user_id != 'default'{bbk_filter}
+                AND user_id != 'default'{bbk_filter_sql}
             """
-            count_params = [start_date, end_date, *EXCLUDED_SOURCE_IDS]
-            if bbk_id:
-                count_params.append(bbk_id)
+            count_params = [
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            ]
         else:
             base_where = f"""
                 source_id = %s AND start_time >= %s AND start_time <= %s
                 AND event_type = 'tool_call_end'
                 AND mcp_server IS NOT NULL
-                AND user_id != 'default'{bbk_filter}
+                AND user_id != 'default'{bbk_filter_sql}
             """
-            count_params = [source_id, start_date, end_date]
-            if bbk_id:
-                count_params.append(bbk_id)
+            count_params = [
+                source_id,
+                start_date,
+                end_date,
+                *bbk_filter_params,
+            ]
 
         # 查询总数
         count_query = f"""
@@ -1533,7 +2016,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -1554,7 +2037,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s
                           AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -1575,7 +2058,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
+                bbk_ids=row["bbk_ids"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -1596,10 +2079,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[MCPToolUsage], list[MCPServerUsage]]:
         """获取 MCP 统计."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             mcp_tool_query = f"""
@@ -1610,17 +2093,22 @@ class TracingQueryService:
                 WHERE start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
+                  AND tool_name IS NOT NULL
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             mcp_tool_rows = await self._db.fetch_all(
-                query=mcp_tool_query, params=params,
+                query=mcp_tool_query,
+                params=params,
             )
         else:
             mcp_tool_query = f"""
@@ -1631,16 +2119,16 @@ class TracingQueryService:
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
-                  AND user_id != 'default'{bbk_filter}
+                  AND tool_name IS NOT NULL
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
                 LIMIT 10
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             mcp_tool_rows = await self._db.fetch_all(
-                query=mcp_tool_query, params=params,
+                query=mcp_tool_query,
+                params=params,
             )
 
         top_mcp_tools = [
@@ -1659,7 +2147,7 @@ class TracingQueryService:
             source_id,
             start_date,
             end_date,
-            bbk_id,
+            bbk_ids,
         )
         return top_mcp_tools, mcp_servers
 
@@ -1668,10 +2156,10 @@ class TracingQueryService:
         source_id: str,
         start_date: datetime,
         end_date: datetime,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[MCPServerUsage]:
         """获取 MCP 服务器统计."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             query = f"""
@@ -1685,13 +2173,16 @@ class TracingQueryService:
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
                   AND source_id NOT IN ({exclude_placeholders})
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY mcp_server
                 ORDER BY total_calls DESC
             """
-            params = (start_date, end_date, *EXCLUDED_SOURCE_IDS)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
             server_rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -1704,13 +2195,11 @@ class TracingQueryService:
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
-                  AND user_id != 'default'{bbk_filter}
+                  AND user_id != 'default'{bbk_filter_sql}
                 GROUP BY mcp_server
                 ORDER BY total_calls DESC
             """
-            params = (source_id, start_date, end_date)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (source_id, start_date, end_date, *bbk_filter_params)
             server_rows = await self._db.fetch_all(query, params)
 
         mcp_servers = []
@@ -1721,7 +2210,7 @@ class TracingQueryService:
                 start_date,
                 end_date,
                 server_name,
-                bbk_id,
+                bbk_ids,
             )
             mcp_servers.append(
                 MCPServerUsage(
@@ -1741,10 +2230,10 @@ class TracingQueryService:
         start_date: datetime,
         end_date: datetime,
         server_name: str,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> list[MCPToolUsage]:
         """获取服务器工具统计."""
-        bbk_filter = " AND bbk_id = %s" if bbk_id else ""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             query = f"""
                 SELECT tool_name, mcp_server, COUNT(*) as count,
@@ -1754,13 +2243,11 @@ class TracingQueryService:
                 WHERE start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server = %s
-                  AND tool_name IS NOT NULL{bbk_filter}
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
-            params = (start_date, end_date, server_name)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (start_date, end_date, server_name, *bbk_filter_params)
             rows = await self._db.fetch_all(query, params)
         else:
             query = f"""
@@ -1771,13 +2258,17 @@ class TracingQueryService:
                 WHERE source_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server = %s
-                  AND tool_name IS NOT NULL{bbk_filter}
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
-            params = (source_id, start_date, end_date, server_name)
-            if bbk_id:
-                params = (*params, bbk_id)
+            params = (
+                source_id,
+                start_date,
+                end_date,
+                server_name,
+                *bbk_filter_params,
+            )
             rows = await self._db.fetch_all(query, params)
         return [
             MCPToolUsage(
@@ -1796,39 +2287,41 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list[ModelUsage]:
         """获取用户模型使用."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
-            model_query = """
+            model_query = f"""
                 SELECT model_name, COUNT(*) as count,
                        SUM(total_input_tokens) as input_tokens,
                        SUM(total_output_tokens) as output_tokens,
                        SUM(total_tokens) as total_tokens
                 FROM swe_tracing_traces
                 WHERE user_id = %s AND start_time >= %s AND start_time <= %s
-                      AND model_name IS NOT NULL
+                      AND model_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY model_name
                 ORDER BY count DESC
             """
             model_rows = await self._db.fetch_all(
                 model_query,
-                (user_id, start_date, end_date),
+                (user_id, start_date, end_date, *bbk_filter_params),
             )
         else:
-            model_query = """
+            model_query = f"""
                 SELECT model_name, COUNT(*) as count,
                        SUM(total_input_tokens) as input_tokens,
                        SUM(total_output_tokens) as output_tokens,
                        SUM(total_tokens) as total_tokens
                 FROM swe_tracing_traces
                 WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-                      AND model_name IS NOT NULL
+                      AND model_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY model_name
                 ORDER BY count DESC
             """
             model_rows = await self._db.fetch_all(
                 model_query,
-                (source_id, user_id, start_date, end_date),
+                (source_id, user_id, start_date, end_date, *bbk_filter_params),
             )
         return [
             ModelUsage(
@@ -1847,39 +2340,41 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list[ToolUsage]:
         """获取用户工具使用."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
-            tool_query = """
+            tool_query = f"""
                 SELECT tool_name, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration,
                        SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
                 FROM swe_tracing_spans
                 WHERE user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
-                  AND tool_name IS NOT NULL
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name
                 ORDER BY count DESC
             """
             tool_rows = await self._db.fetch_all(
                 tool_query,
-                (user_id, start_date, end_date),
+                (user_id, start_date, end_date, *bbk_filter_params),
             )
         else:
-            tool_query = """
+            tool_query = f"""
                 SELECT tool_name, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration,
                        SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
                 FROM swe_tracing_spans
                 WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
-                  AND tool_name IS NOT NULL
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name
                 ORDER BY count DESC
             """
             tool_rows = await self._db.fetch_all(
                 tool_query,
-                (source_id, user_id, start_date, end_date),
+                (source_id, user_id, start_date, end_date, *bbk_filter_params),
             )
         return [
             ToolUsage(
@@ -1897,37 +2392,39 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list[SkillUsage]:
         """获取用户技能使用."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
-            skill_query = """
+            skill_query = f"""
                 SELECT skill_name, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration
                 FROM swe_tracing_spans
                 WHERE user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'skill_invocation'
-                  AND skill_name IS NOT NULL
+                  AND skill_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY skill_name
                 ORDER BY count DESC
             """
             skill_rows = await self._db.fetch_all(
                 skill_query,
-                (user_id, start_date, end_date),
+                (user_id, start_date, end_date, *bbk_filter_params),
             )
         else:
-            skill_query = """
+            skill_query = f"""
                 SELECT skill_name, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration
                 FROM swe_tracing_spans
                 WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'skill_invocation'
-                  AND skill_name IS NOT NULL
+                  AND skill_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY skill_name
                 ORDER BY count DESC
             """
             skill_rows = await self._db.fetch_all(
                 skill_query,
-                (source_id, user_id, start_date, end_date),
+                (source_id, user_id, start_date, end_date, *bbk_filter_params),
             )
         return [
             SkillUsage(
@@ -1944,10 +2441,12 @@ class TracingQueryService:
         user_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list[MCPToolUsage]:
         """获取用户 MCP 工具使用."""
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
-            query = """
+            query = f"""
                 SELECT tool_name, mcp_server, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration,
                        SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
@@ -1955,16 +2454,16 @@ class TracingQueryService:
                 WHERE user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
-                  AND tool_name IS NOT NULL
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
             rows = await self._db.fetch_all(
                 query,
-                (user_id, start_date, end_date),
+                (user_id, start_date, end_date, *bbk_filter_params),
             )
         else:
-            query = """
+            query = f"""
                 SELECT tool_name, mcp_server, COUNT(*) as count,
                        AVG(duration_ms) as avg_duration,
                        SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
@@ -1972,13 +2471,13 @@ class TracingQueryService:
                 WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
-                  AND tool_name IS NOT NULL
+                  AND tool_name IS NOT NULL{bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
             rows = await self._db.fetch_all(
                 query,
-                (source_id, user_id, start_date, end_date),
+                (source_id, user_id, start_date, end_date, *bbk_filter_params),
             )
         return [
             MCPToolUsage(
@@ -2002,7 +2501,7 @@ class TracingQueryService:
         session_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[SessionListItem], int]:
         """获取会话列表."""
         if source_id == "all":
@@ -2023,9 +2522,9 @@ class TracingQueryService:
         if session_id:
             where_clauses.append("session_id LIKE %s")
             params.append(f"%{session_id}%")
-        if bbk_id:
-            where_clauses.append("bbk_id = %s")
-            params.append(bbk_id)
+        if bbk_ids:
+            where_clauses.append("bbk_id IN (%s)")
+            params.append(bbk_ids)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -2080,7 +2579,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                         AND t3.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2134,7 +2633,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2170,7 +2669,7 @@ class TracingQueryService:
                 session_name=row.get("session_name"),
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
+                bbk_ids=row["bbk_ids"],
                 channel=row["channel"],
                 total_traces=row["total_traces"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -2188,6 +2687,7 @@ class TracingQueryService:
         session_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
     ) -> SessionStats:
         """获取会话统计详情."""
         if start_date is None:
@@ -2200,6 +2700,7 @@ class TracingQueryService:
             session_id,
             start_date,
             end_date,
+            bbk_ids,
         )
 
         if not stats_row or not stats_row.get("user_id"):
@@ -2215,24 +2716,28 @@ class TracingQueryService:
                     session_id,
                     start_date,
                     end_date,
+                    bbk_ids,
                 ),
                 self._fetch_session_tools_used(
                     source_id,
                     session_id,
                     start_date,
                     end_date,
+                    bbk_ids,
                 ),
                 self._fetch_session_skills_used(
                     source_id,
                     session_id,
                     start_date,
                     end_date,
+                    bbk_ids,
                 ),
                 self._fetch_session_mcp_tools(
                     source_id,
                     session_id,
                     start_date,
                     end_date,
+                    bbk_ids,
                 ),
             )
         )
@@ -2254,8 +2759,10 @@ class TracingQueryService:
         session_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> Optional[dict]:
         """获取会话统计行数据."""
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -2274,11 +2781,18 @@ class TracingQueryService:
                 FROM swe_tracing_traces
                 WHERE source_id NOT IN ({exclude_placeholders})
                       AND session_id = %s AND start_time >= %s AND start_time <= %s
+                      {bbk_filter_sql}
                 GROUP BY user_id, channel
             """
             return await self._db.fetch_one(
                 query,
-                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+                (
+                    *EXCLUDED_SOURCE_IDS,
+                    session_id,
+                    start_date,
+                    end_date,
+                    *bbk_params,
+                ),
             )
         return await self._db.fetch_one(
             """
@@ -2294,9 +2808,10 @@ class TracingQueryService:
                 MAX(start_time) as last_active
             FROM swe_tracing_traces
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
+                  {}
             GROUP BY user_id, channel
-            """,
-            (source_id, session_id, start_date, end_date),
+            """.format(bbk_filter_sql),
+            (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
     async def _fetch_session_model_usage(
@@ -2305,8 +2820,10 @@ class TracingQueryService:
         session_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list:
         """获取会话模型使用数据."""
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -2320,12 +2837,19 @@ class TracingQueryService:
                 WHERE source_id NOT IN ({exclude_placeholders})
                       AND session_id = %s AND start_time >= %s AND start_time <= %s
                       AND model_name IS NOT NULL
+                      {bbk_filter_sql}
                 GROUP BY model_name
                 ORDER BY count DESC
             """
             return await self._db.fetch_all(
                 query,
-                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+                (
+                    *EXCLUDED_SOURCE_IDS,
+                    session_id,
+                    start_date,
+                    end_date,
+                    *bbk_params,
+                ),
             )
         return await self._db.fetch_all(
             """
@@ -2336,10 +2860,11 @@ class TracingQueryService:
             FROM swe_tracing_traces
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
                   AND model_name IS NOT NULL
+                  {}
             GROUP BY model_name
             ORDER BY count DESC
-            """,
-            (source_id, session_id, start_date, end_date),
+            """.format(bbk_filter_sql),
+            (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
     async def _fetch_session_tools_used(
@@ -2348,8 +2873,10 @@ class TracingQueryService:
         session_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list:
         """获取会话工具使用数据."""
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -2364,12 +2891,19 @@ class TracingQueryService:
                   AND event_type = 'tool_call_end'
                   AND tool_name IS NOT NULL
                   AND mcp_server IS NULL
+                  {bbk_filter_sql}
                 GROUP BY tool_name
                 ORDER BY count DESC
             """
             return await self._db.fetch_all(
                 query,
-                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+                (
+                    *EXCLUDED_SOURCE_IDS,
+                    session_id,
+                    start_date,
+                    end_date,
+                    *bbk_params,
+                ),
             )
         return await self._db.fetch_all(
             """
@@ -2381,10 +2915,11 @@ class TracingQueryService:
               AND event_type = 'tool_call_end'
               AND tool_name IS NOT NULL
               AND mcp_server IS NULL
+              {}
             GROUP BY tool_name
             ORDER BY count DESC
-            """,
-            (source_id, session_id, start_date, end_date),
+            """.format(bbk_filter_sql),
+            (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
     async def _fetch_session_skills_used(
@@ -2393,8 +2928,10 @@ class TracingQueryService:
         session_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list:
         """获取会话技能使用数据."""
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -2407,12 +2944,19 @@ class TracingQueryService:
                       AND session_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'skill_invocation'
                   AND skill_name IS NOT NULL
+                  {bbk_filter_sql}
                 GROUP BY skill_name
                 ORDER BY count DESC
             """
             return await self._db.fetch_all(
                 query,
-                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+                (
+                    *EXCLUDED_SOURCE_IDS,
+                    session_id,
+                    start_date,
+                    end_date,
+                    *bbk_params,
+                ),
             )
         return await self._db.fetch_all(
             """
@@ -2422,10 +2966,11 @@ class TracingQueryService:
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
               AND event_type = 'skill_invocation'
               AND skill_name IS NOT NULL
+              {}
             GROUP BY skill_name
             ORDER BY count DESC
-            """,
-            (source_id, session_id, start_date, end_date),
+            """.format(bbk_filter_sql),
+            (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
     async def _fetch_session_mcp_tools(
@@ -2434,8 +2979,10 @@ class TracingQueryService:
         session_id: str,
         start_date: datetime,
         end_date: datetime,
+        bbk_ids: Optional[str] = None,
     ) -> list:
         """获取会话 MCP 工具使用数据."""
+        bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
         if source_id == "all":
             exclude_placeholders = ", ".join(
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
@@ -2449,12 +2996,19 @@ class TracingQueryService:
                       AND session_id = %s AND start_time >= %s AND start_time <= %s
                   AND event_type = 'tool_call_end'
                   AND mcp_server IS NOT NULL
+                  {bbk_filter_sql}
                 GROUP BY tool_name, mcp_server
                 ORDER BY count DESC
             """
             return await self._db.fetch_all(
                 query,
-                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+                (
+                    *EXCLUDED_SOURCE_IDS,
+                    session_id,
+                    start_date,
+                    end_date,
+                    *bbk_params,
+                ),
             )
         return await self._db.fetch_all(
             """
@@ -2465,10 +3019,11 @@ class TracingQueryService:
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
               AND event_type = 'tool_call_end'
               AND mcp_server IS NOT NULL
+              {}
             GROUP BY tool_name, mcp_server
             ORDER BY count DESC
-            """,
-            (source_id, session_id, start_date, end_date),
+            """.format(bbk_filter_sql),
+            (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
     def _build_session_stats(
@@ -2561,7 +3116,7 @@ class TracingQueryService:
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[TraceListItem], int]:
         """获取对话列表."""
         if source_id == "all":
@@ -2585,9 +3140,9 @@ class TracingQueryService:
         if status:
             where_clauses.append("status = %s")
             params.append(status)
-        if bbk_id:
-            where_clauses.append("bbk_id = %s")
-            params.append(bbk_id)
+        if bbk_ids:
+            where_clauses.append("bbk_id IN (%s)")
+            params.append(bbk_ids)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -2620,7 +3175,7 @@ class TracingQueryService:
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            AND t3.source_id NOT IN ({exclude_placeholders})
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_id
+                       )) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -2648,7 +3203,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.source_id = %s AND t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_id
+                       )) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -2662,7 +3217,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
+                bbk_ids=row["bbk_ids"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -2819,7 +3374,7 @@ class TracingQueryService:
         end_date: Optional[datetime] = None,
         query_text: Optional[str] = None,
         export: bool = False,
-        bbk_id: Optional[str] = None,
+        bbk_ids: Optional[str] = None,
     ) -> tuple[list[UserMessageItem], int]:
         """获取用户消息列表."""
         if start_date is None:
@@ -2850,9 +3405,9 @@ class TracingQueryService:
         if query_text:
             where_clauses.append("user_message LIKE %s")
             params.append(f"%{query_text}%")
-        if bbk_id:
-            where_clauses.append("bbk_id = %s")
-            params.append(bbk_id)
+        if bbk_ids:
+            where_clauses.append("bbk_id IN (%s)")
+            params.append(bbk_ids)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -2874,7 +3429,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_id
+                       )) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -2895,7 +3450,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_id
+                       )) as bbk_ids
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -2910,7 +3465,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
+                bbk_ids=row["bbk_ids"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 user_message=row["user_message"],
