@@ -9,6 +9,8 @@ from typing import Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .context import migrate_legacy_scope_dir_if_needed, canonicalize_scope_id
+
 
 class AgentProfileRef(BaseModel):
     """root config 中记录的 agent 引用。"""
@@ -157,7 +159,10 @@ class AgentProfileConfig(BaseModel):
 
 def get_tenant_working_dir(swe_root: Path, tenant_id: str) -> Path:
     """获取 tenant 根目录。"""
-    return Path(swe_root).expanduser() / tenant_id
+    return migrate_legacy_scope_dir_if_needed(
+        Path(swe_root).expanduser(),
+        tenant_id,
+    )
 
 
 def get_tenant_config_path(swe_root: Path, tenant_id: str) -> Path:
@@ -199,6 +204,24 @@ def load_root_config(swe_root: Path, tenant_id: str) -> AgentsRootConfig:
 
     with open(config_path, "r", encoding="utf-8") as file:
         data = json.load(file)
+
+    tenant_root_dir = get_tenant_working_dir(swe_root, tenant_id)
+    try:
+        canonical_scope_id = canonicalize_scope_id(tenant_id)
+    except ValueError:
+        canonical_scope_id = None
+    if canonical_scope_id is not None:
+        legacy_tenant_root_dir = (
+            Path(swe_root).expanduser() / f"scope.v1.{canonical_scope_id}"
+        )
+        raw_content = config_path.read_text(encoding="utf-8")
+        if str(legacy_tenant_root_dir) in raw_content:
+            updated = raw_content.replace(
+                str(legacy_tenant_root_dir),
+                str(tenant_root_dir),
+            )
+            config_path.write_text(updated, encoding="utf-8")
+            data = json.loads(updated)
 
     config = AgentsRootConfig.model_validate(data)
     if not config.agents.profiles:
