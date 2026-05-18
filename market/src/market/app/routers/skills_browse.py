@@ -729,8 +729,21 @@ async def upload_skill_to_workspace(
     )
 
     # Log upload operation
-    if svc.db.is_connected and result.get("imported"):
+    imported_skills = result.get("imported") or []
+    logger.info(
+        "Upload result check: imported=%s, db_connected=%s, db_type=%s",
+        imported_skills,
+        svc.db.is_connected,
+        type(svc.db).__name__,
+    )
+    if svc.db.is_connected and imported_skills:
         try:
+            logger.info(
+                "Attempting to insert upload log: source=%s, user=%s, skills=%s",
+                source_id,
+                x_user_id,
+                imported_skills,
+            )
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
@@ -746,14 +759,25 @@ async def upload_skill_to_workspace(
                     "upload",
                     "skill",
                     "",
-                    ",".join(result["imported"]),
+                    ",".join(imported_skills),
                     x_user_id,
                     user_name,
                     bbk_id,
                 ),
             )
+            logger.info(
+                "Logged upload operation success: user=%s, skills=%s",
+                x_user_id,
+                imported_skills,
+            )
         except Exception as e:
-            logger.warning("Failed to log upload operation: %s", e)
+            logger.error(
+                "Failed to log upload operation: %s",
+                e,
+                exc_info=True,
+            )
+    elif not svc.db.is_connected:
+        logger.warning("Database not connected, skipping upload log")
 
     # 注册技能到 manifest
     if result.get("imported"):
@@ -872,6 +896,34 @@ async def save_skill_file(
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save file")
+
+    # Log edit operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, operator_id, operator_name, operation,
+                     item_type, item_id, item_name,
+                     target_user_id, target_user_name, target_bbk_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "edit",
+                    "skill",
+                    "",
+                    skill_name,
+                    x_user_id,
+                    x_user_name,
+                    None,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log edit operation: %s", e)
+
     return OperationResponse(success=True)
 
 
@@ -884,6 +936,7 @@ async def delete_my_skill(
     request: Request,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
     agent_id: str = "default",
 ):
     """删除技能."""
@@ -901,6 +954,34 @@ async def delete_my_skill(
             status_code=404,
             detail="Skill not found or delete failed",
         )
+
+    # Log delete operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, operator_id, operator_name, operation,
+                     item_type, item_id, item_name,
+                     target_user_id, target_user_name, target_bbk_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "delete",
+                    "skill",
+                    "",
+                    skill_name,
+                    x_user_id,
+                    x_user_name,
+                    None,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log delete operation: %s", e)
+
     return OperationResponse(success=True)
 
 
