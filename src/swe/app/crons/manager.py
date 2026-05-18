@@ -2333,6 +2333,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
         output_preview: str,
         is_manual: bool = False,
         trace_id: str = "",
+        input_snapshot: Optional[Dict[str, Any]] = None,
+        executor_leader: str = "",
     ) -> None:
         """Sync execution record to Monitor service (non-blocking).
 
@@ -2346,6 +2348,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
             output_preview: 输出预览
             is_manual: 是否手动执行
             trace_id: 从执行过程中捕获的 trace_id
+            input_snapshot: 执行时的输入快照
+            executor_leader: 执行者 leader ID
         """
         if self._monitor_sync_client is None:
             return
@@ -2363,6 +2367,32 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id=trace_id,
             session_id=session_id,
             output_preview=output_preview,
+            input_snapshot=input_snapshot,
+            executor_leader=executor_leader,
+        )
+
+    async def _handle_success_notifications(
+        self,
+        job: CronJobSpec,
+    ) -> None:
+        """处理任务成功执行后的通知和记录。
+
+        Args:
+            job: 任务定义
+        """
+        # 通知用 shield 保护，避免任务取消时误标记状态
+        try:
+            await asyncio.shield(
+                self._push_task_success_notification(job),
+            )
+        except asyncio.CancelledError:
+            logger.info(
+                "cron task notification/record cancelled but task succeeded: "
+                "job_id=%s",
+                job.id,
+            )
+        await asyncio.shield(
+            self._record_task_execution_success(job),
         )
 
     async def _execute_once(
@@ -2383,38 +2413,29 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
             # Track execution timing for Monitor sync
             actual_time = datetime.now(timezone.utc)
-            end_time = None
+            end_time: Optional[datetime] = None
             duration_ms = 0
             exec_status = "success"
             error_message = ""
             output_preview = ""
             trace_id = ""
+            input_snapshot: Optional[Dict[str, Any]] = None
+            executor_leader = ""
 
             try:
-                # 执行任务并获取 trace_id 和 output_preview
+                # 执行任务并获取执行结果
                 exec_result = await self._executor.execute(job)
                 trace_id = exec_result.trace_id
                 output_preview = exec_result.output_preview
+                input_snapshot = exec_result.input_snapshot
+                executor_leader = exec_result.executor_leader
                 st.last_status = "success"
                 st.last_error = None
                 end_time = datetime.now(timezone.utc)
                 duration_ms = int(
                     (end_time - actual_time).total_seconds() * 1000,
                 )
-                # 通知用 shield 保护，避免任务取消时误标记状态
-                try:
-                    await asyncio.shield(
-                        self._push_task_success_notification(job),
-                    )
-                except asyncio.CancelledError:
-                    logger.info(
-                        "cron task notification/record cancelled but task succeeded: "
-                        "job_id=%s",
-                        job.id,
-                    )
-                await asyncio.shield(
-                    self._record_task_execution_success(job),
-                )
+                await self._handle_success_notifications(job)
                 logger.info(
                     "cron _execute_once: job_id=%s status=success trace_id=%s",
                     job.id,
@@ -2463,6 +2484,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     output_preview=output_preview,
                     is_manual=is_manual,
                     trace_id=trace_id,
+                    input_snapshot=input_snapshot,
+                    executor_leader=executor_leader,
                 )
 
     # ----- Legacy API compatibility -----

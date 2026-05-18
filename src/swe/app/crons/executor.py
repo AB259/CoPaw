@@ -32,6 +32,8 @@ class ExecutionResult:
 
     trace_id: str = ""
     output_preview: str = ""
+    input_snapshot: Optional[Dict[str, Any]] = None  # 执行时的输入快照
+    executor_leader: str = ""  # 执行者 leader ID
 
 
 async def _index_model_output_to_monitor(
@@ -137,7 +139,7 @@ class CronExecutor:
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
-            trace_id, output_preview = await self._execute_job(
+            result = await self._execute_job(
                 job,
                 target_user_id,
                 target_session_id,
@@ -145,8 +147,10 @@ class CronExecutor:
             )
 
         return ExecutionResult(
-            trace_id=trace_id,
-            output_preview=output_preview[:100],
+            trace_id=result["trace_id"],
+            output_preview=result["output_preview"][:100],
+            input_snapshot=result.get("input_snapshot"),
+            executor_leader=result.get("executor_leader", ""),
         )
 
     async def _execute_job(
@@ -155,11 +159,11 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> tuple[str, str]:
+    ) -> Dict[str, Any]:
         """Internal: execute job logic (called within tenant context).
 
         Returns:
-            tuple of (trace_id, output_preview)
+            Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
         if job.task_type == "text" and job.text:
             return await self._execute_text_job(
@@ -182,11 +186,11 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> tuple[str, str]:
+    ) -> Dict[str, Any]:
         """Execute text-type job: send fixed text to channel.
 
         Returns:
-            tuple of (trace_id, output_preview)
+            Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
         tenant_id = dispatch_meta.get("tenant_id") or "default"
         logger.info(
@@ -246,9 +250,18 @@ class CronExecutor:
                 except Exception as e:
                     logger.warning("Failed to end trace for text job: %s", e)
 
-        # 返回 trace_id 和 output preview
+        # 返回执行结果
         output_preview = (job.text or "").strip()[:100]
-        return trace_id or "", output_preview
+        # text 类型任务的 input_snapshot 是任务内容
+        input_snapshot = (
+            {"text": (job.text or "").strip()} if job.text else None
+        )
+        return {
+            "trace_id": trace_id or "",
+            "output_preview": output_preview,
+            "input_snapshot": input_snapshot,
+            "executor_leader": "",
+        }
 
     async def _execute_agent_job(
         self,
@@ -256,11 +269,11 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-    ) -> tuple[str, str]:
+    ) -> Dict[str, Any]:
         """Execute agent-type job: run agent query and send events.
 
         Returns:
-            tuple of (trace_id, output_preview)
+            Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
         tenant_id = dispatch_meta.get("tenant_id") or "default"
         logger.info(
@@ -323,11 +336,18 @@ class CronExecutor:
             logger.info("cron execute: job_id=%s cancelled", job.id)
             raise
 
-        # 返回 trace_id 和 output preview
+        # 返回执行结果
         output_preview = (
             "\n".join(console_text_parts)[:100] if console_text_parts else ""
         )
-        return trace_id, output_preview
+        # agent 类型任务的 input_snapshot 是 request 内容
+        input_snapshot = req if req else None
+        return {
+            "trace_id": trace_id,
+            "output_preview": output_preview,
+            "input_snapshot": input_snapshot,
+            "executor_leader": "",
+        }
 
     def _build_agent_request(
         self,
@@ -395,31 +415,37 @@ class CronExecutor:
             trace_id captured during execution
         """
         trace_id = ""
+        first_event_received = False
 
-        async def _stream() -> None:
-            # 使用 nonlocal 来修改外层变量
-            nonlocal trace_id
-            # 在 stream 开始后立即获取 trace_id（trace context 此时存在）
-            from ...tracing import get_current_trace
+        async for event in self._runner.stream_query(req):
+            # 在收到第一个事件后获取 trace_id（此时 trace context 已创建）
+            if not first_event_received:
+                first_event_received = True
+                try:
+                    from ...tracing import get_current_trace
 
-            trace = get_current_trace()
-            if trace:
-                trace_id = trace.trace_id
+                    trace = get_current_trace()
+                    if trace:
+                        trace_id = trace.trace_id
+                        logger.info(
+                            "cron agent: captured trace_id=%s for job_id=%s",
+                            trace_id[:20] if trace_id else "(empty)",
+                            job.id,
+                        )
+                except Exception as e:
+                    logger.warning("Failed to get trace_id: %s", e)
 
-            async for event in self._runner.stream_query(req):
-                await self._channel_manager.send_event(
-                    channel=job.dispatch.channel,
-                    user_id=target_user_id,
-                    session_id=target_session_id,
-                    event=event,
-                    meta=dispatch_meta,
-                )
-                text = self._extract_text_from_event(event)
-                if text:
-                    console_text_parts.append(text)
+            await self._channel_manager.send_event(
+                channel=job.dispatch.channel,
+                user_id=target_user_id,
+                session_id=target_session_id,
+                event=event,
+                meta=dispatch_meta,
+            )
+            text = self._extract_text_from_event(event)
+            if text:
+                console_text_parts.append(text)
 
-        # Timeout is handled by _execute_agent_job which wraps this call
-        await _stream()
         return trace_id
 
     async def _notify_timeout(self, job: CronJobSpec, tenant_id: str) -> None:
