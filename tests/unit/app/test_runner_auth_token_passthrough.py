@@ -27,9 +27,10 @@ async def test_query_handler_injects_auth_headers_into_mcp_headers_and_context(
     monkeypatch,
 ) -> None:
     runner = AgentRunner(agent_id="test-agent")
-    runner.session = AsyncMock()
-    runner.session.load_session_state = AsyncMock()
-    runner.session.save_session_state = AsyncMock()
+    runner.session = SimpleNamespace(
+        load_session_state=AsyncMock(),
+        save_session_state=AsyncMock(),
+    )
     setattr(runner, "_chat_manager", None)
 
     captured: dict[str, Any] = {}
@@ -105,9 +106,10 @@ async def test_query_handler_injects_auth_headers_into_mcp_headers_and_context(
 @pytest.mark.asyncio
 async def test_query_handler_keeps_existing_passthrough_headers(monkeypatch):
     runner = AgentRunner(agent_id="test-agent")
-    runner.session = AsyncMock()
-    runner.session.load_session_state = AsyncMock()
-    runner.session.save_session_state = AsyncMock()
+    runner.session = SimpleNamespace(
+        load_session_state=AsyncMock(),
+        save_session_state=AsyncMock(),
+    )
     setattr(runner, "_chat_manager", None)
 
     captured: dict[str, Any] = {}

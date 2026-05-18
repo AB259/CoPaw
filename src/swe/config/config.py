@@ -40,6 +40,7 @@ from ..constant import (
 )
 from ..providers.models import ModelSlotConfig
 from ..tracing.config import TracingConfig
+from ..agents.hook_runtime.models import HookConfig
 
 LEGACY_DEFAULT_SYSTEM_PROMPT_FILES = (
     "AGENTS.md",
@@ -522,6 +523,29 @@ class PostTurnValidationConfig(BaseModel):
     )
 
 
+class HookRuntimeRunningConfig(BaseModel):
+    """Hook Runtime 自动续跑预算配置。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    max_before_stop_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "BeforeStop 阻断后允许自动续跑的最大轮数；"
+            "未配置时使用 Runner 默认值"
+        ),
+    )
+    max_automatic_follow_up_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "单次请求中所有自动续跑机制共享的最大轮数；"
+            "未配置时按各机制预算推导"
+        ),
+    )
+
+
 class AgentsRunningConfig(BaseModel):
     """Agent runtime behavior configuration."""
 
@@ -532,6 +556,32 @@ class AgentsRunningConfig(BaseModel):
         ge=1,
         description=(
             "Maximum number of reasoning-acting iterations for ReAct agent"
+        ),
+    )
+
+    max_before_stop_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "BeforeStop 阻断后允许自动续跑的最大轮数；"
+            "兼容旧版 running 顶层配置"
+        ),
+    )
+
+    max_automatic_follow_up_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "单次请求中所有自动续跑机制共享的最大轮数；"
+            "兼容旧版 running 顶层配置"
+        ),
+    )
+
+    hook_runtime: Optional[HookRuntimeRunningConfig] = Field(
+        default=None,
+        description=(
+            "Hook Runtime 相关运行预算配置；配置后优先于 "
+            "running 顶层兼容字段"
         ),
     )
 
@@ -877,6 +927,10 @@ class AgentProfileConfig(BaseModel):
     security: Optional["SecurityConfig"] = Field(
         default=None,
         description="Security configuration for this agent",
+    )
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Agent-scoped lifecycle hook configuration",
     )
 
     @model_validator(mode="after")
@@ -1314,6 +1368,17 @@ class ProcessLimitsConfig(BaseModel):
         return self
 
 
+class SkillHookHttpConfig(BaseModel):
+    """Tenant-approved destinations for skill-owned HTTP hooks."""
+
+    approved_urls: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Exact HTTP endpoint URLs that skill-owned hook handlers may call."
+        ),
+    )
+
+
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
@@ -1321,6 +1386,9 @@ class SecurityConfig(BaseModel):
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(
         default_factory=SkillScannerConfig,
+    )
+    skill_hook_http: SkillHookHttpConfig = Field(
+        default_factory=SkillHookHttpConfig,
     )
     process_limits: ProcessLimitsConfig = Field(
         default_factory=ProcessLimitsConfig,
@@ -1531,6 +1599,10 @@ class Config(BaseModel):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     last_dispatch: Optional[LastDispatchConfig] = None
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Tenant-scoped lifecycle hook configuration",
+    )
     service_heartbeat: ServiceHeartbeatConfig = Field(
         default_factory=ServiceHeartbeatConfig,
         description="服务心跳配置",
