@@ -21,6 +21,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from ...config.context import (
+    canonicalize_scope_id,
     get_current_effective_tenant_id,
     resolve_runtime_tenant_id,
 )
@@ -163,7 +164,7 @@ def _get_effective_tenant_id(request: Request) -> str | None:
     """从请求上下文获取有效租户 ID。"""
     scope_id = getattr(request.state, "scope_id", None)
     if scope_id is not None:
-        return scope_id
+        return canonicalize_scope_id(scope_id)
     tenant_id = _request_tenant_id(request)
     if tenant_id is None:
         return None

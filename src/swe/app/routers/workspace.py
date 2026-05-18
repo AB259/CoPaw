@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from .skills import BroadcastTenantListResponse
 from ..agent_context import get_current_agent_id
-from ...config.context import resolve_runtime_tenant_id
+from ...config.context import canonicalize_scope_id, resolve_runtime_tenant_id
 from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
@@ -301,9 +301,10 @@ async def broadcast_workspace_files(
     tenant_id = str(getattr(request.state, "tenant_id", None) or "default")
     raw_source_id = getattr(request.state, "source_id", None)
     source_id = str(raw_source_id) if raw_source_id else None
-    effective_tenant_id = scope_id or resolve_runtime_tenant_id(
-        tenant_id,
-        source_id,
+    effective_tenant_id = (
+        canonicalize_scope_id(scope_id)
+        if scope_id is not None
+        else resolve_runtime_tenant_id(tenant_id, source_id)
     )
     source_working_dir = get_tenant_working_dir_strict(effective_tenant_id)
 

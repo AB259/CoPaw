@@ -308,7 +308,9 @@ def _get_tenant_id(request: Request) -> str:
     if request_state is not None:
         scope_id = getattr(request_state, "scope_id", None)
         if scope_id:
-            return scope_id
+            from ...config.context import canonicalize_scope_id
+
+            return canonicalize_scope_id(scope_id)
         tenant_id = getattr(request_state, "tenant_id", None)
         source_id = getattr(request_state, "source_id", None)
         if tenant_id:

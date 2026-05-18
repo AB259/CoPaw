@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...config.context import resolve_runtime_tenant_id
+from ...config.context import canonicalize_scope_id, resolve_runtime_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _request_runtime_tenant_id(request: Request) -> Optional[str]:
 
     scope_id = getattr(request_state, "scope_id", None)
     if scope_id:
-        return scope_id
+        return canonicalize_scope_id(scope_id)
 
     tenant_id = getattr(request_state, "tenant_id", None)
     source_id = getattr(request_state, "source_id", None)

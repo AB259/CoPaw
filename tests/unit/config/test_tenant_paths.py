@@ -203,6 +203,90 @@ class TestTenantPathStrictHelpers:
 
         assert path == WORKING_DIR / encode_scope_id("tenant-a", "source-a")
 
+    def test_scope_like_raw_tenant_uses_current_scope_context(self):
+        """形似 scope 的 raw tenant 也必须落到当前 source 对应目录。"""
+        tenant_id = "dGVzdA.c291cmNl"
+        with tenant_context(tenant_id=tenant_id, source_id="ruice"):
+            path = get_tenant_working_dir_strict(tenant_id)
+
+        assert path == WORKING_DIR / encode_scope_id(tenant_id, "ruice")
+
+
+class TestLegacyScopeDirectoryMigration:
+    """旧 scope 目录迁移到 canonical 目录的回归测试。"""
+
+    def test_only_legacy_directory_is_renamed_to_canonical(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        canonical_scope_id = encode_scope_id("tenant-a", "source-a")
+        legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+        legacy_dir = tmp_path / legacy_scope_id
+        legacy_dir.mkdir()
+        (legacy_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+        monkeypatch.setattr(utils_module, "WORKING_DIR", tmp_path)
+
+        path = get_tenant_working_dir_strict(legacy_scope_id)
+
+        assert path == tmp_path / canonical_scope_id
+        assert not legacy_dir.exists()
+        assert (path / "legacy.txt").read_text(encoding="utf-8") == "legacy"
+
+    def test_existing_canonical_directory_is_kept(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        canonical_scope_id = encode_scope_id("tenant-a", "source-a")
+        canonical_dir = tmp_path / canonical_scope_id
+        canonical_dir.mkdir()
+        (canonical_dir / "canonical.txt").write_text(
+            "canonical",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(utils_module, "WORKING_DIR", tmp_path)
+
+        path = get_tenant_working_dir_strict(canonical_scope_id)
+
+        assert path == canonical_dir
+        assert (path / "canonical.txt").read_text(encoding="utf-8") == (
+            "canonical"
+        )
+
+    def test_existing_legacy_and_canonical_directories_are_merged(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        canonical_scope_id = encode_scope_id("tenant-a", "source-a")
+        legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+        canonical_dir = tmp_path / canonical_scope_id
+        legacy_dir = tmp_path / legacy_scope_id
+        canonical_dir.mkdir()
+        legacy_dir.mkdir()
+        (canonical_dir / "shared.txt").write_text(
+            "canonical",
+            encoding="utf-8",
+        )
+        (legacy_dir / "shared.txt").write_text("legacy", encoding="utf-8")
+        (legacy_dir / "legacy-only.txt").write_text(
+            "legacy-only",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(utils_module, "WORKING_DIR", tmp_path)
+
+        path = get_tenant_working_dir_strict(canonical_scope_id)
+
+        assert path == canonical_dir
+        assert not legacy_dir.exists()
+        assert (path / "shared.txt").read_text(encoding="utf-8") == (
+            "canonical"
+        )
+        assert (path / "legacy-only.txt").read_text(encoding="utf-8") == (
+            "legacy-only"
+        )
+
     @pytest.mark.skip(reason="Requires full app dependencies")
     def test_get_tenant_working_dir_strict_with_tenant_id(self):
         """get_tenant_working_dir_strict works with explicit tenant_id."""
