@@ -202,6 +202,24 @@ def resolve_scope_id(
     return encode_scope_id(tenant_id, source_id)
 
 
+def _decode_runtime_scope_identity(
+    runtime_tenant_id: str,
+    source_id: str | None,
+) -> tuple[str, str, str] | None:
+    """在 source 未冲突时，把 runtime scope 还原为逻辑身份。"""
+    try:
+        tenant_id, decoded_source_id = decode_scope_id(runtime_tenant_id)
+    except ValueError:
+        return None
+    if source_id is not None and source_id != decoded_source_id:
+        return None
+    return (
+        tenant_id,
+        decoded_source_id,
+        canonicalize_scope_id(runtime_tenant_id),
+    )
+
+
 def resolve_runtime_tenant_id(
     tenant_id: str | None,
     source_id: str | None,
@@ -217,14 +235,12 @@ def resolve_runtime_tenant_id(
     legacy_prefix = f"{_LEGACY_SCOPE_ID_PREFIX}."
     if tenant_id.startswith(legacy_prefix):
         return canonicalize_scope_id(tenant_id)
-    if source_id is not None:
-        return resolve_scope_id(tenant_id, source_id)
-    try:
-        decode_scope_id(tenant_id)
-    except ValueError:
-        pass
-    else:
-        return canonicalize_scope_id(tenant_id)
+    decoded_identity = _decode_runtime_scope_identity(
+        tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity[2]
     scope_id = resolve_scope_id(tenant_id, source_id)
     if scope_id is not None:
         return scope_id
@@ -252,7 +268,8 @@ def resolve_runtime_identity(
         runtime_tenant_id: 运行时租户标识，既可能是逻辑 tenant，
             也可能已经是编码后的 ``scope_id``。
         source_id: 显式来源标识；当 ``runtime_tenant_id`` 仍是逻辑
-            tenant 时用于补齐 ``scope_id``。
+            tenant 时用于补齐 ``scope_id``；若与已编码 scope
+            中的 source 不一致，则按 raw tenant 处理。
 
     Returns:
         ``(tenant_id, source_id, scope_id)`` 三元组。若传入的
@@ -262,23 +279,20 @@ def resolve_runtime_identity(
     if runtime_tenant_id is None:
         return (None, source_id, None)
 
+    decoded_identity = _decode_runtime_scope_identity(
+        runtime_tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity
+
     if source_id is not None:
         return (
             runtime_tenant_id,
             source_id,
             resolve_scope_id(runtime_tenant_id, source_id),
         )
-
-    try:
-        tenant_id, decoded_source_id = decode_scope_id(runtime_tenant_id)
-    except ValueError:
-        return (runtime_tenant_id, source_id, None)
-
-    return (
-        tenant_id,
-        decoded_source_id,
-        canonicalize_scope_id(runtime_tenant_id),
-    )
+    return (runtime_tenant_id, source_id, None)
 
 
 def set_current_source_id(source_id: str | None) -> Token:

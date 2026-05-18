@@ -443,6 +443,16 @@ class TestRuntimeIdentityResolution:
             encode_scope_id("tenant-a", "source-a"),
         )
 
+    def test_encoded_scope_with_matching_source_stays_idempotent(self):
+        """已编码 scope 配合同源 source 时仍必须保持幂等。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        assert resolve_runtime_identity(scope_id, "source-a") == (
+            "tenant-a",
+            "source-a",
+            scope_id,
+        )
+
     def test_scope_like_raw_tenant_with_source_keeps_raw_identity(self):
         """显式 source 存在时，形似 scope 的 tenant 仍必须按 raw 值处理。"""
         tenant_id = "dGVzdA.c291cmNl"
@@ -460,6 +470,12 @@ class TestRuntimeIdentityResolution:
         resolved = resolve_runtime_tenant_id(scope_id, None)
 
         assert resolved == scope_id
+
+    def test_runtime_tenant_resolution_keeps_scope_with_matching_source(self):
+        """已编码 scope 配合同源 source 时不能再次编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        assert resolve_runtime_tenant_id(scope_id, "source-a") == scope_id
 
     def test_scope_preferred_tenant_resolution_uses_explicit_scope_id(self):
         """统一 helper 必须始终以显式 scope_id 为准。"""
