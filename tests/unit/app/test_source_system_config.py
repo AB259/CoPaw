@@ -29,7 +29,10 @@ from swe.app.source_system_config.service import (
     SourceSystemConfigService,
     SourceSystemConfigUnavailable,
 )
-from swe.app.source_system_config.store import SourceSystemConfigStore
+from swe.app.source_system_config.store import (
+    SourceSystemConfigStore,
+    SourceSystemConfigStoreUnavailable,
+)
 
 
 class TestSourceSystemConfigModels:
@@ -209,6 +212,26 @@ class TestSourceSystemConfigStore:
             ("portal",),
         )
 
+    @pytest.mark.asyncio
+    async def test_store_operations_fail_when_db_unavailable(self):
+        """DB 不可用时存储层必须显式失败，避免静默丢数据。"""
+        store = SourceSystemConfigStore(db=None)
+        payload = SourceSystemConfigUpsert(
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            updated_by="admin",
+        )
+
+        with pytest.raises(SourceSystemConfigStoreUnavailable):
+            await store.get_config("portal")
+        with pytest.raises(SourceSystemConfigStoreUnavailable):
+            await store.list_configs()
+        with pytest.raises(SourceSystemConfigStoreUnavailable):
+            await store.upsert_config("portal", payload)
+        with pytest.raises(SourceSystemConfigStoreUnavailable):
+            await store.delete_config("portal")
+
 
 class _FakeStore:
     """为 service 测试提供可控的异步 store。"""
@@ -354,6 +377,21 @@ class TestSourceSystemConfigService:
         with pytest.raises(SourceSystemConfigUnavailable):
             await service.resolve_config("portal")
 
+    @pytest.mark.asyncio
+    async def test_store_unavailable_returns_stale_default(self):
+        """存储不可用时返回 stale 默认配置，避免误报已读取持久化结果。"""
+        service = SourceSystemConfigService(
+            SourceSystemConfigStore(db=None),
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.resolve_config("portal")
+
+        assert result.is_default is True
+        assert result.stale is True
+        assert "storage unavailable" in (result.last_error or "")
+
 
 class TestSourceSystemConfigRuntime:
     """验证请求级 source 系统配置上下文 helper。"""
@@ -425,7 +463,7 @@ class TestSourceSystemConfigMiddleware:
 class TestSourceSystemConfigApi:
     """验证 source 系统配置 API。"""
 
-    def _build_client(self, store: _FakeManagementStore) -> TestClient:
+    def _build_client(self, store) -> TestClient:
         """创建带真实路由和中间件的测试客户端。"""
         app = FastAPI()
         service = SourceSystemConfigService(
@@ -579,3 +617,36 @@ class TestSourceSystemConfigApi:
         assert effective_response.status_code == 200
         assert effective_response.json()["is_default"] is True
         assert effective_response.json()["config"] == {}
+
+    def test_management_crud_returns_503_when_storage_unavailable(self):
+        """DB 不可用时管理端 CRUD 应返回 503，不能返回伪成功。"""
+        client = self._build_client(SourceSystemConfigStore(db=None))
+        headers = {
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "portal",
+            "X-User-Role": "manager",
+            "X-User-Id": "alice",
+        }
+
+        list_response = client.get(
+            "/api/source-system-config/sources",
+            headers=headers,
+        )
+        get_response = client.get(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+        upsert_response = client.put(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+            json={"config": {"source_name": "Portal"}},
+        )
+        delete_response = client.delete(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+
+        assert list_response.status_code == 503
+        assert get_response.status_code == 503
+        assert upsert_response.status_code == 503
+        assert delete_response.status_code == 503

@@ -11,7 +11,7 @@ from .models import (
     EffectiveSourceSystemConfig,
     SourceSystemConfigRecord,
 )
-from .store import SourceSystemConfigStore
+from .store import SourceSystemConfigStore, SourceSystemConfigStoreUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,29 @@ class SourceSystemConfigService:
             effective = self._build_effective(source_id, record)
             self._cache[source_id] = _CacheEntry(effective, now)
             return effective
+        except SourceSystemConfigStoreUnavailable as exc:
+            if cached is not None:
+                logger.warning(
+                    "source 配置存储不可用，返回缓存: source=%s, error=%s",
+                    source_id,
+                    exc,
+                )
+                stale = cached.effective.model_copy(
+                    update={
+                        "stale": True,
+                        "last_error": str(exc),
+                    },
+                )
+                self._cache[source_id] = _CacheEntry(stale, now)
+                return stale
+            fallback = self._build_effective(source_id, None).model_copy(
+                update={
+                    "stale": True,
+                    "last_error": str(exc),
+                },
+            )
+            self._cache[source_id] = _CacheEntry(fallback, now)
+            return fallback
         except Exception as exc:
             if cached is not None:
                 logger.warning(

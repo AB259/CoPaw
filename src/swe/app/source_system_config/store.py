@@ -14,43 +14,59 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+class SourceSystemConfigStoreUnavailable(RuntimeError):
+    """Source 系统配置存储不可用。"""
+
+
 class SourceSystemConfigStore:
     """按 source_id 读写系统配置。"""
 
     def __init__(self, db: Any | None = None):
         """初始化存储。"""
         self.db = db
-        self._use_db = db is not None and db.is_connected
+
+    @property
+    def is_available(self) -> bool:
+        """返回当前存储是否可用。"""
+        return self.db is not None and bool(
+            getattr(self.db, "is_connected", False),
+        )
+
+    def _require_db(self) -> Any:
+        """校验 DB 可用性并返回连接对象。"""
+        if not self.is_available:
+            raise SourceSystemConfigStoreUnavailable(
+                "source system config storage unavailable: db is not connected",
+            )
+        return self.db
 
     async def get_config(
         self,
         source_id: str,
     ) -> SourceSystemConfigRecord | None:
         """按 source_id 查询配置记录。"""
-        if not self._use_db:
-            return None
+        db = self._require_db()
 
         query = """
             SELECT source_id, config_json, version, updated_by, updated_at
             FROM swe_source_system_config
             WHERE source_id = %s
         """
-        row = await self.db.fetch_one(query, (source_id,))
+        row = await db.fetch_one(query, (source_id,))
         if row is None:
             return None
         return self._row_to_record(row)
 
     async def list_configs(self) -> list[SourceSystemConfigRecord]:
         """列出全部 source 系统配置。"""
-        if not self._use_db:
-            return []
+        db = self._require_db()
 
         query = """
             SELECT source_id, config_json, version, updated_by, updated_at
             FROM swe_source_system_config
             ORDER BY updated_at DESC, source_id ASC
         """
-        rows = await self.db.fetch_all(query)
+        rows = await db.fetch_all(query)
         return [self._row_to_record(row) for row in rows]
 
     async def upsert_config(
@@ -59,15 +75,9 @@ class SourceSystemConfigStore:
         payload: SourceSystemConfigUpsert,
     ) -> SourceSystemConfigRecord:
         """创建或更新 source 系统配置并递增版本。"""
-        if not self._use_db:
-            return SourceSystemConfigRecord(
-                source_id=source_id,
-                config=payload.config,
-                version=1,
-                updated_by=payload.updated_by,
-            )
+        db = self._require_db()
 
-        existing = await self.db.fetch_one(
+        existing = await db.fetch_one(
             "SELECT version FROM swe_source_system_config WHERE source_id = %s",
             (source_id,),
         )
@@ -84,7 +94,7 @@ class SourceSystemConfigStore:
                 updated_by = VALUES(updated_by),
                 updated_at = CURRENT_TIMESTAMP
         """
-        await self.db.execute(
+        await db.execute(
             query,
             (
                 source_id,
@@ -102,10 +112,9 @@ class SourceSystemConfigStore:
 
     async def delete_config(self, source_id: str) -> bool:
         """删除指定 source 的系统配置。"""
-        if not self._use_db:
-            return False
+        db = self._require_db()
 
-        result = await self.db.execute(
+        result = await db.execute(
             "DELETE FROM swe_source_system_config WHERE source_id = %s",
             (source_id,),
         )
