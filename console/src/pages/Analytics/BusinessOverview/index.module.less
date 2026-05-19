@@ -298,6 +298,33 @@
   cursor: pointer;
 }
 
+.filterTab {
+  display: flex;
+  font-size: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  overflow: hidden;
+
+  .filterTabItem {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #666;
+    background: #fff;
+    transition: all 0.2s;
+
+    &:hover {
+      color: #1677ff;
+    }
+  }
+
+  .filterTabActive {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #fff;
+    background: #1677ff;
+  }
+}
+
 .trendLegend {
   display: flex;
   align-items: center;

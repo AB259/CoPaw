@@ -37,7 +37,7 @@ import {
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
 import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
-import { useIframeStore } from "../../../stores/iframeStore";
+import { useIframeStore, getIframeContext } from "../../../stores/iframeStore";
 import {
   formatChange,
   formatDuration,
@@ -54,7 +54,7 @@ import {
   type TrendDatum,
   type UserRow,
 } from "./types";
-import {DEFAULT_SOURCE_ID} from "@/constants/identity.ts";
+import {DEFAULT_SOURCE_ID, DEFAULT_BBK_ID} from "@/constants/identity.ts";
 const { Option } = Select;
 
 const PLATFORM_NAME_MAP: Record<string, string> = {
@@ -530,6 +530,8 @@ export default function BusinessOverviewPage() {
   const [activeHasMore, setActiveHasMore] = useState(true);
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
+  // 用户过滤类型：filtered(已过滤内部用户) / all(全部用户)
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
   const [skills, setSkills] = useState<SkillUsage[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const skillsLoadingRef = useRef(false);
@@ -553,11 +555,25 @@ export default function BusinessOverviewPage() {
     () => dateRange[1].format("YYYY-MM-DD"),
     [dateRange],
   );
-  const effectiveSourceId = platform === "all" ? undefined : platform;
-  // 非管理员：使用用户 bbk；管理员：使用选择的 bbkIds（空数组表示全部）
-  const effectiveBbkIds = isSuperManager
-    ? bbkIds.length === 0 ? undefined : bbkIds
-    : userBbk ? [userBbk] : undefined;
+  // 平台筛选参数：与 Header X-Source-Id 构建逻辑完全一致
+  // 使用 useMemo 缓存，避免每次渲染重新创建导致请求循环
+  const effectiveSourceId = useMemo(() => {
+    if (isSuperManager) {
+      return platform === "all" ? undefined : platform;
+    }
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext ? sourceFromContext : undefined;
+  }, [isSuperManager, platform]);
+  // Select 显示用的平台值
+  const displayPlatformValue = useMemo(() => {
+    if (isSuperManager) return platform;
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext || "all";
+  }, [isSuperManager, platform]);
+  // 分行筛选参数：直接使用 UI 选择的 bbkIds，空数组表示全部分行
+  const effectiveBbkIds = useMemo(() => {
+    return bbkIds.length === 0 ? undefined : bbkIds;
+  }, [bbkIds]);
 
   const transformUserData = useCallback(
     (items: Record<string, unknown>[]): UserRow[] =>
@@ -666,7 +682,7 @@ export default function BusinessOverviewPage() {
           source_id: effectiveSourceId,
           bbk_ids: effectiveBbkIds?.join(","),
           sort_by: "conversations",
-          filter_user_type: "filtered",
+          filter_user_type: activeFilterType,
         });
         const mappedUsers = transformUserData(
           result.items as unknown as Record<string, unknown>[],
@@ -682,7 +698,7 @@ export default function BusinessOverviewPage() {
         setActiveLoading(false);
       }
     },
-    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData, activeFilterType],
   );
 
   const fetchSkills = useCallback(
@@ -773,19 +789,25 @@ export default function BusinessOverviewPage() {
 
   useEffect(() => {
     fetchDashboard();
-    setActivePage(1);
-    fetchActiveUsers(1, false);
     fetchSkills();
     fetchMcpSummary();
     fetchTaskStatusSummary();
     fetchDepthSummary();
+    // 活跃用户请求由独立的 useEffect 处理
   }, [
-    fetchActiveUsers,
     fetchDashboard,
     fetchDepthSummary,
     fetchMcpSummary,
     fetchSkills,
     fetchTaskStatusSummary,
+  ]);
+
+  // 活跃用户请求独立处理，避免 activeFilterType 变化触发其他请求
+  useEffect(() => {
+    setActivePage(1);
+    fetchActiveUsers(1, false);
+  }, [
+    fetchActiveUsers,
   ]);
 
   useEffect(() => {
@@ -940,7 +962,7 @@ export default function BusinessOverviewPage() {
             <Select
               className={styles.scopeSelect}
               mode="multiple"
-              value={isSuperManager ? bbkIds : (userBbk ? [userBbk] : [])}
+              value={bbkIds}
               onChange={setBbkIds}
               placeholder="全部分行"
               maxTagCount="responsive"
@@ -957,7 +979,6 @@ export default function BusinessOverviewPage() {
                 </Tooltip>
               )}
               allowClear
-              disabled={!isSuperManager}
             >
               {BBK_ID_MAP.map((item) => (
                 <Option key={item.value} value={item.value}>
@@ -967,7 +988,7 @@ export default function BusinessOverviewPage() {
             </Select>
             <Select
               className={styles.scopeSelect}
-              value={platform}
+              value={displayPlatformValue}
               onChange={setPlatform}
               disabled={!isSuperManager}
             >
@@ -1235,6 +1256,34 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelMedium}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>活跃用户排行榜</h3>
+            <div className={styles.filterTab}>
+              <span
+                className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "filtered") {
+                    setActiveFilterType("filtered");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                已过滤
+              </span>
+              <span
+                className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "all") {
+                    setActiveFilterType("all");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                全部
+              </span>
+            </div>
           </div>
           <div className={styles.rankHeader}>
             <span>排名</span>

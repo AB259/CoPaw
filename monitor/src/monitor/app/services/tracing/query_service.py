@@ -837,6 +837,10 @@ class TracingQueryService:
             for row in rows
         }
         day_prefix = start_date.strftime("%Y-%m-%d")
+        # 判断是否是今天：如果是今天，只返回到当前小时，避免显示未来无意义的时间点
+        now = datetime.now()
+        is_today = start_date.date() == now.date()
+        max_hour = now.hour if is_today else 23
         return [
             {
                 "date": f"{day_prefix} {hour:02d}:00",
@@ -844,7 +848,7 @@ class TracingQueryService:
                 "tokens": hour_map.get(hour, {}).get("tokens", 0),
                 "users": hour_map.get(hour, {}).get("users", 0),
             }
-            for hour in range(24)
+            for hour in range(max_hour + 1)
         ]
 
     async def get_channel_distribution(
