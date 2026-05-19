@@ -565,13 +565,18 @@ class TraceManager:
         self._update_trace_totals(trace_id, span, None)
 
         # Add to pending cache and queue atomically
+        # 在锁内检查是否需要立即 flush，避免锁外检查导致的竞态条件
+        need_flush = False
         async with self._span_queue_lock:
             self._pending_spans[span_id] = span
             self._span_queue.append(span)
-
-            # Check if we need to flush
             if len(self._span_queue) >= self.config.batch_size:
-                asyncio.create_task(self._flush_spans())
+                need_flush = True
+
+        # 在锁外执行 flush，使用 await 确保写入完成
+        # 防止 end_trace 时数据尚未写入数据库
+        if need_flush:
+            await self._flush_spans()
 
         return span_id
 
@@ -964,11 +969,12 @@ class TraceManager:
     async def _flush_spans(self) -> None:
         """Flush queued spans to storage.
 
-        Handles race condition with update_span:
+        Handles race condition with update_span and ensures data integrity:
         1. Keep spans in _pending_spans during INSERT
-        2. After INSERT, check for spans updated during INSERT (have end_time)
+        2. After successful INSERT, check for spans updated during INSERT
         3. UPDATE those spans that were modified during the race window
-        4. Then clear _pending_spans
+        4. Only clear _pending_spans after successful write
+        5. On failure, re-queue spans for retry (avoid data loss)
         """
         async with self._span_queue_lock:
             if not self._span_queue:
@@ -984,22 +990,48 @@ class TraceManager:
         if not spans:
             return
 
+        flush_success = False
         try:
             if self._db is None:
                 self._flush_spans_log_only(spans)
+                flush_success = True
             else:
-                await self.store.batch_create_spans(spans)
-                await self._update_spans_modified_during_flush(
-                    spans,
-                    spans_before_insert,
-                )
+                rowcount = await self.store.batch_create_spans(spans)
+                # 验证写入是否成功（至少写入了一部分数据）
+                if rowcount > 0:
+                    await self._update_spans_modified_during_flush(
+                        spans,
+                        spans_before_insert,
+                    )
+                    flush_success = True
+                else:
+                    logger.warning(
+                        "batch_create_spans returned 0 rows, treating as failure",
+                    )
         except Exception as e:
-            logger.error("Failed to flush spans: %s", e)
-        finally:
-            # Clear pending cache AFTER INSERT completes (success or failure)
-            async with self._span_queue_lock:
+            logger.error(
+                "Failed to flush spans (will retry later): %s. "
+                "Affected %d spans: %s",
+                e,
+                len(spans),
+                [s.span_id[:8] for s in spans[:5]],  # 只显示前 5 个 span_id
+            )
+
+        # 只有写入成功时才清除 _pending_spans
+        # 写入失败时将 spans 重新放回队列，等待下次 flush 重试
+        async with self._span_queue_lock:
+            if flush_success:
                 for span in spans:
                     self._pending_spans.pop(span.span_id, None)
+            else:
+                # 将失败的 spans 重新放回队列头部，优先重试
+                # 避免与新 spans 混在一起导致顺序混乱
+                for span in reversed(spans):
+                    self._span_queue.insert(0, span)
+                logger.info(
+                    "Re-queued %d failed spans for retry",
+                    len(spans),
+                )
 
     def _flush_spans_log_only(self, spans: list["Span"]) -> None:
         """Log skill-related spans in log-only mode."""
