@@ -14,6 +14,7 @@ export interface UserDetailModalProps {
   startDate?: string;
   endDate?: string;
   sourceId?: string;
+  bbkIds?: string;
   onClose: () => void;
 }
 
@@ -30,7 +31,7 @@ export interface OverviewMetricCard {
   changeText: string;
   changeDirection: "up" | "down" | "flat";
   accentColor: string;
-  breakdown: BreakdownItem[];
+  breakdown: BreakdownItem[] | null;
 }
 
 export interface DepthStatCard {
