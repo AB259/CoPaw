@@ -461,6 +461,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 return str(existing_ext_id)
         return ""
 
+    def _get_external_scheduler_tenant_id(self, spec: CronJobSpec) -> str:
+        # 外部调度归属必须跟当前运行时租户一致，避免旧任务里的 tenant_id 污染回调路由。
+        return self._tenant_id or spec.tenant_id or ""
+
     async def _sync_job_to_external_scheduler(
         self,
         spec: CronJobSpec,
@@ -472,10 +476,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         callback_url = self._build_callback_url("job", spec.id)
         ext_id = self._get_existing_external_job_id(spec, existing)
+        tenant_id = self._get_external_scheduler_tenant_id(spec)
         if ext_id:
             await self._scheduler_adapter.update_job(
                 external_id=ext_id,
-                tenant_id=spec.tenant_id or self._tenant_id or "",
+                tenant_id=tenant_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -485,7 +490,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
         else:
             ext_id = await self._scheduler_adapter.register_job(
-                tenant_id=spec.tenant_id or self._tenant_id or "",
+                tenant_id=tenant_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -517,6 +522,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             "agent_id": self._agent_id,
             "total": 0,
             "registered": 0,
+            "updated": 0,
             "skipped": 0,
             "failed": 0,
             "errors": [],
@@ -524,12 +530,19 @@ class CronManager:  # pylint: disable=too-many-public-methods
         for job in await self._repo.list_jobs():
             result["total"] += 1
             if self._get_existing_external_job_id(job):
+                if await self._repair_external_scheduler_tenant(job):
+                    result["updated"] += 1
+                    continue
                 result["skipped"] += 1
                 continue
             try:
                 synced = await self._sync_job_to_external_scheduler(job)
                 ext_id = (synced.meta or {}).get("external_job_id", "")
-                await self._persist_external_job_id(job.id, ext_id)
+                await self._persist_external_job_binding(
+                    job.id,
+                    ext_id,
+                    self._tenant_id,
+                )
                 st = self._states.get(job.id, CronJobState())
                 st.external_job_id = ext_id
                 self._states[job.id] = st
@@ -549,6 +562,21 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     exc_info=True,
                 )
         return result
+
+    async def _repair_external_scheduler_tenant(
+        self,
+        job: CronJobSpec,
+    ) -> bool:
+        if not self._tenant_id or job.tenant_id == self._tenant_id:
+            return False
+        synced = await self._sync_job_to_external_scheduler(job)
+        ext_id = (synced.meta or {}).get("external_job_id", "")
+        await self._persist_external_job_binding(
+            job.id,
+            ext_id,
+            self._tenant_id,
+        )
+        return True
 
     async def _ensure_persisted_task_binding(
         self,
@@ -1000,25 +1028,72 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     async def _ensure_task_binding(self, spec: CronJobSpec) -> CronJobSpec:
         creator_user_id = (spec.meta or {}).get("creator_user_id")
-        if (
-            spec.task_type not in {"agent", "text"}
-            or not creator_user_id
-            or self._chat_manager is None
-        ):
+        if not self._should_bind_task_session(spec, creator_user_id):
             return spec
 
         # 从已持久化的任务中合并执行状态元数据，避免 PUT 等操作覆盖运行时状态
-        existing_meta: dict = {}
-        try:
-            existing = await self._repo.get_job(spec.id)
-            if existing and existing.meta:
-                existing_meta = dict(existing.meta)
-        except Exception:
-            pass
-
-        meta = dict(spec.meta or {})
+        existing_meta = await self._load_existing_task_meta(spec.id)
+        meta = self._merge_task_binding_meta(spec.meta or {}, existing_meta)
         # 已持久化的执行状态优先于默认值，但传入 spec.meta 优先于已持久化值
-        for _key in (
+        task_session_id = self._resolve_task_session_id(
+            spec.id,
+            meta,
+            existing_meta,
+        )
+        task_chat = await self._ensure_task_chat(
+            meta.get("task_chat_id")
+            or existing_meta.get("task_chat_id")
+            or "",
+            task_session_id,
+            creator_user_id,
+            spec.name,
+        )
+        await self._update_task_chat(task_chat, spec, creator_user_id)
+        self._apply_task_binding_defaults(meta)
+        meta["task_session_id"] = task_session_id
+        meta["task_chat_id"] = task_chat.id
+
+        request, dispatch = self._bind_task_routing(
+            spec,
+            creator_user_id,
+            task_session_id,
+        )
+        return spec.model_copy(
+            update={
+                "meta": meta,
+                "request": request,
+                "dispatch": dispatch,
+            },
+        )
+
+    def _should_bind_task_session(
+        self,
+        spec: CronJobSpec,
+        creator_user_id: Optional[str],
+    ) -> bool:
+        return bool(
+            spec.task_type in {"agent", "text"}
+            and creator_user_id
+            and self._chat_manager is not None,
+        )
+
+    async def _load_existing_task_meta(self, job_id: str) -> dict[str, Any]:
+        # 读取失败不阻断创建流程，避免临时仓库异常影响定时任务保存。
+        try:
+            existing = await self._repo.get_job(job_id)
+            if existing and existing.meta:
+                return dict(existing.meta)
+        except Exception:  # pylint: disable=broad-except
+            pass
+        return {}
+
+    @staticmethod
+    def _merge_task_binding_meta(
+        spec_meta: dict[str, Any],
+        existing_meta: dict[str, Any],
+    ) -> dict[str, Any]:
+        meta = dict(spec_meta)
+        for key in (
             "task_has_scheduled_result",
             "task_last_scheduled_preview",
             "task_unread_execution_count",
@@ -1027,33 +1102,46 @@ class CronManager:  # pylint: disable=too-many-public-methods
             "auto_paused_at",
             "unread_count_at_pause",
         ):
-            if _key not in meta and _key in existing_meta:
-                meta[_key] = existing_meta[_key]
+            if key not in meta and key in existing_meta:
+                meta[key] = existing_meta[key]
+        return meta
 
-        task_session_id = str(
+    @staticmethod
+    def _resolve_task_session_id(
+        job_id: str,
+        meta: dict[str, Any],
+        existing_meta: dict[str, Any],
+    ) -> str:
+        return str(
             meta.get("task_session_id")
             or existing_meta.get("task_session_id")
-            or f"cron-task:{spec.id}",
+            or f"cron-task:{job_id}",
         )
-        task_chat_id = (
-            meta.get("task_chat_id") or existing_meta.get("task_chat_id") or ""
-        )
+
+    async def _ensure_task_chat(
+        self,
+        task_chat_id: str,
+        task_session_id: str,
+        creator_user_id: str,
+        task_name: str,
+    ) -> Any:
         if task_chat_id:
             task_chat = await self._chat_manager.get_chat(task_chat_id)
-            if task_chat is None:
-                task_chat = await self._chat_manager.get_or_create_chat(
-                    task_session_id,
-                    creator_user_id,
-                    DEFAULT_CHANNEL,
-                    name=spec.name,
-                )
-        else:
-            task_chat = await self._chat_manager.get_or_create_chat(
-                task_session_id,
-                creator_user_id,
-                DEFAULT_CHANNEL,
-                name=spec.name,
-            )
+            if task_chat is not None:
+                return task_chat
+        return await self._chat_manager.get_or_create_chat(
+            task_session_id,
+            creator_user_id,
+            DEFAULT_CHANNEL,
+            name=task_name,
+        )
+
+    async def _update_task_chat(
+        self,
+        task_chat: Any,
+        spec: CronJobSpec,
+        creator_user_id: str,
+    ) -> None:
         task_chat.name = spec.name
         task_chat.meta = {
             **(getattr(task_chat, "meta", {}) or {}),
@@ -1063,13 +1151,19 @@ class CronManager:  # pylint: disable=too-many-public-methods
         }
         await self._chat_manager.update_chat(task_chat)
 
+    @staticmethod
+    def _apply_task_binding_defaults(meta: dict[str, Any]) -> None:
         meta.setdefault("task_has_scheduled_result", False)
         meta.setdefault("task_last_scheduled_preview", "")
         meta.setdefault("task_unread_execution_count", 0)
         meta.setdefault("task_last_scheduled_run_at", None)
-        meta["task_session_id"] = task_session_id
-        meta["task_chat_id"] = task_chat.id
 
+    @staticmethod
+    def _bind_task_routing(
+        spec: CronJobSpec,
+        creator_user_id: str,
+        task_session_id: str,
+    ) -> tuple[Any, Any]:
         request = spec.request
         if request is not None:
             request = request.model_copy(
@@ -1091,14 +1185,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     ),
                 },
             )
-
-        return spec.model_copy(
-            update={
-                "meta": meta,
-                "request": request,
-                "dispatch": dispatch,
-            },
-        )
+        return request, dispatch
 
     async def _record_task_execution_success(self, job: CronJobSpec) -> None:
         creator_user_id = (job.meta or {}).get("creator_user_id")
@@ -1687,18 +1774,27 @@ class CronManager:  # pylint: disable=too-many-public-methods
         ext_id: str,
     ) -> None:
         """将 external_job_id 写入 jobs.json 中对应任务的 meta 字段。"""
+        await self._persist_external_job_binding(job_id, ext_id)
+
+    async def _persist_external_job_binding(
+        self,
+        job_id: str,
+        ext_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         try:
             async with self._lock:
                 await self._mutate_jobs_file_locked(
-                    lambda jobs_file: self._set_job_meta_in_jobs_file(
+                    lambda jobs_file: self._set_job_binding_in_jobs_file(
                         jobs_file,
                         job_id,
-                        {"external_job_id": ext_id},
+                        ext_id,
+                        tenant_id,
                     ),
                 )
         except Exception:
             logger.warning(
-                "Failed to persist external_job_id for %s",
+                "Failed to persist external scheduler binding for %s",
                 job_id,
                 exc_info=True,
             )
@@ -1714,6 +1810,24 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 meta = dict(job.meta or {})
                 meta.update(meta_updates)
                 jobs_file.jobs[index] = job.model_copy(update={"meta": meta})
+                return True, None
+        return False, None
+
+    @staticmethod
+    def _set_job_binding_in_jobs_file(
+        jobs_file,
+        job_id: str,
+        ext_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[bool, None]:
+        for index, job in enumerate(jobs_file.jobs):
+            if job.id == job_id:
+                meta = dict(job.meta or {})
+                meta["external_job_id"] = ext_id
+                update = {"meta": meta}
+                if tenant_id:
+                    update["tenant_id"] = tenant_id
+                jobs_file.jobs[index] = job.model_copy(update=update)
                 return True, None
         return False, None
 
