@@ -91,6 +91,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 TASK_RUNS_STATE_KEY = "task_runs"
 _INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
+_BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
+    "BeforeStop completion gate blocked stopping: {reason}\n"
+    "Continue working until the gate can allow completion."
+)
+_BEFORE_STOP_INCOMPLETE_MESSAGE_TEMPLATE = (
+    "任务未完成：BeforeStop 完成门禁已达到自动续跑上限。最新阻断原因：{reason}"
+)
 
 _APPROVE_EXACT = frozenset(
     {
@@ -180,6 +187,14 @@ class _QueryTurnOutcome:
     last_validation_result: Any | None = None
     auto_follow_up_turns: int = 0
     max_auto_turns: int = 0
+    before_stop_follow_up_turns: int = 0
+    max_before_stop_turns: int = 0
+    automatic_follow_up_turns: int = 0
+    max_automatic_follow_up_turns: int = 0
+    stop_hook_active: bool = False
+    completion_blocked: bool = False
+    completion_block_reason: str = ""
+    completion_marked_incomplete: bool = False
 
 
 def _match_command_with_optional_id(
@@ -814,6 +829,26 @@ def _build_internal_follow_up_msg(follow_up_prompt: str) -> Msg:
     )
 
 
+def _build_before_stop_follow_up_msg(reason: str) -> Msg:
+    """构造 BeforeStop 阻断后的内部续跑指令。"""
+    return _build_internal_follow_up_msg(
+        _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE.format(
+            reason=(reason or "BeforeStop blocked completion").strip(),
+        ),
+    )
+
+
+def _build_before_stop_incomplete_msg(reason: str) -> Msg:
+    """构造自动续跑预算耗尽后的显式未完成消息。"""
+    return Msg(
+        name="Friday",
+        role="assistant",
+        content=_BEFORE_STOP_INCOMPLETE_MESSAGE_TEMPLATE.format(
+            reason=(reason or "BeforeStop blocked completion").strip(),
+        ),
+    )
+
+
 def _resolve_max_confirmed_turns(validation_config: Any) -> int:
     """Resolve the post-turn confirmation limit with backward compatibility."""
     confirmed_turns = getattr(validation_config, "max_confirmed_turns", None)
@@ -832,6 +867,55 @@ def _resolve_max_auto_turns(validation_config: Any) -> int:
         return max(int(auto_turns), 0)
     except (TypeError, ValueError):
         return 2
+
+
+def _resolve_max_before_stop_turns(agent_config: Any) -> int:
+    """解析 BeforeStop 自动续跑上限，未配置时使用保守默认值。"""
+    running_config = getattr(agent_config, "running", None)
+    hook_runtime_config = getattr(running_config, "hook_runtime", None)
+    configured_turns = getattr(
+        hook_runtime_config,
+        "max_before_stop_turns",
+        None,
+    )
+    if configured_turns is None:
+        configured_turns = getattr(
+            running_config,
+            "max_before_stop_turns",
+            2,
+        )
+    before_stop_turns = 2 if configured_turns is None else configured_turns
+    try:
+        return max(int(before_stop_turns), 0)
+    except (TypeError, ValueError):
+        return 2
+
+
+def _resolve_max_automatic_follow_up_turns(
+    agent_config: Any,
+    default_limit: int,
+) -> int:
+    """解析请求级自动续跑总上限，确保多套续跑机制共享同一预算。"""
+    running_config = getattr(agent_config, "running", None)
+    hook_runtime_config = getattr(running_config, "hook_runtime", None)
+    configured_turns = getattr(
+        hook_runtime_config,
+        "max_automatic_follow_up_turns",
+        None,
+    )
+    if configured_turns is None:
+        configured_turns = getattr(
+            running_config,
+            "max_automatic_follow_up_turns",
+            default_limit,
+        )
+    aggregate_turns = (
+        default_limit if configured_turns is None else configured_turns
+    )
+    try:
+        return max(int(aggregate_turns), 0)
+    except (TypeError, ValueError):
+        return default_limit
 
 
 def _strip_internal_follow_up_messages_from_state(
@@ -1049,6 +1133,21 @@ def _should_auto_follow_up(
         not validation_result.completed
         and validation_result.follow_up_prompt
         and auto_follow_up_turns < max_auto_turns,
+    )
+
+
+def _has_automatic_follow_up_budget(outcome: _QueryTurnOutcome) -> bool:
+    """判断本请求级自动续跑总预算是否仍可消耗。"""
+    return outcome.automatic_follow_up_turns < (
+        outcome.max_automatic_follow_up_turns
+    )
+
+
+def _should_before_stop_follow_up(outcome: _QueryTurnOutcome) -> bool:
+    """判断 BeforeStop 阻断后是否允许再自动续跑一次。"""
+    return bool(
+        outcome.before_stop_follow_up_turns < outcome.max_before_stop_turns
+        and _has_automatic_follow_up_budget(outcome),
     )
 
 
@@ -1826,10 +1925,21 @@ class AgentRunner(Runner):
     ):
         """流式执行 agent，并在 validation 需要时自动续跑。"""
         turn_msgs = plan.turn_msgs
-        outcome.max_auto_turns = (
+        validation_auto_turns = (
             _resolve_max_auto_turns(plan.validation_config)
             if plan.validation_config is not None
             else 0
+        )
+        before_stop_turns = _resolve_max_before_stop_turns(
+            runtime.agent_config,
+        )
+        outcome.max_before_stop_turns = before_stop_turns
+        outcome.max_auto_turns = validation_auto_turns
+        outcome.max_automatic_follow_up_turns = (
+            _resolve_max_automatic_follow_up_turns(
+                runtime.agent_config,
+                validation_auto_turns + before_stop_turns,
+            )
         )
         while True:
             async for msg, last in self._enforce_query_timeout(
@@ -1863,10 +1973,11 @@ class AgentRunner(Runner):
                 outcome.last_validation_result,
                 outcome.auto_follow_up_turns,
                 outcome.max_auto_turns,
-            ):
+            ) or not _has_automatic_follow_up_budget(outcome):
                 break
 
             outcome.auto_follow_up_turns += 1
+            outcome.automatic_follow_up_turns += 1
             turn_msgs = [
                 _build_internal_follow_up_msg(
                     outcome.last_validation_result.follow_up_prompt,
@@ -1880,6 +1991,125 @@ class AgentRunner(Runner):
                 runtime.session_id,
                 outcome.last_validation_result.reason or "continue",
             )
+
+    async def _emit_before_stop_hook_if_needed(
+        self,
+        *,
+        request: AgentRequest,
+        runtime: _QueryRuntime,
+        plan: _TurnPlan,
+        outcome: _QueryTurnOutcome,
+    ) -> MergedHookResult | None:
+        """执行 BeforeStop gate，active guard 已设置时跳过递归触发。"""
+        if outcome.stop_hook_active:
+            return None
+        if not outcome.assistant_response:
+            return None
+        if not _hook_config_enabled(
+            runtime.tenant_hooks,
+            runtime.agent_config,
+            runtime.hook_overlay,
+        ):
+            return None
+
+        outcome.stop_hook_active = True
+        return await _emit_runner_hook(
+            HookEventName.BEFORE_STOP,
+            request=request,
+            runner=self,
+            tenant_hooks=runtime.tenant_hooks,
+            agent_config=runtime.agent_config,
+            overlay=runtime.hook_overlay,
+            prompt=plan.original_user_message,
+            assistant_response=outcome.assistant_response,
+        )
+
+    async def _stream_completion_lifecycle(
+        self,
+        *,
+        request: AgentRequest,
+        runtime: _QueryRuntime,
+        plan: _TurnPlan,
+        outcome: _QueryTurnOutcome,
+    ):
+        """执行 agent turn、BeforeStop gate 与最终 Stop hook 生命周期。"""
+        while True:
+            outcome.stop_hook_active = False
+            async for msg, last in self._stream_agent_turns(
+                runtime=runtime,
+                plan=plan,
+                outcome=outcome,
+            ):
+                yield msg, last
+
+            before_stop_result = await self._emit_before_stop_hook_if_needed(
+                request=request,
+                runtime=runtime,
+                plan=plan,
+                outcome=outcome,
+            )
+            if (
+                before_stop_result is not None
+                and before_stop_result.decision == HookDecision.BLOCK
+            ):
+                reason = (
+                    before_stop_result.reason
+                    or "BeforeStop blocked completion"
+                )
+                if _should_before_stop_follow_up(outcome):
+                    outcome.before_stop_follow_up_turns += 1
+                    outcome.automatic_follow_up_turns += 1
+                    plan.turn_msgs = [_build_before_stop_follow_up_msg(reason)]
+                    outcome.stop_hook_active = False
+                    logger.info(
+                        "BeforeStop scheduled automatic follow-up turn "
+                        "%d/%d for session %s: %s",
+                        outcome.before_stop_follow_up_turns,
+                        outcome.max_before_stop_turns,
+                        runtime.session_id,
+                        reason,
+                    )
+                    continue
+
+                outcome.task_completed = False
+                outcome.completion_blocked = True
+                outcome.completion_block_reason = reason
+                outcome.completion_marked_incomplete = True
+                outcome.stop_hook_active = False
+                incomplete_msg = _build_before_stop_incomplete_msg(reason)
+                await runtime.agent.memory.add(incomplete_msg)
+                yield incomplete_msg, True
+                return
+
+            if (
+                before_stop_result is not None
+                and before_stop_result.decision
+                in {
+                    HookDecision.DENY,
+                    HookDecision.STOP,
+                }
+            ):
+                outcome.task_completed = False
+                outcome.completion_blocked = True
+                outcome.completion_block_reason = before_stop_result.reason
+                outcome.stop_hook_active = False
+                yield _hook_block_message(before_stop_result), True
+                return
+
+            stop_response = await self._emit_stop_hook_if_needed(
+                request=request,
+                runtime=runtime,
+                plan=plan,
+                outcome=outcome,
+            )
+            outcome.stop_hook_active = False
+            if stop_response is not None:
+                outcome.completion_blocked = True
+                outcome.completion_block_reason = (
+                    stop_response.get_text_content()
+                )
+                yield stop_response, True
+            return
 
     async def _emit_stop_hook_if_needed(
         self,
@@ -2364,51 +2594,21 @@ class AgentRunner(Runner):
             len(extracted_assistant),
         )
 
-    async def query_handler(
+    async def _stream_query_after_preflight(
         self,
         msgs,
-        request: AgentRequest = None,
-        **kwargs,
+        *,
+        request: AgentRequest,
+        query: str | None,
+        session_id: str,
+        preflight: _QueryPreflight,
     ):
-        """
-        Handle agent query.
-        """
-        logger.debug(
-            f"AgentRunner.query_handler called: agent_id={self.agent_id}, "
-            f"msgs={msgs}, request={request}",
-        )
-        query = _get_last_user_text(msgs)
-        session_id = getattr(request, "session_id", "") or ""
-        user_id = getattr(request, "user_id", "") or ""
-
-        preflight = await self._prepare_query_preflight(
-            session_id=session_id,
-            user_id=user_id,
-            query=query,
-            request=request,
-        )
-        if preflight.response is not None:
-            yield preflight.response, True
-            if preflight.cleanup_denied_memory:
-                await self._cleanup_denied_session_memory(
-                    session_id,
-                    user_id,
-                    denial_response=preflight.response,
-                )
-            return
-
-        if not preflight.approval_consumed and query and _is_command(query):
-            logger.info("Command path: %s", query.strip()[:50])
-            async for msg, last in run_command_path(request, msgs, self):
-                yield msg, last
-            return
-
+        """执行已经通过前置校验的普通 Agent query 主流程。"""
         logger.debug(
             f"AgentRunner.stream_query: request={request}, "
             f"agent_id={self.agent_id}",
         )
 
-        # Set agent context for model creation
         from ..agent_context import set_current_agent_id
 
         set_current_agent_id(self.agent_id)
@@ -2446,9 +2646,7 @@ class AgentRunner(Runner):
                 runtime.user_id,
             )
 
-            # Rebuild system prompt so it always reflects the latest
-            # AGENTS.md / SOUL.md / PROFILE.md, not the stale one saved
-            # in the session state.
+            # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
             runtime.agent.rebuild_sys_prompt()
 
             plan_result = await self._build_turn_plan(
@@ -2465,21 +2663,24 @@ class AgentRunner(Runner):
             if plan is None:
                 return
 
-            async for msg, last in self._stream_agent_turns(
+            async for msg, last in self._stream_completion_lifecycle(
+                request=request,
                 runtime=runtime,
                 plan=plan,
                 outcome=outcome,
             ):
                 yield msg, last
 
-            stop_response = await self._emit_stop_hook_if_needed(
-                request=request,
-                runtime=runtime,
-                plan=plan,
-                outcome=outcome,
-            )
-            if stop_response is not None:
-                yield stop_response, True
+            if outcome.completion_blocked:
+                if outcome.completion_marked_incomplete:
+                    await self._index_model_output_if_needed(
+                        trace_id=trace_id,
+                        agent=runtime.agent,
+                    )
+                    await self._end_trace_if_needed(
+                        trace_id,
+                        TraceStatus.COMPLETED,
+                    )
                 return
 
             await self._store_pending_validation_if_needed(
@@ -2525,6 +2726,71 @@ class AgentRunner(Runner):
                 query=query,
                 outcome=outcome,
             )
+
+    async def _stream_query_entry(
+        self,
+        msgs,
+        *,
+        request: AgentRequest,
+        query: str | None,
+        session_id: str,
+        user_id: str,
+    ):
+        """处理 query 主流程前的审批、prompt hook 与命令分发。"""
+        preflight = await self._prepare_query_preflight(
+            session_id=session_id,
+            user_id=user_id,
+            query=query,
+            request=request,
+        )
+        if preflight.response is not None:
+            yield preflight.response, True
+            if preflight.cleanup_denied_memory:
+                await self._cleanup_denied_session_memory(
+                    session_id,
+                    user_id,
+                    denial_response=preflight.response,
+                )
+            return
+
+        if not preflight.approval_consumed and query and _is_command(query):
+            logger.info("Command path: %s", query.strip()[:50])
+            async for msg, last in run_command_path(request, msgs, self):
+                yield msg, last
+            return
+
+        async for msg, last in self._stream_query_after_preflight(
+            msgs,
+            request=request,
+            query=query,
+            session_id=session_id,
+            preflight=preflight,
+        ):
+            yield msg, last
+
+    async def query_handler(
+        self,
+        msgs,
+        request: AgentRequest = None,
+        **kwargs,
+    ):
+        """处理 Agent query，并保持 Runner 期望的流式输出格式。"""
+        logger.debug(
+            f"AgentRunner.query_handler called: agent_id={self.agent_id}, "
+            f"msgs={msgs}, request={request}",
+        )
+        query = _get_last_user_text(msgs)
+        session_id = getattr(request, "session_id", "") or ""
+        user_id = getattr(request, "user_id", "") or ""
+
+        async for msg, last in self._stream_query_entry(
+            msgs,
+            request=request,
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+        ):
+            yield msg, last
 
     async def get_state_loaded(
         self,

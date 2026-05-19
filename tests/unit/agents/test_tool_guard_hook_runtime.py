@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import asyncio
 
 import pytest
+from agentscope.message import Msg
 
 from swe.agents.hook_runtime.models import (
     AdditionalContext,
@@ -36,6 +37,9 @@ class _Memory:
 class _BaseAgent:
     async def _acting(self, tool_call):
         return {"content": tool_call["input"]}
+
+    async def _reasoning(self, tool_choice=None):
+        return Msg("Friday", "base reasoning", "assistant")
 
 
 class _FakeAgent(ToolGuardMixin, _BaseAgent):
@@ -152,6 +156,34 @@ async def test_pre_tool_hook_denial_returns_tool_result(tmp_path) -> None:
 
     assert result is None
     assert "no shell" in str(agent.printed[0].content)
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_hook_denial_does_not_request_approval(
+    tmp_path,
+) -> None:
+    agent = _FakeAgent(tmp_path)
+    agent._emit_tool_hook = AsyncMock(
+        return_value=MergedHookResult(
+            decision=HookDecision.DENY,
+            reason="no shell",
+        ),
+    )
+    agent._emit_waiting_for_approval = AsyncMock(
+        return_value=Msg("Friday", "approval", "assistant"),
+    )
+
+    await agent._acting(
+        {
+            "id": "tool-1",
+            "name": "execute_shell_command",
+            "input": {"cmd": "echo original"},
+        },
+    )
+    result = await agent._reasoning()
+
+    assert result.content == "base reasoning"
+    agent._emit_waiting_for_approval.assert_not_awaited()
 
 
 @pytest.mark.asyncio

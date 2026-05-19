@@ -6,7 +6,7 @@ from typing import Any
 
 from json_repair import loads as repair_json_loads
 
-from .models import HookDecision, HookHandlerResult, HookOutput
+from .models import HookDecision, HookEventName, HookHandlerResult, HookOutput
 
 PROMPT_JUDGMENT_MAX_REASON_LENGTH = 2000
 _PROMPT_JUDGMENT_KEYS = {"decision", "reason"}
@@ -15,6 +15,51 @@ _PROMPT_JUDGMENT_DECISIONS = {
     "deny": HookDecision.DENY,
     "block": HookDecision.BLOCK,
 }
+_BEFORE_STOP_PROMPT_JUDGMENT_DECISIONS = {
+    "allow": HookDecision.ALLOW,
+    "block": HookDecision.BLOCK,
+}
+_BEFORE_STOP_UNSUPPORTED_TOP_LEVEL_EFFECT_FIELDS = (
+    ("continue_", "continue"),
+    ("stop_reason", "stopReason"),
+    ("suppress_output", "suppressOutput"),
+    ("system_message", "systemMessage"),
+)
+
+
+def _event_name_value(event_name: HookEventName | str | None) -> str:
+    return str(getattr(event_name, "value", event_name or ""))
+
+
+def _prompt_judgment_decisions(
+    event_name: HookEventName | str | None,
+) -> dict[str, HookDecision]:
+    if _event_name_value(event_name) == HookEventName.BEFORE_STOP.value:
+        return _BEFORE_STOP_PROMPT_JUDGMENT_DECISIONS
+    return _PROMPT_JUDGMENT_DECISIONS
+
+
+def _validate_before_stop_hook_output(output: HookOutput) -> None:
+    if output.decision and output.decision not in {"allow", "block"}:
+        raise ValueError("BeforeStop hook output has unsupported decision")
+
+    unsupported_effect_fields = [
+        field_name
+        for attr_name, field_name in (
+            _BEFORE_STOP_UNSUPPORTED_TOP_LEVEL_EFFECT_FIELDS
+        )
+        if getattr(output, attr_name) is not None
+    ]
+    if unsupported_effect_fields:
+        raise ValueError(
+            "BeforeStop hook output has unsupported output fields",
+        )
+
+    specific = output.hook_specific_output or {}
+    if specific:
+        raise ValueError(
+            "BeforeStop hook output has unsupported hookSpecificOutput",
+        )
 
 
 def _parse_prompt_judgment_json(text: str) -> Any:
@@ -34,12 +79,21 @@ def normalize_hook_output(
     handler_id: str,
     order: int,
     raw_output: dict[str, Any],
+    event_name: HookEventName | str | None = None,
 ) -> HookHandlerResult:
     output = HookOutput.model_validate(raw_output)
+    is_before_stop = (
+        _event_name_value(event_name) == HookEventName.BEFORE_STOP.value
+    )
+    if is_before_stop:
+        _validate_before_stop_hook_output(output)
+
     decision = HookDecision.NONE
     reason = output.reason or ""
 
-    if output.continue_ is False:
+    if is_before_stop and output.decision == "allow":
+        decision = HookDecision.ALLOW
+    elif output.continue_ is False:
         decision = HookDecision.STOP
         reason = output.stop_reason or reason or "Hook requested stop"
     elif output.decision == "block":
@@ -70,6 +124,7 @@ def normalize_prompt_judgment_output(
     handler_id: str,
     order: int,
     text: str,
+    event_name: HookEventName | str | None = None,
 ) -> HookHandlerResult:
     raw = _parse_prompt_judgment_json(text)
     if not isinstance(raw, dict):
@@ -79,8 +134,9 @@ def normalize_prompt_judgment_output(
             "Prompt hook output must contain exactly decision and reason",
         )
 
+    allowed_decisions = _prompt_judgment_decisions(event_name)
     decision_value = raw.get("decision")
-    if decision_value not in _PROMPT_JUDGMENT_DECISIONS:
+    if decision_value not in allowed_decisions:
         raise ValueError("Prompt hook output has unsupported decision")
 
     reason = raw.get("reason")
@@ -97,6 +153,6 @@ def normalize_prompt_judgment_output(
         handler_id=handler_id,
         order=order,
         output=output,
-        decision=_PROMPT_JUDGMENT_DECISIONS[decision_value],
+        decision=allowed_decisions[decision_value],
         reason=reason,
     )

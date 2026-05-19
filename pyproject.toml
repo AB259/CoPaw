@@ -10,7 +10,7 @@ dependencies = [
     "httpx>=0.27.0",
     "packaging>=24.0",
     "uvicorn>=0.40.0",
-    "apscheduler>=3.11.2,<4",
+    "croniter>=2.0.0,<7",
     "playwright>=1.49.0",
     "questionary>=2.1.1",
     "mss>=9.0.0",
@@ -26,7 +26,7 @@ dependencies = [
     "google-genai>=1.67.0",
     "tzdata>=2024.1",
     "pyyaml>=6.0",
-    "json-repair>=0.30.0",
+    "json-repair>=0.58.7",
     "segno>=1.6.6",
     "modelscope>=1.35.0",
     "huggingface_hub>=0.20.0",
@@ -39,7 +39,6 @@ dependencies = [
     "redis>=5.0.0",
     # Elasticsearch for model output storage (7.x client for ES 6.x server compat)
     # "elasticsearch[async]==7.17.9",
-    "json-repair>=0.58.7"
 ]
 
 [tool.setuptools.dynamic]
