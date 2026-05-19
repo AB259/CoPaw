@@ -100,7 +100,7 @@ class TestSourceSystemConfigStore:
         updated_at = datetime.now()
         mock_db.fetch_one.return_value = {
             "source_id": "portal",
-            "config_json": json.dumps(
+            "config_text": json.dumps(
                 {"provider_policy": {"default_model": "qwen-max"}},
             ),
             "version": 3,
@@ -124,7 +124,7 @@ class TestSourceSystemConfigStore:
         """损坏 JSON 应作为存储数据异常抛出。"""
         mock_db.fetch_one.return_value = {
             "source_id": "portal",
-            "config_json": "{bad-json",
+            "config_text": "{bad-json",
             "version": 1,
             "updated_by": None,
             "updated_at": datetime.now(),
@@ -138,7 +138,7 @@ class TestSourceSystemConfigStore:
         """存量 JSON 如果不是 object，不能被静默接受。"""
         mock_db.fetch_one.return_value = {
             "source_id": "portal",
-            "config_json": json.dumps(["not", "object"]),
+            "config_text": json.dumps(["not", "object"]),
             "version": 1,
             "updated_by": None,
             "updated_at": datetime.now(),
@@ -159,7 +159,7 @@ class TestSourceSystemConfigStore:
             {"version": 7},
             {
                 "source_id": "portal",
-                "config_json": json.dumps({"source_name": "Portal"}),
+                "config_text": json.dumps({"source_name": "Portal"}),
                 "version": 8,
                 "updated_by": "admin",
                 "updated_at": updated_at,
@@ -180,6 +180,11 @@ class TestSourceSystemConfigStore:
         assert result.config.as_dict() == {"source_name": "Portal"}
         assert mock_db.execute.await_args.args[1][2] == 8
         assert mock_db.execute.await_args.args[1][3] == "admin"
+        assert json.loads(mock_db.execute.await_args.args[1][1]) == {
+            "source_name": "Portal",
+        }
+        assert "config_text" in mock_db.execute.await_args.args[0]
+        assert "config_json" not in mock_db.execute.await_args.args[0]
 
     @pytest.mark.asyncio
     async def test_list_configs_parses_rows(self, store, mock_db):
@@ -188,7 +193,7 @@ class TestSourceSystemConfigStore:
         mock_db.fetch_all.return_value = [
             {
                 "source_id": "portal",
-                "config_json": json.dumps({"source_name": "Portal"}),
+                "config_text": json.dumps({"source_name": "Portal"}),
                 "version": 2,
                 "updated_by": "admin",
                 "updated_at": updated_at,
@@ -396,6 +401,43 @@ class TestSourceSystemConfigService:
         await service.resolve_config("portal")
 
         assert store.get_calls == ["portal"]
+        assert store.version_calls == []
+
+    @pytest.mark.asyncio
+    async def test_ttl_expiry_forces_full_reload_before_probe_interval(self):
+        """TTL 到期后应立即重载，不能被 probe 窗口静默延长。"""
+        now = {"value": 100.0}
+        store = _FakeStore(
+            SourceSystemConfigRecord(
+                source_id="portal",
+                config=SourceSystemConfig.model_validate(
+                    {"source_name": "Portal V1"},
+                ),
+                version=1,
+            ),
+            SourceSystemConfigRecord(
+                source_id="portal",
+                config=SourceSystemConfig.model_validate(
+                    {"source_name": "Portal V2"},
+                ),
+                version=2,
+            ),
+        )
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=1,
+            probe_interval_seconds=10,
+            time_fn=lambda: now["value"],
+        )
+
+        first = await service.resolve_config("portal")
+        now["value"] = 102.0
+        refreshed = await service.resolve_config("portal")
+
+        assert first.version == 1
+        assert refreshed.version == 2
+        assert refreshed.config.as_dict() == {"source_name": "Portal V2"}
+        assert store.get_calls == ["portal", "portal"]
         assert store.version_calls == []
 
     @pytest.mark.asyncio
@@ -758,6 +800,76 @@ class TestSourceSystemConfigApi:
             json={"config": {"source_name": "Portal"}},
         )
         delete_response = client.delete(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+
+        assert list_response.status_code == 503
+        assert get_response.status_code == 503
+        assert upsert_response.status_code == 503
+        assert delete_response.status_code == 503
+
+    def test_management_crud_returns_503_when_sql_execution_fails(self):
+        """DB 已连接但 SQL 调用失败时，管理端也应统一返回 503。"""
+
+        def build_management_client(store) -> TestClient:
+            """构造仅验证管理路由行为的客户端。"""
+            app = FastAPI()
+            app.state.source_system_config_service = SourceSystemConfigService(
+                store,
+                ttl_seconds=0,
+                time_fn=lambda: 100,
+            )
+            app.include_router(source_config_router, prefix="/api")
+            return TestClient(app)
+
+        headers = {
+            "X-User-Role": "manager",
+            "X-User-Id": "alice",
+        }
+
+        list_db = MagicMock()
+        list_db.is_connected = True
+        list_db.fetch_all = AsyncMock(side_effect=RuntimeError("db down"))
+        list_db.fetch_one = AsyncMock()
+        list_db.execute = AsyncMock()
+        list_response = build_management_client(
+            SourceSystemConfigStore(db=list_db),
+        ).get("/api/source-system-config/sources", headers=headers)
+
+        get_db = MagicMock()
+        get_db.is_connected = True
+        get_db.fetch_one = AsyncMock(side_effect=RuntimeError("db down"))
+        get_db.fetch_all = AsyncMock()
+        get_db.execute = AsyncMock()
+        get_response = build_management_client(
+            SourceSystemConfigStore(db=get_db),
+        ).get(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+
+        upsert_db = MagicMock()
+        upsert_db.is_connected = True
+        upsert_db.fetch_one = AsyncMock(side_effect=RuntimeError("db down"))
+        upsert_db.fetch_all = AsyncMock()
+        upsert_db.execute = AsyncMock()
+        upsert_response = build_management_client(
+            SourceSystemConfigStore(db=upsert_db),
+        ).put(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+            json={"config": {"source_name": "Portal"}},
+        )
+
+        delete_db = MagicMock()
+        delete_db.is_connected = True
+        delete_db.fetch_one = AsyncMock()
+        delete_db.fetch_all = AsyncMock()
+        delete_db.execute = AsyncMock(side_effect=RuntimeError("db down"))
+        delete_response = build_management_client(
+            SourceSystemConfigStore(db=delete_db),
+        ).delete(
             "/api/source-system-config/sources/portal",
             headers=headers,
         )
