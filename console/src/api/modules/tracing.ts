@@ -606,7 +606,7 @@ export const tracingApi = {
     // 深度指标环比
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   }> => {
     const params = new URLSearchParams();
