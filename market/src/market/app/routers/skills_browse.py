@@ -744,15 +744,15 @@ async def upload_skill_to_workspace(
     )
 
     # Log upload operation
-    if svc.db.is_connected and result.get("imported"):
+    imported_skills = result.get("imported") or []
+    if svc.db.is_connected and imported_skills:
         try:
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_id,
@@ -760,11 +760,7 @@ async def upload_skill_to_workspace(
                     user_name,
                     "upload",
                     "skill",
-                    "",
-                    ",".join(result["imported"]),
-                    x_user_id,
-                    user_name,
-                    bbk_id,
+                    ",".join(imported_skills),
                 ),
             )
         except Exception as e:
@@ -888,6 +884,29 @@ async def save_skill_file(
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save file")
+
+    # Log edit operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "edit",
+                    "skill",
+                    skill_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log edit operation: %s", e)
+
     return OperationResponse(success=True)
 
 
@@ -900,6 +919,7 @@ async def delete_my_skill(
     request: Request,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
     agent_id: str = "default",
 ):
     """删除技能."""
@@ -917,6 +937,29 @@ async def delete_my_skill(
             status_code=404,
             detail="Skill not found or delete failed",
         )
+
+    # Log delete operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "delete",
+                    "skill",
+                    skill_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log delete operation: %s", e)
+
     return OperationResponse(success=True)
 
 

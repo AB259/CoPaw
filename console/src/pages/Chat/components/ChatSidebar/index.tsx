@@ -74,6 +74,7 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 
 export interface ChatSidebarProps {
   tasks: CronJobSpecOutput[];
+  selectedTaskId?: string;
   onCreateSession?: () => void;
   onTaskClick?: (task: CronJobSpecOutput) => void;
   onTaskPause?: (task: CronJobSpecOutput) => void;
@@ -85,6 +86,7 @@ export interface ChatSidebarProps {
 export default function ChatSidebar(props: ChatSidebarProps) {
   const {
     tasks,
+    selectedTaskId,
     onCreateSession,
     onTaskClick,
     onTaskPause,
@@ -357,6 +359,7 @@ export default function ChatSidebar(props: ChatSidebarProps) {
             <div className="chat-sidebar-content-record-list">
               <ChatTaskList
                 tasks={tasks}
+                selectedTaskId={selectedTaskId}
                 onTaskClick={handleTaskOpen}
                 onTaskPause={onTaskPause}
                 onTaskRun={onTaskRun}

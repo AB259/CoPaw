@@ -43,6 +43,7 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 
 export interface ChatTaskListProps {
   tasks: CronJobSpecOutput[];
+  selectedTaskId?: string;
   onTaskClick?: (task: CronJobSpecOutput) => void;
   onTaskPause?: (task: CronJobSpecOutput) => void;
   onTaskRun?: (task: CronJobSpecOutput) => void;
@@ -53,6 +54,7 @@ export interface ChatTaskListProps {
 export default function ChatTaskList(props: ChatTaskListProps) {
   const {
     tasks,
+    selectedTaskId,
     onTaskClick,
     onTaskPause,
     onTaskRun,
@@ -101,6 +103,10 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                   <div
                     key={task.id}
                     className={`chat-task-list-item${
+                      task.id === selectedTaskId
+                        ? " chat-task-list-item--selected"
+                        : ""
+                    }${
                       sidebarMeta.state !== "active" &&
                       sidebarMeta.state !== "running"
                         ? " chat-task-list-item--paused"
