@@ -13,7 +13,11 @@ from .runtime import (
     reset_current_source_system_config,
     set_current_source_system_config,
 )
-from .service import SourceSystemConfigService, SourceSystemConfigUnavailable
+from .service import (
+    SourceSystemConfigDataInvalid,
+    SourceSystemConfigService,
+    SourceSystemConfigUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,12 @@ class SourceSystemConfigMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=503,
                 content={"detail": "Source system config unavailable"},
+            )
+        except SourceSystemConfigDataInvalid as exc:
+            logger.error("Source 系统配置数据损坏: %s", exc)
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Source system config data is invalid"},
             )
         finally:
             if token is not None:

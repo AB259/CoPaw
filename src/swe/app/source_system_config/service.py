@@ -20,6 +20,10 @@ class SourceSystemConfigUnavailable(RuntimeError):
     """Source 系统配置存储不可用且没有可用缓存。"""
 
 
+class SourceSystemConfigDataInvalid(RuntimeError):
+    """Source 系统配置数据损坏且没有可用缓存。"""
+
+
 @dataclass
 class _CacheEntry:
     """缓存项包含配置、完整加载时间和最近探测时间。"""
@@ -95,6 +99,15 @@ class SourceSystemConfigService:
             return effective
         except SourceSystemConfigStoreUnavailable as exc:
             return self._fallback_on_error(source_id, cached, now, exc)
+        except ValueError as exc:
+            if cached is not None:
+                return self._fallback_on_error(source_id, cached, now, exc)
+            raise SourceSystemConfigDataInvalid(
+                (
+                    "source system config data is invalid "
+                    f"for {source_id}: {exc}"
+                ),
+            ) from exc
         except Exception as exc:
             if cached is not None:
                 return self._fallback_on_error(source_id, cached, now, exc)

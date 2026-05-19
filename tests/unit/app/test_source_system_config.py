@@ -27,6 +27,7 @@ from swe.app.source_system_config.runtime import (
     get_current_source_system_config,
 )
 from swe.app.source_system_config.service import (
+    SourceSystemConfigDataInvalid,
     SourceSystemConfigService,
     SourceSystemConfigUnavailable,
 )
@@ -618,6 +619,18 @@ class TestSourceSystemConfigService:
             await service.resolve_config("portal")
 
     @pytest.mark.asyncio
+    async def test_invalid_data_without_cache_raises_data_invalid(self):
+        """无缓存且读到脏数据时应显式暴露数据异常。"""
+        service = SourceSystemConfigService(
+            _FakeStore(ValueError("invalid source system config for portal")),
+            ttl_seconds=1,
+            time_fn=lambda: 100,
+        )
+
+        with pytest.raises(SourceSystemConfigDataInvalid):
+            await service.resolve_config("portal")
+
+    @pytest.mark.asyncio
     async def test_store_unavailable_returns_stale_default(self):
         """存储不可用时返回 stale 默认配置，避免误报已读取持久化结果。"""
         service = SourceSystemConfigService(
@@ -699,6 +712,35 @@ class TestSourceSystemConfigMiddleware:
             "config": {"source_name": "Portal"},
         }
 
+    def test_middleware_returns_500_when_config_data_is_invalid(self):
+        """中间件遇到脏配置时应返回 500，避免误报为存储不可用。"""
+        service = SourceSystemConfigService(
+            _FakeStore(ValueError("invalid source system config for portal")),
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+        app = FastAPI()
+
+        @app.get("/api/config-check")
+        async def config_check():
+            return {"ok": True}
+
+        app.add_middleware(SourceSystemConfigMiddleware, service=service)
+        app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
+
+        response = TestClient(app).get(
+            "/api/config-check",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+            },
+        )
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "detail": "Source system config data is invalid",
+        }
+
 
 class TestSourceSystemConfigApi:
     """验证 source 系统配置 API。"""
@@ -757,6 +799,30 @@ class TestSourceSystemConfigApi:
         assert body["is_default"] is True
         assert body["version"] == 0
         assert body["config"] == {}
+
+    def test_effective_config_returns_500_when_persisted_data_is_invalid(
+        self,
+    ):
+        """/effective 读取脏数据时应返回 500，而不是 503。"""
+        client = self._build_client_with_server_exception_mode(
+            _FakeStore(
+                ValueError("invalid source system config for portal"),
+            ),
+            False,
+        )
+
+        response = client.get(
+            "/api/source-system-config/effective",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+            },
+        )
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "detail": "Source system config data is invalid",
+        }
 
     def test_non_manager_cannot_update_source_config(self):
         """非 manager 角色不能写入 source 系统配置。"""

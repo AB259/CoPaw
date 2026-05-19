@@ -10,7 +10,10 @@ from .models import (
     SourceSystemConfigRecord,
     SourceSystemConfigUpsert,
 )
-from .service import SourceSystemConfigService
+from .service import (
+    SourceSystemConfigDataInvalid,
+    SourceSystemConfigService,
+)
 from .store import SourceSystemConfigStoreUnavailable
 
 router = APIRouter(
@@ -62,7 +65,7 @@ def _raise_storage_unavailable(exc: Exception) -> None:
     ) from exc
 
 
-def _raise_invalid_storage_data(exc: ValueError) -> None:
+def _raise_invalid_storage_data(exc: Exception) -> None:
     """将脏数据错误转换为标准 HTTP 500。"""
     raise HTTPException(
         status_code=500,
@@ -82,7 +85,10 @@ async def get_effective_source_system_config(
     source_id = getattr(request.state, "source_id", None)
     if source_id is None:
         raise HTTPException(status_code=400, detail="Source context missing")
-    return await _get_service(request).resolve_config(source_id)
+    try:
+        return await _get_service(request).resolve_config(source_id)
+    except SourceSystemConfigDataInvalid as exc:
+        _raise_invalid_storage_data(exc)
 
 
 @router.get("/sources")
