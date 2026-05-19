@@ -62,6 +62,14 @@ def _raise_storage_unavailable(exc: Exception) -> None:
     ) from exc
 
 
+def _raise_invalid_storage_data(exc: ValueError) -> None:
+    """将脏数据错误转换为标准 HTTP 500。"""
+    raise HTTPException(
+        status_code=500,
+        detail="Source system config data is invalid",
+    ) from exc
+
+
 @router.get("/effective", response_model=EffectiveSourceSystemConfig)
 async def get_effective_source_system_config(
     request: Request,
@@ -83,8 +91,10 @@ async def list_source_system_configs(request: Request) -> dict:
     _require_manager(request)
     try:
         records = await _get_service(request).store.list_configs()
-    except (SourceSystemConfigStoreUnavailable, Exception) as exc:
+    except SourceSystemConfigStoreUnavailable as exc:
         _raise_storage_unavailable(exc)
+    except ValueError as exc:
+        _raise_invalid_storage_data(exc)
     return {"configs": records, "total": len(records)}
 
 
@@ -101,8 +111,10 @@ async def get_source_system_config(
     _validate_source_id(source_id)
     try:
         record = await _get_service(request).store.get_config(source_id)
-    except (SourceSystemConfigStoreUnavailable, Exception) as exc:
+    except SourceSystemConfigStoreUnavailable as exc:
         _raise_storage_unavailable(exc)
+    except ValueError as exc:
+        _raise_invalid_storage_data(exc)
     if record is None:
         raise HTTPException(status_code=404, detail="Source config not found")
     return record
@@ -128,8 +140,10 @@ async def upsert_source_system_config(
     payload.updated_by = updated_by
     try:
         record = await service.store.upsert_config(source_id, payload)
-    except (SourceSystemConfigStoreUnavailable, Exception) as exc:
+    except SourceSystemConfigStoreUnavailable as exc:
         _raise_storage_unavailable(exc)
+    except ValueError as exc:
+        _raise_invalid_storage_data(exc)
     service.invalidate(source_id)
     return record
 
@@ -145,7 +159,7 @@ async def delete_source_system_config(
     service = _get_service(request)
     try:
         deleted = await service.store.delete_config(source_id)
-    except (SourceSystemConfigStoreUnavailable, Exception) as exc:
+    except SourceSystemConfigStoreUnavailable as exc:
         _raise_storage_unavailable(exc)
     service.invalidate(source_id)
     if not deleted:

@@ -113,23 +113,17 @@ class SourceSystemConfigStore:
     ) -> SourceSystemConfigRecord:
         """创建或更新 source 系统配置并递增版本。"""
         db = self._require_db()
-
-        existing = await self._call_db(
-            "load version before upsert",
-            db.fetch_one,
-            "SELECT version FROM swe_source_system_config WHERE source_id = %s",
-            (source_id,),
-        )
-        next_version = int(existing["version"]) + 1 if existing else 1
         config_text = payload.config.model_dump_json()
 
+        # 依赖数据库在单条 UPSERT 语句内递增 version，
+        # 避免并发请求基于同一旧版本计算出相同的新版本。
         query = """
             INSERT INTO swe_source_system_config
                 (source_id, config_text, version, updated_by)
             VALUES (%s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 config_text = VALUES(config_text),
-                version = VALUES(version),
+                version = version + 1,
                 updated_by = VALUES(updated_by),
                 updated_at = CURRENT_TIMESTAMP
         """
@@ -140,7 +134,7 @@ class SourceSystemConfigStore:
             (
                 source_id,
                 config_text,
-                next_version,
+                1,
                 payload.updated_by,
             ),
         )

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Source 系统配置模型、存储、运行时和 API 的单元测试。"""
 
+import asyncio
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -64,6 +65,54 @@ class TestSourceSystemConfigModels:
 
 class TestSourceSystemConfigStore:
     """验证 source 系统配置数据库存储。"""
+
+    class _ConcurrentVersionDb:
+        """通过可控并发时序验证 version 递增行为的内存 DB。"""
+
+        def __init__(self):
+            """初始化可并发读写的测试 DB。"""
+            self.is_connected = True
+            self.rows: dict[str, dict] = {}
+            self.fetch_all = AsyncMock(return_value=[])
+            self._version_probe_count = 0
+            self._version_probe_ready = asyncio.Event()
+            self._version_probe_snapshot: dict | None = None
+
+        async def fetch_one(self, query, params):
+            """按查询类型返回版本快照或完整行。"""
+            source_id = params[0]
+            if "SELECT version FROM swe_source_system_config" in query:
+                self._version_probe_count += 1
+                if self._version_probe_count == 1:
+                    row = self.rows.get(source_id)
+                    self._version_probe_snapshot = (
+                        None if row is None else {"version": row["version"]}
+                    )
+                if self._version_probe_count < 2:
+                    await self._version_probe_ready.wait()
+                else:
+                    self._version_probe_ready.set()
+                return self._version_probe_snapshot
+            row = self.rows.get(source_id)
+            return None if row is None else dict(row)
+
+        async def execute(self, query, params):
+            """模拟数据库在单条 UPSERT 语句内原子更新 version。"""
+            await asyncio.sleep(0)
+            source_id, config_text, version, updated_by = params
+            current = self.rows.get(source_id)
+            if "version = version + 1" in query:
+                next_version = 1 if current is None else current["version"] + 1
+            else:
+                next_version = version
+            self.rows[source_id] = {
+                "source_id": source_id,
+                "config_text": config_text,
+                "version": next_version,
+                "updated_by": updated_by,
+                "updated_at": datetime.now(),
+            }
+            return 1
 
     @pytest.fixture
     def mock_db(self):
@@ -155,16 +204,13 @@ class TestSourceSystemConfigStore:
     ):
         """更新已有记录时 version 必须递增并写入审计字段。"""
         updated_at = datetime.now()
-        mock_db.fetch_one.side_effect = [
-            {"version": 7},
-            {
-                "source_id": "portal",
-                "config_text": json.dumps({"source_name": "Portal"}),
-                "version": 8,
-                "updated_by": "admin",
-                "updated_at": updated_at,
-            },
-        ]
+        mock_db.fetch_one.return_value = {
+            "source_id": "portal",
+            "config_text": json.dumps({"source_name": "Portal"}),
+            "version": 8,
+            "updated_by": "admin",
+            "updated_at": updated_at,
+        }
 
         result = await store.upsert_config(
             "portal",
@@ -178,13 +224,49 @@ class TestSourceSystemConfigStore:
 
         assert result.version == 8
         assert result.config.as_dict() == {"source_name": "Portal"}
-        assert mock_db.execute.await_args.args[1][2] == 8
+        assert mock_db.execute.await_args.args[1][2] == 1
         assert mock_db.execute.await_args.args[1][3] == "admin"
         assert json.loads(mock_db.execute.await_args.args[1][1]) == {
             "source_name": "Portal",
         }
         assert "config_text" in mock_db.execute.await_args.args[0]
         assert "config_json" not in mock_db.execute.await_args.args[0]
+        assert "version = version + 1" in mock_db.execute.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_upsert_config_keeps_version_monotonic_under_concurrency(
+        self,
+    ):
+        """并发写入同一 source 时 version 仍应按数据库原子递增。"""
+        db = self._ConcurrentVersionDb()
+        store = SourceSystemConfigStore(db=db)
+
+        await asyncio.gather(
+            store.upsert_config(
+                "portal",
+                SourceSystemConfigUpsert(
+                    config=SourceSystemConfig.model_validate(
+                        {"source_name": "Portal A"},
+                    ),
+                    updated_by="alice",
+                ),
+            ),
+            store.upsert_config(
+                "portal",
+                SourceSystemConfigUpsert(
+                    config=SourceSystemConfig.model_validate(
+                        {"source_name": "Portal B"},
+                    ),
+                    updated_by="bob",
+                ),
+            ),
+        )
+
+        record = await store.get_config("portal")
+
+        assert record is not None
+        assert record.version == 2
+        assert db._version_probe_count == 0
 
     @pytest.mark.asyncio
     async def test_list_configs_parses_rows(self, store, mock_db):
@@ -623,6 +705,14 @@ class TestSourceSystemConfigApi:
 
     def _build_client(self, store) -> TestClient:
         """创建带真实路由和中间件的测试客户端。"""
+        return self._build_client_with_server_exception_mode(store, True)
+
+    def _build_client_with_server_exception_mode(
+        self,
+        store,
+        raise_server_exceptions: bool,
+    ) -> TestClient:
+        """创建可选择是否透传服务端异常的测试客户端。"""
         app = FastAPI()
         service = SourceSystemConfigService(
             store,
@@ -633,7 +723,21 @@ class TestSourceSystemConfigApi:
         app.include_router(source_config_router, prefix="/api")
         app.add_middleware(SourceSystemConfigMiddleware)
         app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
-        return TestClient(app)
+        return TestClient(
+            app,
+            raise_server_exceptions=raise_server_exceptions,
+        )
+
+    def _build_management_client(self, store) -> TestClient:
+        """创建仅覆盖管理路由的测试客户端。"""
+        app = FastAPI()
+        app.state.source_system_config_service = SourceSystemConfigService(
+            store,
+            ttl_seconds=0,
+            time_fn=lambda: 100,
+        )
+        app.include_router(source_config_router, prefix="/api")
+        return TestClient(app, raise_server_exceptions=False)
 
     def test_effective_config_returns_defaults_for_missing_source(self):
         """未配置 source 时 effective API 返回默认空配置。"""
@@ -811,18 +915,6 @@ class TestSourceSystemConfigApi:
 
     def test_management_crud_returns_503_when_sql_execution_fails(self):
         """DB 已连接但 SQL 调用失败时，管理端也应统一返回 503。"""
-
-        def build_management_client(store) -> TestClient:
-            """构造仅验证管理路由行为的客户端。"""
-            app = FastAPI()
-            app.state.source_system_config_service = SourceSystemConfigService(
-                store,
-                ttl_seconds=0,
-                time_fn=lambda: 100,
-            )
-            app.include_router(source_config_router, prefix="/api")
-            return TestClient(app)
-
         headers = {
             "X-User-Role": "manager",
             "X-User-Id": "alice",
@@ -833,7 +925,7 @@ class TestSourceSystemConfigApi:
         list_db.fetch_all = AsyncMock(side_effect=RuntimeError("db down"))
         list_db.fetch_one = AsyncMock()
         list_db.execute = AsyncMock()
-        list_response = build_management_client(
+        list_response = self._build_management_client(
             SourceSystemConfigStore(db=list_db),
         ).get("/api/source-system-config/sources", headers=headers)
 
@@ -842,7 +934,7 @@ class TestSourceSystemConfigApi:
         get_db.fetch_one = AsyncMock(side_effect=RuntimeError("db down"))
         get_db.fetch_all = AsyncMock()
         get_db.execute = AsyncMock()
-        get_response = build_management_client(
+        get_response = self._build_management_client(
             SourceSystemConfigStore(db=get_db),
         ).get(
             "/api/source-system-config/sources/portal",
@@ -854,7 +946,7 @@ class TestSourceSystemConfigApi:
         upsert_db.fetch_one = AsyncMock(side_effect=RuntimeError("db down"))
         upsert_db.fetch_all = AsyncMock()
         upsert_db.execute = AsyncMock()
-        upsert_response = build_management_client(
+        upsert_response = self._build_management_client(
             SourceSystemConfigStore(db=upsert_db),
         ).put(
             "/api/source-system-config/sources/portal",
@@ -867,7 +959,7 @@ class TestSourceSystemConfigApi:
         delete_db.fetch_one = AsyncMock()
         delete_db.fetch_all = AsyncMock()
         delete_db.execute = AsyncMock(side_effect=RuntimeError("db down"))
-        delete_response = build_management_client(
+        delete_response = self._build_management_client(
             SourceSystemConfigStore(db=delete_db),
         ).delete(
             "/api/source-system-config/sources/portal",
@@ -878,3 +970,55 @@ class TestSourceSystemConfigApi:
         assert get_response.status_code == 503
         assert upsert_response.status_code == 503
         assert delete_response.status_code == 503
+
+    def test_management_read_returns_500_when_persisted_config_is_invalid(
+        self,
+    ):
+        """脏数据应暴露为服务端数据异常，不能伪装成存储不可用。"""
+        db = MagicMock()
+        db.is_connected = True
+        db.fetch_all = AsyncMock(
+            return_value=[
+                {
+                    "source_id": "portal",
+                    "config_text": "{bad-json",
+                    "version": 1,
+                    "updated_by": "alice",
+                    "updated_at": datetime.now(),
+                },
+            ],
+        )
+        db.fetch_one = AsyncMock(
+            return_value={
+                "source_id": "portal",
+                "config_text": "{bad-json",
+                "version": 1,
+                "updated_by": "alice",
+                "updated_at": datetime.now(),
+            },
+        )
+        db.execute = AsyncMock()
+        client = self._build_management_client(
+            SourceSystemConfigStore(db=db),
+        )
+        headers = {
+            "X-User-Role": "manager",
+        }
+
+        list_response = client.get(
+            "/api/source-system-config/sources",
+            headers=headers,
+        )
+        get_response = client.get(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+
+        assert list_response.status_code == 500
+        assert list_response.json() == {
+            "detail": "Source system config data is invalid",
+        }
+        assert get_response.status_code == 500
+        assert get_response.json() == {
+            "detail": "Source system config data is invalid",
+        }
