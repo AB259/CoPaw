@@ -1478,7 +1478,7 @@ export default function BusinessOverviewPage() {
                   >
                     <Tooltip title={skill.skill_name} placement="top">
                       <span className={styles.skillName}>
-                        {truncateName(skill.skill_name, 12)}
+                        {truncateName(skill.skill_name, 20)}
                       </span>
                     </Tooltip>
                     <div className={styles.skillTrack}>
