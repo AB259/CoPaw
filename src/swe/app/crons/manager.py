@@ -420,6 +420,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     async def create_or_replace_job(self, spec: CronJobSpec) -> None:
         spec = await self._ensure_task_binding(spec)
+        existing = await self._repo.get_job(spec.id)
+        spec = await self._sync_job_to_external_scheduler(spec, existing)
         async with self._lock:
             changed, _, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._upsert_job_in_jobs_file(
@@ -427,69 +429,126 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     spec,
                 ),
             )
-
-        # 同步到外部调度平台
-        if self._scheduler_adapter is not None:
-            callback_url = self._build_callback_url("job", spec.id)
-            ext_id = ""
-            try:
-                existing_ext_id = self._states.get(
-                    spec.id,
-                    CronJobState(),
-                ).external_job_id
-                if existing_ext_id:
-                    await self._scheduler_adapter.update_job(
-                        external_id=existing_ext_id,
-                        tenant_id=spec.tenant_id or self._tenant_id or "",
-                        agent_id=self._agent_id or "",
-                        task_type="job",
-                        job_id=spec.id,
-                        job_name=spec.name,
-                        cron=spec.schedule.cron if spec.schedule else "",
-                        callback_url=callback_url,
-                    )
-                    ext_id = existing_ext_id
-                else:
-                    ext_id = await self._scheduler_adapter.register_job(
-                        tenant_id=spec.tenant_id or self._tenant_id or "",
-                        agent_id=self._agent_id or "",
-                        task_type="job",
-                        job_id=spec.id,
-                        job_name=spec.name,
-                        cron=spec.schedule.cron if spec.schedule else "",
-                        callback_url=callback_url,
-                    )
-                    if ext_id:
-                        st = self._states.get(spec.id, CronJobState())
-                        st.external_job_id = ext_id
-                        self._states[spec.id] = st
-                        await self._persist_external_job_id(spec.id, ext_id)
-            except Exception:
-                logger.warning(
-                    "Failed to sync job %s to external scheduler",
-                    spec.id,
-                    exc_info=True,
-                )
-            # 根据 enabled 状态启停外部调度平台上的任务
-            if ext_id:
-                try:
-                    if spec.enabled:
-                        await self._scheduler_adapter.resume_job(ext_id)
-                    else:
-                        await self._scheduler_adapter.pause_job(ext_id)
-                except Exception:
-                    logger.warning(
-                        "Failed to set run state for job %s (enabled=%s)",
-                        spec.id,
-                        spec.enabled,
-                        exc_info=True,
-                    )
+        ext_id = (spec.meta or {}).get("external_job_id", "")
+        if ext_id:
+            st = self._states.get(spec.id, CronJobState())
+            st.external_job_id = ext_id
+            self._states[spec.id] = st
 
         await self._refresh_next_run_at(spec.id)
 
         # Sync to Monitor (async, non-blocking)
         if self._monitor_sync_client is not None:
             await self._monitor_sync_client.sync_job(spec)
+
+    def _get_existing_external_job_id(
+        self,
+        spec: CronJobSpec,
+        existing: Optional[CronJobSpec] = None,
+    ) -> str:
+        state_ext_id = self._states.get(
+            spec.id,
+            CronJobState(),
+        ).external_job_id
+        if state_ext_id:
+            return state_ext_id
+        spec_ext_id = (spec.meta or {}).get("external_job_id", "")
+        if spec_ext_id:
+            return str(spec_ext_id)
+        if existing is not None:
+            existing_ext_id = (existing.meta or {}).get("external_job_id", "")
+            if existing_ext_id:
+                return str(existing_ext_id)
+        return ""
+
+    async def _sync_job_to_external_scheduler(
+        self,
+        spec: CronJobSpec,
+        existing: Optional[CronJobSpec] = None,
+    ) -> CronJobSpec:
+        """先同步外部调度平台，再返回带 external_job_id 的任务定义。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            return spec
+
+        callback_url = self._build_callback_url("job", spec.id)
+        ext_id = self._get_existing_external_job_id(spec, existing)
+        if ext_id:
+            await self._scheduler_adapter.update_job(
+                external_id=ext_id,
+                tenant_id=spec.tenant_id or self._tenant_id or "",
+                agent_id=self._agent_id or "",
+                task_type="job",
+                job_id=spec.id,
+                job_name=spec.name,
+                cron=spec.schedule.cron if spec.schedule else "",
+                callback_url=callback_url,
+            )
+        else:
+            ext_id = await self._scheduler_adapter.register_job(
+                tenant_id=spec.tenant_id or self._tenant_id or "",
+                agent_id=self._agent_id or "",
+                task_type="job",
+                job_id=spec.id,
+                job_name=spec.name,
+                cron=spec.schedule.cron if spec.schedule else "",
+                callback_url=callback_url,
+            )
+            if not ext_id:
+                raise RuntimeError(
+                    f"External scheduler did not return job id for {spec.id}",
+                )
+
+        if spec.enabled:
+            await self._scheduler_adapter.resume_job(ext_id)
+        else:
+            await self._scheduler_adapter.pause_job(ext_id)
+
+        meta = dict(spec.meta or {})
+        meta["external_job_id"] = ext_id
+        return spec.model_copy(update={"meta": meta})
+
+    async def register_missing_external_jobs(self) -> dict[str, Any]:
+        """补注册当前 Agent 下所有缺少 external_job_id 的任务。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            raise RuntimeError("External scheduler is not configured")
+
+        result: dict[str, Any] = {
+            "tenant_id": self._tenant_id,
+            "agent_id": self._agent_id,
+            "total": 0,
+            "registered": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
+        for job in await self._repo.list_jobs():
+            result["total"] += 1
+            if self._get_existing_external_job_id(job):
+                result["skipped"] += 1
+                continue
+            try:
+                synced = await self._sync_job_to_external_scheduler(job)
+                ext_id = (synced.meta or {}).get("external_job_id", "")
+                await self._persist_external_job_id(job.id, ext_id)
+                st = self._states.get(job.id, CronJobState())
+                st.external_job_id = ext_id
+                self._states[job.id] = st
+                result["registered"] += 1
+            except Exception as exc:  # pylint: disable=broad-except
+                result["failed"] += 1
+                result["errors"].append(
+                    {
+                        "job_id": job.id,
+                        "job_name": job.name,
+                        "error": str(exc),
+                    },
+                )
+                logger.warning(
+                    "Failed to register missing external job %s",
+                    job.id,
+                    exc_info=True,
+                )
+        return result
 
     async def _ensure_persisted_task_binding(
         self,

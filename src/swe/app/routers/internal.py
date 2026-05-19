@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Request
 
+from ...config.utils import list_all_tenant_ids
+
 router = APIRouter(prefix="/internal", tags=["internal"])
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,85 @@ async def _get_cron_manager(manager, tenant_id: str, agent_id: str):
     except ValueError:
         return None
     return ws.cron_manager
+
+
+def _get_configured_agent_ids(tenant_id: str) -> list[str]:
+    """读取指定租户配置中的所有 Agent ID。"""
+    from ...config.utils import get_tenant_config_path, load_config
+
+    config = load_config(get_tenant_config_path(tenant_id))
+    return sorted(config.agents.profiles.keys())
+
+
+@router.post("/cron/register-missing-jobs")
+async def register_missing_cron_jobs(request: Request):
+    """手动补注册所有租户、所有 Agent 中未注册到外部平台的定时任务。"""
+    manager = getattr(request.app.state, "multi_agent_manager", None)
+    if manager is None:
+        logger.warning("MultiAgentManager not initialized")
+        raise HTTPException(status_code=503, detail="Manager not available")
+
+    tenant_ids = list_all_tenant_ids()
+    summary: dict[str, Any] = {
+        "tenant_count": len(tenant_ids),
+        "agent_count": 0,
+        "total": 0,
+        "registered": 0,
+        "skipped": 0,
+        "failed": 0,
+        "results": [],
+        "errors": [],
+    }
+
+    for tenant_id in tenant_ids:
+        try:
+            agent_ids = _get_configured_agent_ids(tenant_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            summary["failed"] += 1
+            summary["errors"].append(
+                {
+                    "tenant_id": tenant_id,
+                    "agent_id": "",
+                    "error": str(exc),
+                },
+            )
+            continue
+
+        for agent_id in agent_ids:
+            summary["agent_count"] += 1
+            mgr = await _get_cron_manager(manager, tenant_id, agent_id)
+            if mgr is None:
+                summary["failed"] += 1
+                summary["errors"].append(
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_id": agent_id,
+                        "error": "CronManager not found",
+                    },
+                )
+                continue
+
+            try:
+                result = await mgr.register_missing_external_jobs()
+            except Exception as exc:  # pylint: disable=broad-except
+                summary["failed"] += 1
+                summary["errors"].append(
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_id": agent_id,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            summary["total"] += int(result.get("total", 0))
+            summary["registered"] += int(result.get("registered", 0))
+            summary["skipped"] += int(result.get("skipped", 0))
+            summary["failed"] += int(result.get("failed", 0))
+            summary["errors"].extend(result.get("errors", []))
+            summary["results"].append(result)
+
+    return summary
 
 
 # ── Unified callback endpoint (jobParam-based) ──
