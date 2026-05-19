@@ -2387,12 +2387,151 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
         except asyncio.CancelledError:
             logger.info(
-                "cron task notification/record cancelled but task succeeded: "
+                "cron task notification cancelled but task succeeded: "
                 "job_id=%s",
                 job.id,
             )
-        await asyncio.shield(
-            self._record_task_execution_success(job),
+        try:
+            await asyncio.shield(
+                self._record_task_execution_success(job),
+            )
+        except asyncio.CancelledError:
+            logger.info(
+                "cron task record cancelled but task succeeded: job_id=%s",
+                job.id,
+            )
+
+    def _handle_cancelled_after_success(
+        self,
+        st: CronJobState,
+        actual_time: datetime,
+        end_time: Optional[datetime],
+        duration_ms: int,
+    ) -> tuple[str, str, datetime, int]:
+        """处理任务成功后被取消的情况。
+
+        Args:
+            st: 任务状态
+            actual_time: 实际开始时间
+            end_time: 结束时间
+            duration_ms: 执行耗时
+
+        Returns:
+            (exec_status, error_message, end_time, duration_ms)
+        """
+        logger.info(
+            "cron _execute_once: job_id=%s CancelledError after success, "
+            "keeping success status",
+            st.last_run_at,
+        )
+        exec_status = "success"
+        end_time = end_time or datetime.now(timezone.utc)
+        duration_ms = duration_ms or int(
+            (end_time - actual_time).total_seconds() * 1000,
+        )
+        return exec_status, "", end_time, duration_ms
+
+    def _handle_execution_cancelled(
+        self,
+        st: CronJobState,
+        actual_time: datetime,
+    ) -> tuple[str, str, datetime, int]:
+        """处理任务被取消的情况。
+
+        Args:
+            st: 任务状态
+            actual_time: 实际开始时间
+
+        Returns:
+            (exec_status, error_message, end_time, duration_ms)
+        """
+        logger.info(
+            "cron _execute_once: job_id=%s status=cancelled",
+            st.last_run_at,
+        )
+        end_time, duration_ms = self._record_failure_timing(
+            st,
+            actual_time,
+            "cancelled",
+            "Job was cancelled",
+        )
+        return "cancelled", "Job was cancelled", end_time, duration_ms
+
+    def _handle_execution_error(
+        self,
+        st: CronJobState,
+        actual_time: datetime,
+        error: Exception,
+    ) -> tuple[str, str, datetime, int]:
+        """处理任务执行错误的情况。
+
+        Args:
+            st: 任务状态
+            actual_time: 实际开始时间
+            error: 异常对象
+
+        Returns:
+            (exec_status, error_message, end_time, duration_ms)
+        """
+        logger.warning(
+            "cron _execute_once: job_id=%s status=error error=%s",
+            st.last_run_at,
+            repr(error),
+        )
+        end_time, duration_ms = self._record_failure_timing(
+            st,
+            actual_time,
+            "error",
+            repr(error),
+        )
+        return "error", str(error)[:200], end_time, duration_ms
+
+    async def _finalize_execution_state(
+        self,
+        job: CronJobSpec,
+        st: CronJobState,
+        exec_status: str,
+        actual_time: datetime,
+        end_time: Optional[datetime],
+        duration_ms: int,
+        error_message: str,
+        output_preview: str,
+        is_manual: bool,
+        trace_id: str,
+        input_snapshot: Optional[Dict[str, Any]],
+        executor_leader: str,
+    ) -> None:
+        """最终化执行状态并同步到 Monitor。
+
+        Args:
+            job: 任务定义
+            st: 任务状态
+            exec_status: 执行状态
+            actual_time: 实际开始时间
+            end_time: 结束时间
+            duration_ms: 执行耗时
+            error_message: 错误信息
+            output_preview: 输出预览
+            is_manual: 是否手动执行
+            trace_id: trace ID
+            input_snapshot: 输入快照
+            executor_leader: 执行者 leader ID
+        """
+        st.last_run_at = datetime.now(timezone.utc)
+        self._states[job.id] = st
+
+        await self._sync_execution_to_monitor(
+            job=job,
+            exec_status=exec_status,
+            actual_time=actual_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            error_message=error_message,
+            output_preview=output_preview,
+            is_manual=is_manual,
+            trace_id=trace_id,
+            input_snapshot=input_snapshot,
+            executor_leader=executor_leader,
         )
 
     async def _execute_once(
@@ -2442,40 +2581,32 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     trace_id[:20] if trace_id else "(empty)",
                 )
             except asyncio.CancelledError:
-                exec_status = "cancelled"
-                error_message = "Job was cancelled"
-                end_time, duration_ms = self._record_failure_timing(
-                    st,
-                    actual_time,
-                    "cancelled",
-                    error_message,
-                )
-                logger.info(
-                    "cron _execute_once: job_id=%s status=cancelled",
-                    job.id,
-                )
+                # 检查任务是否实际执行成功
+                # CancelledError 可能是在 finally 块中（trace 结束时）抛出的
+                # 如果任务已执行成功，应该记录为 success 而非 cancelled
+                if st.last_status == "success":
+                    exec_status, error_message, end_time, duration_ms = (
+                        self._handle_cancelled_after_success(
+                            st,
+                            actual_time,
+                            end_time,
+                            duration_ms,
+                        )
+                    )
+                else:
+                    exec_status, error_message, end_time, duration_ms = (
+                        self._handle_execution_cancelled(st, actual_time)
+                    )
                 raise
             except Exception as e:  # pylint: disable=broad-except
-                exec_status = "error"
-                error_message = str(e)[:200]
-                end_time, duration_ms = self._record_failure_timing(
-                    st,
-                    actual_time,
-                    "error",
-                    repr(e),
-                )
-                logger.warning(
-                    "cron _execute_once: job_id=%s status=error error=%s",
-                    job.id,
-                    repr(e),
+                exec_status, error_message, end_time, duration_ms = (
+                    self._handle_execution_error(st, actual_time, e)
                 )
                 raise
             finally:
-                st.last_run_at = datetime.now(timezone.utc)
-                self._states[job.id] = st
-
-                await self._sync_execution_to_monitor(
+                await self._finalize_execution_state(
                     job=job,
+                    st=st,
                     exec_status=exec_status,
                     actual_time=actual_time,
                     end_time=end_time,

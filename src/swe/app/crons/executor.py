@@ -263,6 +263,129 @@ class CronExecutor:
             "executor_leader": "",
         }
 
+    async def _create_trace_for_agent_job(
+        self,
+        job: CronJobSpec,
+        target_user_id: str,
+        target_session_id: str,
+    ) -> Optional[str]:
+        """为 agent 任务创建 trace 记录。
+
+        Args:
+            job: 任务定义
+            target_user_id: 目标用户 ID
+            target_session_id: 目标会话 ID
+
+        Returns:
+            trace_id 或 None
+        """
+        if not has_trace_manager():
+            return None
+
+        try:
+            trace_mgr = get_trace_manager()
+            if not trace_mgr.enabled:
+                return None
+
+            source_id = job.source_id or "default"
+            trace_id = await trace_mgr.start_trace(
+                user_id=target_user_id or "cron",
+                session_id=target_session_id or f"cron:{job.id}",
+                channel=job.dispatch.channel,
+                source_id=source_id,
+                user_message=None,  # agent 任务的用户消息由 runner 处理
+                user_name=job.tenant_name,
+                bbk_id=job.bbk_id,
+                session_name=job.name,
+            )
+            logger.info(
+                "cron agent: created trace_id=%s for job_id=%s",
+                trace_id[:20] if trace_id else "(empty)",
+                job.id,
+            )
+            return trace_id
+        except Exception as e:
+            logger.warning("Failed to start trace for agent job: %s", e)
+            return None
+
+    async def _end_trace_on_exception(
+        self,
+        trace_id: Optional[str],
+        status: TraceStatus,
+        error_msg: Optional[str] = None,
+    ) -> None:
+        """异常情况下结束 trace。
+
+        Args:
+            trace_id: trace ID
+            status: trace 状态
+            error_msg: 错误信息（可选）
+        """
+        if not trace_id or not has_trace_manager():
+            return
+
+        try:
+            trace_mgr = get_trace_manager()
+            await trace_mgr.end_trace(trace_id, status, error_msg)
+        except Exception as e:
+            logger.warning("Failed to end trace for %s: %s", status, e)
+
+    async def _end_trace_on_success(
+        self,
+        trace_id: Optional[str],
+        job_id: str,
+    ) -> None:
+        """成功情况下结束 trace（使用 shield 保护）。
+
+        Args:
+            trace_id: trace ID
+            job_id: 任务 ID
+        """
+        if not trace_id or not has_trace_manager():
+            return
+
+        try:
+            trace_mgr = get_trace_manager()
+            await asyncio.shield(
+                trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED),
+            )
+        except asyncio.CancelledError:
+            logger.info(
+                "Trace ended as COMPLETED (shielded) for job_id=%s, "
+                "propagating CancelledError",
+                job_id,
+            )
+            raise
+        except Exception as e:
+            logger.warning("Failed to end trace for success: %s", e)
+
+    def _build_agent_execution_result(
+        self,
+        trace_id: Optional[str],
+        console_text_parts: list[str],
+        req: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """构建 agent 任务执行结果。
+
+        Args:
+            trace_id: trace ID
+            console_text_parts: 输出的文本部分列表
+            req: agent 请求字典
+
+        Returns:
+            包含执行结果的字典
+        """
+        output_preview = (
+            "\n".join(console_text_parts)[:100] if console_text_parts else ""
+        )
+        input_snapshot = req if req else None
+        return {
+            "trace_id": trace_id,
+            "output_preview": output_preview,
+            "input_snapshot": input_snapshot,
+            "executor_leader": "",
+        }
+
     async def _execute_agent_job(
         self,
         job: CronJobSpec,
@@ -286,33 +409,31 @@ class CronExecutor:
         req = self._build_agent_request(job, target_user_id, target_session_id)
         self._apply_auth_token(job, dispatch_meta, req)
 
+        # 在 executor 中创建 trace，确保 trace_id 可用
+        trace_id = await self._create_trace_for_agent_job(
+            job,
+            target_user_id,
+            target_session_id,
+        )
+        if trace_id:
+            req["trace_id"] = trace_id
+
+        # 用于标记 trace 是否已被结束（防止重复结束）
+        trace_ended = False
         console_text_parts: list[str] = []
-        trace_id = ""
         try:
-            # Wrap the entire agent execution in a timeout so that
-            # initialization delays + streaming are both covered.
-            if hasattr(asyncio, "timeout"):
-                async with asyncio.timeout(job.runtime.timeout_seconds):
-                    trace_id = await self._run_agent_stream(
-                        job,
-                        target_user_id,
-                        target_session_id,
-                        dispatch_meta,
-                        req,
-                        console_text_parts,
-                    )
-            else:
-                trace_id = await asyncio.wait_for(
-                    self._run_agent_stream(
-                        job,
-                        target_user_id,
-                        target_session_id,
-                        dispatch_meta,
-                        req,
-                        console_text_parts,
-                    ),
-                    timeout=job.runtime.timeout_seconds,
+            # Wrap the entire agent execution in a timeout
+            timeout_ctx = asyncio.timeout(job.runtime.timeout_seconds)
+            async with timeout_ctx:
+                await self._run_agent_stream(
+                    job,
+                    target_user_id,
+                    target_session_id,
+                    dispatch_meta,
+                    req,
+                    console_text_parts,
                 )
+            # 推送结果到 console
             task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
             if (
                 job.dispatch.channel != CONSOLE_CHANNEL
@@ -325,29 +446,48 @@ class CronExecutor:
                     tenant_id,
                 )
         except asyncio.TimeoutError:
+            trace_ended = True
             logger.warning(
                 "cron execute: job_id=%s timed out after %ss",
                 job.id,
                 job.runtime.timeout_seconds,
             )
             await self._notify_timeout(job, tenant_id)
+            await self._end_trace_on_exception(
+                trace_id,
+                TraceStatus.ERROR,
+                "Timeout",
+            )
             raise
         except asyncio.CancelledError:
+            trace_ended = True
             logger.info("cron execute: job_id=%s cancelled", job.id)
+            await self._end_trace_on_exception(trace_id, TraceStatus.CANCELLED)
             raise
+        except Exception as e:  # pylint: disable=broad-except
+            trace_ended = True
+            logger.warning(
+                "cron execute: job_id=%s error: %s",
+                job.id,
+                repr(e),
+            )
+            await self._end_trace_on_exception(
+                trace_id,
+                TraceStatus.ERROR,
+                str(e),
+            )
+            raise
+        finally:
+            # 结束 trace（仅在未被结束时）
+            # 使用 shield 保护 end_trace 操作，确保 trace 状态正确写入
+            if trace_id and not trace_ended:
+                await self._end_trace_on_success(trace_id, job.id)
 
-        # 返回执行结果
-        output_preview = (
-            "\n".join(console_text_parts)[:100] if console_text_parts else ""
+        return self._build_agent_execution_result(
+            trace_id,
+            console_text_parts,
+            req,
         )
-        # agent 类型任务的 input_snapshot 是 request 内容
-        input_snapshot = req if req else None
-        return {
-            "trace_id": trace_id,
-            "output_preview": output_preview,
-            "input_snapshot": input_snapshot,
-            "executor_leader": "",
-        }
 
     def _build_agent_request(
         self,
@@ -408,33 +548,9 @@ class CronExecutor:
         dispatch_meta: Dict[str, Any],
         req: Dict[str, Any],
         console_text_parts: list[str],
-    ) -> str:
-        """Run agent stream query and send events to channel.
-
-        Returns:
-            trace_id captured during execution
-        """
-        trace_id = ""
-        first_event_received = False
-
+    ) -> None:
+        """Run agent stream query and send events to channel."""
         async for event in self._runner.stream_query(req):
-            # 在收到第一个事件后获取 trace_id（此时 trace context 已创建）
-            if not first_event_received:
-                first_event_received = True
-                try:
-                    from ...tracing import get_current_trace
-
-                    trace = get_current_trace()
-                    if trace:
-                        trace_id = trace.trace_id
-                        logger.info(
-                            "cron agent: captured trace_id=%s for job_id=%s",
-                            trace_id[:20] if trace_id else "(empty)",
-                            job.id,
-                        )
-                except Exception as e:
-                    logger.warning("Failed to get trace_id: %s", e)
-
             await self._channel_manager.send_event(
                 channel=job.dispatch.channel,
                 user_id=target_user_id,
@@ -445,8 +561,6 @@ class CronExecutor:
             text = self._extract_text_from_event(event)
             if text:
                 console_text_parts.append(text)
-
-        return trace_id
 
     async def _notify_timeout(self, job: CronJobSpec, tenant_id: str) -> None:
         """Push a timeout notification to the console so the user is aware.
