@@ -62,15 +62,19 @@ class SourceSystemConfigService:
         """解析 source 的 effective config。"""
         now = self._time_fn()
         cached = self._cache.get(source_id)
-        if (
+        cache_ttl_valid = (
             cached is not None
             and not force_refresh
-            and now - cached.checked_at < self.probe_interval_seconds
-        ):
-            return cached.effective
+            and self._is_cache_within_ttl(cached, now)
+        )
+        if cache_ttl_valid:
+            assert cached is not None
+            if self._is_probe_window_open(cached, now):
+                return cached.effective
 
         try:
-            if cached is not None and not force_refresh:
+            if cache_ttl_valid:
+                assert cached is not None
                 remote_version = await self.store.get_config_version(source_id)
                 cached_version = int(cached.effective.version)
                 current_version = int(remote_version or 0)
@@ -97,6 +101,22 @@ class SourceSystemConfigService:
             raise SourceSystemConfigUnavailable(
                 f"source system config unavailable for {source_id}: {exc}",
             ) from exc
+
+    def _is_cache_within_ttl(
+        self,
+        cached: _CacheEntry,
+        now: float,
+    ) -> bool:
+        """判断缓存是否仍在调用方声明的 TTL 内。"""
+        return now - cached.loaded_at < self.ttl_seconds
+
+    def _is_probe_window_open(
+        self,
+        cached: _CacheEntry,
+        now: float,
+    ) -> bool:
+        """判断最近一次探测是否仍在免探测窗口内。"""
+        return now - cached.checked_at < self.probe_interval_seconds
 
     def invalidate(self, source_id: str | None = None) -> None:
         """清理缓存，管理接口更新后当前实例立即生效。"""
