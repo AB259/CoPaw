@@ -1,0 +1,581 @@
+# -*- coding: utf-8 -*-
+"""Source 系统配置模型、存储、运行时和 API 的单元测试。"""
+
+import json
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+from swe.app.middleware.tenant_identity import TenantIdentityMiddleware
+from swe.app.source_system_config import router as source_config_router
+from swe.app.source_system_config.middleware import (
+    SourceSystemConfigMiddleware,
+)
+from swe.app.source_system_config.models import (
+    DEFAULT_SOURCE_SYSTEM_CONFIG,
+    EffectiveSourceSystemConfig,
+    SourceSystemConfig,
+    SourceSystemConfigRecord,
+    SourceSystemConfigUpsert,
+)
+from swe.app.source_system_config.runtime import (
+    bind_source_system_config,
+    get_current_source_system_config,
+)
+from swe.app.source_system_config.service import (
+    SourceSystemConfigService,
+    SourceSystemConfigUnavailable,
+)
+from swe.app.source_system_config.store import SourceSystemConfigStore
+
+
+class TestSourceSystemConfigModels:
+    """验证 source 系统配置模型。"""
+
+    def test_default_config_is_empty_object(self):
+        """默认配置应为空对象，不提前决定具体业务开关。"""
+        assert DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict() == {}
+
+    def test_arbitrary_object_config_is_allowed(self):
+        """任意 JSON object key 都应允许由业务方自行解释。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "provider_policy": {"default_model": "qwen-max"},
+                "feature_switches": {"experimental_tooling": True},
+            },
+        )
+
+        assert config.as_dict() == {
+            "provider_policy": {"default_model": "qwen-max"},
+            "feature_switches": {"experimental_tooling": True},
+        }
+
+    def test_non_object_config_is_rejected(self):
+        """数组或标量不能作为 source 系统配置根对象。"""
+        with pytest.raises(ValueError, match="JSON object"):
+            SourceSystemConfig.model_validate(["not", "object"])
+
+
+class TestSourceSystemConfigStore:
+    """验证 source 系统配置数据库存储。"""
+
+    @pytest.fixture
+    def mock_db(self):
+        """创建 mock 数据库连接。"""
+        db = MagicMock()
+        db.is_connected = True
+        db.fetch_one = AsyncMock()
+        db.fetch_all = AsyncMock()
+        db.execute = AsyncMock(return_value=1)
+        return db
+
+    @pytest.fixture
+    def store(self, mock_db):
+        """创建带 mock 数据库的存储。"""
+        return SourceSystemConfigStore(db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_get_config_returns_none_when_row_missing(
+        self,
+        store,
+        mock_db,
+    ):
+        """缺少记录时存储层返回 None，默认值由 service 合成。"""
+        mock_db.fetch_one.return_value = None
+
+        result = await store.get_config("portal")
+
+        assert result is None
+        mock_db.fetch_one.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_config_parses_valid_row(self, store, mock_db):
+        """有效 JSON 行应解析为配置记录。"""
+        updated_at = datetime.now()
+        mock_db.fetch_one.return_value = {
+            "source_id": "portal",
+            "config_json": json.dumps(
+                {"provider_policy": {"default_model": "qwen-max"}},
+            ),
+            "version": 3,
+            "updated_by": "admin",
+            "updated_at": updated_at,
+        }
+
+        result = await store.get_config("portal")
+
+        assert isinstance(result, SourceSystemConfigRecord)
+        assert result.source_id == "portal"
+        assert result.config.as_dict() == {
+            "provider_policy": {"default_model": "qwen-max"},
+        }
+        assert result.version == 3
+        assert result.updated_by == "admin"
+        assert result.updated_at == updated_at
+
+    @pytest.mark.asyncio
+    async def test_get_config_rejects_invalid_json(self, store, mock_db):
+        """损坏 JSON 应作为存储数据异常抛出。"""
+        mock_db.fetch_one.return_value = {
+            "source_id": "portal",
+            "config_json": "{bad-json",
+            "version": 1,
+            "updated_by": None,
+            "updated_at": datetime.now(),
+        }
+
+        with pytest.raises(ValueError, match="invalid source system config"):
+            await store.get_config("portal")
+
+    @pytest.mark.asyncio
+    async def test_get_config_rejects_non_object_schema(self, store, mock_db):
+        """存量 JSON 如果不是 object，不能被静默接受。"""
+        mock_db.fetch_one.return_value = {
+            "source_id": "portal",
+            "config_json": json.dumps(["not", "object"]),
+            "version": 1,
+            "updated_by": None,
+            "updated_at": datetime.now(),
+        }
+
+        with pytest.raises(ValueError, match="JSON object"):
+            await store.get_config("portal")
+
+    @pytest.mark.asyncio
+    async def test_upsert_config_increments_existing_version(
+        self,
+        store,
+        mock_db,
+    ):
+        """更新已有记录时 version 必须递增并写入审计字段。"""
+        updated_at = datetime.now()
+        mock_db.fetch_one.side_effect = [
+            {"version": 7},
+            {
+                "source_id": "portal",
+                "config_json": json.dumps({"source_name": "Portal"}),
+                "version": 8,
+                "updated_by": "admin",
+                "updated_at": updated_at,
+            },
+        ]
+
+        result = await store.upsert_config(
+            "portal",
+            SourceSystemConfigUpsert(
+                config=SourceSystemConfig.model_validate(
+                    {"source_name": "Portal"},
+                ),
+                updated_by="admin",
+            ),
+        )
+
+        assert result.version == 8
+        assert result.config.as_dict() == {"source_name": "Portal"}
+        assert mock_db.execute.await_args.args[1][2] == 8
+        assert mock_db.execute.await_args.args[1][3] == "admin"
+
+    @pytest.mark.asyncio
+    async def test_list_configs_parses_rows(self, store, mock_db):
+        """列表查询应返回解析后的配置记录。"""
+        updated_at = datetime.now()
+        mock_db.fetch_all.return_value = [
+            {
+                "source_id": "portal",
+                "config_json": json.dumps({"source_name": "Portal"}),
+                "version": 2,
+                "updated_by": "admin",
+                "updated_at": updated_at,
+            },
+        ]
+
+        result = await store.list_configs()
+
+        assert len(result) == 1
+        assert result[0].source_id == "portal"
+        assert result[0].config.as_dict() == {"source_name": "Portal"}
+
+    @pytest.mark.asyncio
+    async def test_delete_config_removes_row(self, store, mock_db):
+        """删除配置时应按 source_id 删除数据库行。"""
+        result = await store.delete_config("portal")
+
+        assert result is True
+        mock_db.execute.assert_awaited_once_with(
+            "DELETE FROM swe_source_system_config WHERE source_id = %s",
+            ("portal",),
+        )
+
+
+class _FakeStore:
+    """为 service 测试提供可控的异步 store。"""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls: list[str] = []
+
+    async def get_config(self, source_id: str):
+        """按顺序返回测试指定的响应。"""
+        self.calls.append(source_id)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class _FakeManagementStore:
+    """为 API 测试提供可变的内存 store。"""
+
+    def __init__(self):
+        self.records: dict[str, SourceSystemConfigRecord] = {}
+        self.upserts: list[tuple[str, SourceSystemConfigUpsert]] = []
+        self.deleted: list[str] = []
+
+    async def get_config(self, source_id: str):
+        """返回指定 source 的配置记录。"""
+        return self.records.get(source_id)
+
+    async def list_configs(self):
+        """返回所有配置记录。"""
+        return list(self.records.values())
+
+    async def upsert_config(self, source_id, payload):
+        """写入配置并记录审计参数。"""
+        self.upserts.append((source_id, payload))
+        current = self.records.get(source_id)
+        next_version = 1 if current is None else current.version + 1
+        record = SourceSystemConfigRecord(
+            source_id=source_id,
+            config=payload.config,
+            version=next_version,
+            updated_by=payload.updated_by,
+        )
+        self.records[source_id] = record
+        return record
+
+    async def delete_config(self, source_id: str):
+        """删除指定 source 配置。"""
+        self.deleted.append(source_id)
+        return self.records.pop(source_id, None) is not None
+
+
+class TestSourceSystemConfigService:
+    """验证 effective config 合成、缓存和失败行为。"""
+
+    @pytest.mark.asyncio
+    async def test_default_effective_config_is_empty(self):
+        """缺少 source 记录时应返回内置默认配置。"""
+        service = SourceSystemConfigService(
+            _FakeStore(None),
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.resolve_config("portal")
+
+        assert result.is_default is True
+        assert result.version == 0
+        assert result.config.as_dict() == {}
+
+    @pytest.mark.asyncio
+    async def test_cache_refreshes_after_ttl(self):
+        """TTL 内复用缓存，过期后按 version 刷新。"""
+        now = {"value": 100.0}
+        first = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=1,
+        )
+        second = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal 2"},
+            ),
+            version=2,
+        )
+        store = _FakeStore(first, second)
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=10,
+            time_fn=lambda: now["value"],
+        )
+
+        cached = await service.resolve_config("portal")
+        still_cached = await service.resolve_config("portal")
+        now["value"] = 111.0
+        refreshed = await service.resolve_config("portal")
+
+        assert cached.version == 1
+        assert still_cached.version == 1
+        assert refreshed.version == 2
+        assert refreshed.config.as_dict() == {"source_name": "Portal 2"}
+        assert store.calls == ["portal", "portal"]
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_uses_last_known_good_cache(self):
+        """缓存过期后 DB 异常时应返回 last-known-good。"""
+        now = {"value": 100.0}
+        record = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=3,
+        )
+        service = SourceSystemConfigService(
+            _FakeStore(record, RuntimeError("db down")),
+            ttl_seconds=1,
+            time_fn=lambda: now["value"],
+        )
+
+        first = await service.resolve_config("portal")
+        now["value"] = 102.0
+        fallback = await service.resolve_config("portal")
+
+        assert first.version == 3
+        assert fallback.version == 3
+        assert fallback.stale is True
+        assert "db down" in (fallback.last_error or "")
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_without_cache_fails(self):
+        """无缓存且 DB 异常时不能静默返回默认配置。"""
+        service = SourceSystemConfigService(
+            _FakeStore(RuntimeError("db down")),
+            ttl_seconds=1,
+            time_fn=lambda: 100,
+        )
+
+        with pytest.raises(SourceSystemConfigUnavailable):
+            await service.resolve_config("portal")
+
+
+class TestSourceSystemConfigRuntime:
+    """验证请求级 source 系统配置上下文 helper。"""
+
+    def test_runtime_helpers_read_bound_config(self):
+        """helper 应从 ContextVar 读取当前 source 配置。"""
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=4,
+        )
+
+        with bind_source_system_config(effective):
+            assert get_current_source_system_config() == effective
+
+        assert get_current_source_system_config() is None
+
+
+class TestSourceSystemConfigMiddleware:
+    """验证 HTTP 请求级配置绑定。"""
+
+    def test_middleware_binds_request_state_and_context(self):
+        """中间件应在 source 身份解析后绑定 effective config。"""
+        record = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=5,
+        )
+        service = SourceSystemConfigService(
+            _FakeStore(record),
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+        app = FastAPI()
+
+        @app.get("/api/config-check")
+        async def config_check(request: Request):
+            state_config = request.state.source_system_config
+            context_config = get_current_source_system_config()
+            return {
+                "state_version": state_config.version,
+                "context_version": context_config.version,
+                "config": context_config.config.as_dict(),
+            }
+
+        app.add_middleware(SourceSystemConfigMiddleware, service=service)
+        app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
+
+        response = TestClient(app).get(
+            "/api/config-check",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "state_version": 5,
+            "context_version": 5,
+            "config": {"source_name": "Portal"},
+        }
+
+
+class TestSourceSystemConfigApi:
+    """验证 source 系统配置 API。"""
+
+    def _build_client(self, store: _FakeManagementStore) -> TestClient:
+        """创建带真实路由和中间件的测试客户端。"""
+        app = FastAPI()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=0,
+            time_fn=lambda: 100,
+        )
+        app.state.source_system_config_service = service
+        app.include_router(source_config_router, prefix="/api")
+        app.add_middleware(SourceSystemConfigMiddleware)
+        app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
+        return TestClient(app)
+
+    def test_effective_config_returns_defaults_for_missing_source(self):
+        """未配置 source 时 effective API 返回默认空配置。"""
+        client = self._build_client(_FakeManagementStore())
+
+        response = client.get(
+            "/api/source-system-config/effective",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source_id"] == "portal"
+        assert body["is_default"] is True
+        assert body["version"] == 0
+        assert body["config"] == {}
+
+    def test_non_manager_cannot_update_source_config(self):
+        """非 manager 角色不能写入 source 系统配置。"""
+        client = self._build_client(_FakeManagementStore())
+
+        response = client.put(
+            "/api/source-system-config/sources/portal",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Id": "alice",
+            },
+            json={"config": {"source_name": "Portal"}},
+        )
+
+        assert response.status_code == 403
+
+    def test_manager_updates_source_config_with_audit_metadata(self):
+        """manager 更新配置时应校验、持久化并写入审计人。"""
+        store = _FakeManagementStore()
+        client = self._build_client(store)
+
+        response = client.put(
+            "/api/source-system-config/sources/portal",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Id": "alice",
+                "X-User-Role": "manager",
+            },
+            json={"config": {"source_name": "Portal"}},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source_id"] == "portal"
+        assert body["updated_by"] == "alice"
+        assert body["config"] == {"source_name": "Portal"}
+        assert store.upserts[0][1].updated_by == "alice"
+
+    def test_invalid_config_is_rejected(self):
+        """非 object 配置请求必须被拒绝。"""
+        client = self._build_client(_FakeManagementStore())
+
+        response = client.put(
+            "/api/source-system-config/sources/portal",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Role": "manager",
+            },
+            json={"config": ["not", "object"]},
+        )
+
+        assert response.status_code == 422
+
+    def test_manager_lists_and_reads_source_configs(self):
+        """manager 可以列表和读取 source 配置记录。"""
+        store = _FakeManagementStore()
+        store.records["portal"] = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=2,
+            updated_by="alice",
+        )
+        client = self._build_client(store)
+        headers = {
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "portal",
+            "X-User-Role": "admin",
+        }
+
+        list_response = client.get(
+            "/api/source-system-config/sources",
+            headers=headers,
+        )
+        read_response = client.get(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+
+        assert list_response.status_code == 200
+        assert list_response.json()["total"] == 1
+        assert read_response.status_code == 200
+        assert read_response.json()["version"] == 2
+        assert read_response.json()["config"] == {"source_name": "Portal"}
+
+    def test_manager_deletes_source_config(self):
+        """manager 可以删除 source 配置，后续 effective 读取回到默认配置。"""
+        store = _FakeManagementStore()
+        store.records["portal"] = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal"},
+            ),
+            version=2,
+            updated_by="alice",
+        )
+        client = self._build_client(store)
+        headers = {
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "portal",
+            "X-User-Role": "admin",
+        }
+
+        delete_response = client.delete(
+            "/api/source-system-config/sources/portal",
+            headers=headers,
+        )
+        effective_response = client.get(
+            "/api/source-system-config/effective",
+            headers=headers,
+        )
+
+        assert delete_response.status_code == 200
+        assert delete_response.json() == {"deleted": True}
+        assert store.deleted == ["portal"]
+        assert effective_response.status_code == 200
+        assert effective_response.json()["is_default"] is True
+        assert effective_response.json()["config"] == {}

@@ -1,10 +1,18 @@
 import { Layout } from "antd";
-import { Routes, Route, useLocation, Navigate } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  useLocation,
+  Navigate,
+} from "react-router-dom";
+import { useEffect } from "react";
 
 // ==================== iframe 集成 (Kun He) ====================
 // useIframeStore: 获取父窗口传递的 hideMenu 参数
 import { useIframeStore } from "../../stores/iframeStore";
 // ==================== iframe 集成结束 ====================
+import { useSourceSystemConfigStore } from "../../stores/sourceSystemConfigStore";
+import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 
 import Sidebar from "../Sidebar";
 import Header from "../Header";
@@ -89,8 +97,17 @@ export default function MainLayout() {
   // iframe 传递的 hideMenu === true 时隐藏 Sidebar
   // URL 参数 origin=Y 会自动设置 hideMenu=true（见 iframeMessage.ts）
   const hideMenu = useIframeStore((state) => state.hideMenu);
+  const activeSourceId =
+    useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
+  const loadEffectiveConfig = useSourceSystemConfigStore(
+    (state) => state.loadEffectiveConfig,
+  );
   const shouldHideSidebar = hideMenu;
   // ==================== iframe 集成结束 ====================
+
+  useEffect(() => {
+    loadEffectiveConfig(activeSourceId);
+  }, [activeSourceId, loadEffectiveConfig]);
 
   return (
     <Layout className={styles.mainLayout}>

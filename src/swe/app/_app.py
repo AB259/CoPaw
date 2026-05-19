@@ -26,6 +26,7 @@ from .auth import AuthMiddleware
 from .middleware.tenant_identity import TenantIdentityMiddleware
 from .middleware.tenant_workspace import TenantWorkspaceMiddleware
 from .middleware.header_passthrough import HeaderPassthroughMiddleware
+from .source_system_config.middleware import SourceSystemConfigMiddleware
 from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.voice import voice_router
@@ -348,6 +349,18 @@ async def lifespan(
     # init_instance_module(db_connection)
     logger.info("Instance module initialized")
 
+    # --- 初始化 source 系统配置模块 ---
+    try:
+        from .source_system_config.service import SourceSystemConfigService
+        from .source_system_config.store import SourceSystemConfigStore
+
+        app.state.source_system_config_service = SourceSystemConfigService(
+            SourceSystemConfigStore(db_connection),
+        )
+        logger.info("SourceSystemConfig module initialized")
+    except Exception as e:
+        logger.warning("Failed to initialize source system config: %s", e)
+
     # --- Initialize greeting and featured_case modules ---
     if db_connection is not None:
         try:
@@ -458,6 +471,9 @@ app.add_middleware(AgentContextMiddleware)
 # Add tenant workspace middleware (loads workspace from pool)
 # Must execute after TenantIdentityMiddleware sets tenant_id
 app.add_middleware(TenantWorkspaceMiddleware)
+
+# 在身份解析后绑定 source 系统配置
+app.add_middleware(SourceSystemConfigMiddleware)
 
 # Add tenant identity middleware last so it executes FIRST
 # This must set tenant_id before TenantWorkspaceMiddleware needs it
