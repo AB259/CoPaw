@@ -297,6 +297,31 @@ class TenantInitSourceStore:
             )
             return False
 
+    async def get_bbk_by_source(self, source_id: str) -> list[dict]:
+        """Query distinct bbk_ids for a given source.
+
+        Args:
+            source_id: The source identifier to filter by.
+
+        Returns:
+            List of dicts with bbk_id.
+        """
+        if not self._use_db:
+            return []
+        query = (
+            "SELECT DISTINCT bbk_id FROM swe_tenant_init_source "
+            "WHERE source_id = %s AND bbk_id IS NOT NULL AND bbk_id != '' "
+            "ORDER BY bbk_id"
+        )
+        try:
+            rows = await self.db.fetch_all(query, (source_id,))
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query bbk_ids by source_id={source_id}: {e}",
+            )
+            return []
+
 
 def init_tenant_init_source_module(db=None) -> None:
     """Initialize tenant init source module with database connection.

@@ -2,7 +2,8 @@ import { request } from "../request";
 import { mergeHeaders } from "../mergeHeaders";
 
 export interface MySkill {
-  skill_name: string;
+  skill_name: string;  // 目录名，用于 API 操作标识
+  display_name: string;  // 展示名称
   source: string;
   description: string;
   version: string | null;
@@ -48,8 +49,9 @@ export const mySkillsApi = {
 
   listSkillFiles: async (skillName: string): Promise<FileTreeNode[]> => {
     const opts = mergeHeaders();
+    const encodedName = encodeURIComponent(skillName);
     return request<FileTreeNode[]>(
-      `/market/skills/mine/${skillName}/files`,
+      `/market/skills/mine/${encodedName}/files`,
       opts
     );
   },
@@ -59,8 +61,13 @@ export const mySkillsApi = {
     filePath: string
   ): Promise<FileContentResponse> => {
     const opts = mergeHeaders();
+    const encodedName = encodeURIComponent(skillName);
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
     return request<FileContentResponse>(
-      `/market/skills/mine/${skillName}/files/${filePath}`,
+      `/market/skills/mine/${encodedName}/files/${encodedPath}`,
       opts
     );
   },
@@ -70,6 +77,11 @@ export const mySkillsApi = {
     filePath: string,
     content: string
   ): Promise<void> => {
+    const encodedName = encodeURIComponent(skillName);
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
     const opts: RequestInit = {
       method: "PUT",
       ...(mergeHeaders({
@@ -77,7 +89,7 @@ export const mySkillsApi = {
       })),
       body: JSON.stringify({ content }),
     };
-    await request<void>(`/market/skills/mine/${skillName}/files/${filePath}`, opts);
+    await request<void>(`/market/skills/mine/${encodedName}/files/${encodedPath}`, opts);
   },
 
   deleteSkill: async (skillName: string): Promise<void> => {
@@ -85,7 +97,8 @@ export const mySkillsApi = {
       method: "DELETE",
       ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}`, opts);
   },
 
   enableSkill: async (skillName: string): Promise<void> => {
@@ -93,7 +106,8 @@ export const mySkillsApi = {
       method: "POST",
       ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}/enable`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}/enable`, opts);
   },
 
   disableSkill: async (skillName: string): Promise<void> => {
@@ -101,7 +115,8 @@ export const mySkillsApi = {
       method: "POST",
       ...mergeHeaders(),
     };
-    await request<void>(`/market/skills/mine/${skillName}/disable`, opts);
+    const encodedName = encodeURIComponent(skillName);
+    await request<void>(`/market/skills/mine/${encodedName}/disable`, opts);
   },
 
   batchDeleteSkills: async (

@@ -7,6 +7,25 @@ from pydantic import ValidationError
 from swe.config.config import AgentsRunningConfig
 
 
+def test_hook_runtime_budget_fields_accept_real_config_values() -> None:
+    config = AgentsRunningConfig.model_validate(
+        {
+            "max_before_stop_turns": 3,
+            "max_automatic_follow_up_turns": 4,
+            "hook_runtime": {
+                "max_before_stop_turns": 1,
+                "max_automatic_follow_up_turns": 2,
+            },
+        },
+    )
+
+    assert config.max_before_stop_turns == 3
+    assert config.max_automatic_follow_up_turns == 4
+    assert config.hook_runtime is not None
+    assert config.hook_runtime.max_before_stop_turns == 1
+    assert config.hook_runtime.max_automatic_follow_up_turns == 2
+
+
 def test_workload_specific_llm_config_fields_use_defaults() -> None:
     config = AgentsRunningConfig()
 

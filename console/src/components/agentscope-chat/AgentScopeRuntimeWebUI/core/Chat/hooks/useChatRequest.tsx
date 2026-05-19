@@ -18,18 +18,44 @@ import {
   isActiveChatRequestOwner,
   type ChatRequestOwner,
 } from "./requestOwnership";
+import {
+  createChatStreamAbortReason,
+  isAbortLikeError,
+} from "./abortReasons";
 
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
+  hasMessage?: (id: string) => boolean;
   getCurrentSessionId: () => string;
   onFinish: (owner: ChatRequestOwner) => void;
 }
 
-function isAbortLikeError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError";
+function isTaskCancellationMessage(message: unknown) {
+  return (
+    typeof message === "string" &&
+    /^task has been cancell?ed!?$/i.test(message.trim())
+  );
 }
 
+function isTaskCancellationFrame(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const frame = data as {
+    code?: unknown;
+    message?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  };
+
+  return (
+    (frame.code === "AGENT_ERROR" &&
+      isTaskCancellationMessage(frame.message)) ||
+    (frame.error?.code === "AGENT_ERROR" &&
+      isTaskCancellationMessage(frame.error.message))
+  );
+}
 
 function getUserVisibleErrorMessage(error: unknown) {
   return error instanceof Error
@@ -43,7 +69,13 @@ function getUserVisibleErrorMessage(error: unknown) {
  * 处理 API 请求和流式响应的 Hook
  */
 export default function useChatRequest(options: UseChatRequestOptions) {
-  const { currentQARef, updateMessage, getCurrentSessionId, onFinish } =
+  const {
+    currentQARef,
+    updateMessage,
+    hasMessage = () => true,
+    getCurrentSessionId,
+    onFinish,
+  } =
     options;
   const apiOptions = useChatAnywhereOptions((v) => v.api);
 
@@ -63,6 +95,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
   const failActiveResponse = useCallback(
     (owner: ChatRequestOwner, error: unknown) => {
+      if (
+        currentQARef.current.response?.id &&
+        !hasMessage(currentQARef.current.response.id)
+      ) {
+        return;
+      }
+
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
       const responseData = currentQARef.current.response?.cards?.[0]?.data as
         | {
@@ -106,7 +145,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
       onFinish(owner);
     },
-    [currentQARef, getResponseHeaderTimestamp, onFinish, updateMessage],
+    [currentQARef, getResponseHeaderTimestamp, hasMessage, onFinish, updateMessage],
   );
 
   const mockRequest = useCallback(async (mockdata) => {
@@ -138,6 +177,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
       const isOwnerActive = () =>
         isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, owner);
+      const isLiveResponseMounted = () => {
+        const responseId = currentQARef.current.response?.id;
+        return Boolean(responseId && hasMessage(responseId));
+      };
       const buildResponseCard = () => {
         const responseData = currentQARef.current.response?.cards?.[0]
           ?.data as
@@ -163,7 +206,9 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       };
 
       const cancelActiveRequest = async () => {
-        currentQARef.current.abortController?.abort();
+        currentQARef.current.abortController?.abort(
+          createChatStreamAbortReason("stop"),
+        );
 
         const currentApiOptions = apiOptionsRef.current;
         if (currentApiOptions.cancel) {
@@ -289,6 +334,12 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const responseParser =
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
+          if (isTaskCancellationFrame(chunkData)) {
+            emitTaskProgressUpdate(null);
+            onFinish(owner);
+            return;
+          }
+
           const streamedTaskProgress = extractTaskProgress(chunkData);
           if (streamedTaskProgress !== undefined) {
             emitTaskProgressUpdate(streamedTaskProgress);
@@ -307,7 +358,11 @@ export default function useChatRequest(options: UseChatRequestOptions) {
             continue;
           }
 
-          if (currentQARef.current.response && isOwnerActive()) {
+          if (
+            currentQARef.current.response &&
+            isOwnerActive() &&
+            isLiveResponseMounted()
+          ) {
             const cards: any[] = [
               {
                 code: "AgentScopeRuntimeResponseCard",
@@ -358,6 +413,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       failActiveResponse,
       getCurrentSessionId,
       getResponseHeaderTimestamp,
+      hasMessage,
       onFinish,
       updateMessage,
     ],
@@ -477,15 +533,19 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       responseBuilder.handle(responseData as never);
     }
 
-    currentQARef.current.abortController?.abort();
+    currentQARef.current.abortController?.abort(
+      createChatStreamAbortReason("stop"),
+    );
 
     const currentApiOptions = apiOptionsRef.current;
-    const activeSessionId =
-      currentQARef.current.activeRequestOwner?.sessionId ?? getCurrentSessionId();
+    const activeOwner = currentQARef.current.activeRequestOwner;
+    const activeSessionId = activeOwner?.sessionId ?? getCurrentSessionId();
     if (currentApiOptions.cancel) {
       await Promise.resolve(
         currentApiOptions.cancel({
           session_id: activeSessionId,
+          logical_session_id: activeOwner?.logicalSessionId,
+          chat_id: activeOwner?.chatId,
         }),
       ).catch((error) => {
         console.error(error);

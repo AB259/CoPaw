@@ -26,15 +26,17 @@ async def get_cron_manager(
 
 
 def _inject_request_tenant(spec: CronJobSpec, request: Request) -> CronJobSpec:
-    """Force cron job tenant_id, bbk_id, source_id to follow request context."""
+    """Force cron job tenant_id, bbk_id, source_id, tenant_name to follow request context."""
     tenant_id = getattr(request.state, "tenant_id", None)
     bbk_id = getattr(request.state, "bbk_id", None)
     source_id = getattr(request.state, "source_id", None)
+    user_name = getattr(request.state, "user_name", None)
     return spec.model_copy(
         update={
             "tenant_id": tenant_id,
             "bbk_id": bbk_id,
             "source_id": source_id,
+            "tenant_name": user_name,
         },
     )
 
@@ -105,6 +107,9 @@ async def list_jobs(
         await _ensure_task_binding_for_read(job, request, mgr)
         for job in await mgr.list_jobs()
     ]
+    # 实时刷新每个 job 的 next_run_at（原依赖 APScheduler，现按需计算）
+    for job in jobs:
+        await mgr.refresh_next_run_at(job)
     return [
         CronJobListItem(
             **job.model_dump(mode="json"),
@@ -125,6 +130,7 @@ async def get_job(
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     job = await _ensure_task_binding_for_read(job, request, mgr)
+    await mgr.refresh_next_run_at(job)
     return CronJobView(
         spec=job,
         state=_serialize_state(mgr.get_state(job_id)),

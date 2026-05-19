@@ -25,7 +25,12 @@ import {
 } from "./followUpSubmit";
 import { shouldEnqueueFollowUpSubmission } from "./followUpSubmitState";
 import type { CurrentQARef } from "./currentQARef";
-import { createChatRequestOwner, type ChatRequestOwner } from "./requestOwnership";
+import {
+  createChatRequestOwner,
+  isActiveChatRequestOwner,
+  type ChatRequestOwner,
+} from "./requestOwnership";
+import { createChatStreamAbortReason } from "./abortReasons";
 // import mockdata from '../../mock/mock.json'
 
 /**
@@ -88,6 +93,14 @@ export default function useChatController() {
         false,
       );
 
+      if (
+        !owner ||
+        isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, owner)
+      ) {
+        currentQARef.current.activeRequestOwner = undefined;
+        currentQARef.current.abortController = undefined;
+      }
+
       if (status === "finished") {
         void (async () => {
           const hasPendingValidation = await fetchPendingValidation();
@@ -110,6 +123,7 @@ export default function useChatController() {
   const { request, reconnect, cancelActiveRequest } = useChatRequest({
     currentQARef,
     updateMessage: messageHandler.updateMessage,
+    hasMessage: messageHandler.hasMessage,
     getCurrentSessionId: sessionHandler.getCurrentSessionId,
     onFinish: (owner) => finishResponse("finished", owner),
   });
@@ -156,6 +170,7 @@ export default function useChatController() {
       setLoading(true);
       await sleep(100);
 
+      currentQARef.current.abortController = new AbortController();
       messageHandler.createResponseMessage();
       const owner = createRequestOwner("submit", activeSessionId);
       currentQARef.current.activeRequestOwner = owner;
@@ -305,6 +320,7 @@ export default function useChatController() {
       );
       await sleep(100);
 
+      currentQARef.current.abortController = new AbortController();
       messageHandler.createResponseMessage();
       const owner = createRequestOwner("approval", activeSessionId);
       currentQARef.current.activeRequestOwner = owner;
@@ -323,9 +339,11 @@ export default function useChatController() {
   /**
    * 处理取消
    */
-  const handleCancel = useCallback(() => {
-    finishResponse("interrupted", currentQARef.current.activeRequestOwner);
-  }, [finishResponse]);
+  const handleCancel = useCallback(async () => {
+    const owner = currentQARef.current.activeRequestOwner;
+    await cancelActiveRequest();
+    finishResponse("interrupted", owner);
+  }, [cancelActiveRequest, finishResponse]);
 
   const updatePostTurnValidationStatus = useCallback(
     (
@@ -483,7 +501,9 @@ export default function useChatController() {
   // 监听会话切换，断开当前 SSE 连接（不通知后端取消）并重置状态
   useEffect(() => {
     followUpSessionIdRef.current = undefined;
-    currentQARef.current.abortController?.abort();
+    currentQARef.current.abortController?.abort(
+      createChatStreamAbortReason("detach"),
+    );
     currentQARef.current = {
       request: undefined,
       response: undefined,

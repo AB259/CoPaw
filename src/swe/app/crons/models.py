@@ -121,7 +121,7 @@ class CronJobRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    input: Any
+    input: Any = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
 
@@ -150,6 +150,10 @@ class CronJobSpec(BaseModel):
     source_id: Optional[str] = Field(
         default=None,
         description="来源标识 (from X-Source-Id header)",
+    )
+    tenant_name: Optional[str] = Field(
+        default=None,
+        description="租户姓名 (from X-User-Name header)",
     )
 
     schedule: ScheduleSpec
@@ -194,6 +198,7 @@ class CronJobState(BaseModel):
         Literal["success", "error", "running", "skipped", "cancelled"]
     ] = None
     last_error: Optional[str] = None
+    external_job_id: Optional[str] = None
 
 
 class CronJobView(BaseModel):

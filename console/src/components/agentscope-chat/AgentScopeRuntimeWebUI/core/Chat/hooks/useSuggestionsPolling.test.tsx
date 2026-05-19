@@ -1,5 +1,4 @@
-import React from "react";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useSuggestionsPolling from "./useSuggestionsPolling";
@@ -7,19 +6,14 @@ import type { CurrentQARef } from "./currentQARef";
 
 const mocks = vi.hoisted(() => ({
   sessionsContext: {},
-  fetchBackendSuggestions: vi.fn(),
-  fetchGeneratedSuggestions: vi.fn(),
-  fetchQAContent: vi.fn(),
+  fetchSuggestions: vi.fn(),
   getSessionList: vi.fn(),
-  getChatIdForSession: vi.fn(),
   getRealIdForSession: vi.fn(),
   updateMessage: vi.fn(),
 }));
 
 vi.mock("@/api/modules/suggestions", () => ({
-  fetchBackendSuggestions: mocks.fetchBackendSuggestions,
-  fetchGeneratedSuggestions: mocks.fetchGeneratedSuggestions,
-  fetchQAContent: mocks.fetchQAContent,
+  fetchSuggestions: mocks.fetchSuggestions,
 }));
 
 vi.mock("use-context-selector", () => ({
@@ -45,7 +39,6 @@ vi.mock("../../Context/ChatAnywhereOptionsContext", () => ({
       session: {
         api: {
           getSessionList: mocks.getSessionList,
-          getChatIdForSession: mocks.getChatIdForSession,
           getRealIdForSession: mocks.getRealIdForSession,
         },
       },
@@ -114,15 +107,11 @@ function renderHarness(currentQARef: CurrentQARef) {
 
 describe("useSuggestionsPolling", () => {
   beforeEach(() => {
-    mocks.fetchBackendSuggestions.mockReset();
-    mocks.fetchGeneratedSuggestions.mockReset();
-    mocks.fetchQAContent.mockReset();
+    mocks.fetchSuggestions.mockReset();
     mocks.getSessionList.mockReset();
-    mocks.getChatIdForSession.mockReset();
     mocks.getRealIdForSession.mockReset();
     mocks.updateMessage.mockReset();
-    mocks.getChatIdForSession.mockReturnValue("chat-1");
-    mocks.getRealIdForSession.mockReturnValue("real-session-1");
+    mocks.getRealIdForSession.mockReturnValue("chat-1");
     mocks.getSessionList.mockResolvedValue(undefined);
   });
 
@@ -135,9 +124,9 @@ describe("useSuggestionsPolling", () => {
     container = undefined;
   });
 
-  it("uses backend suggestions first when available", async () => {
+  it("extracts local Q&A and updates response with frontend suggestions", async () => {
     const currentQARef = createCurrentQARef();
-    mocks.fetchBackendSuggestions.mockResolvedValue(["后端问题"]);
+    mocks.fetchSuggestions.mockResolvedValue(["前端问题"]);
 
     renderHarness(currentQARef);
 
@@ -145,72 +134,52 @@ describe("useSuggestionsPolling", () => {
       await hookApi.pollSuggestions();
     });
 
-    expect(mocks.fetchBackendSuggestions).toHaveBeenCalledWith({
-      sessionId: "session-1",
-    });
-    expect(mocks.fetchQAContent).not.toHaveBeenCalled();
-    expect(mocks.fetchGeneratedSuggestions).not.toHaveBeenCalled();
-    expect(currentQARef.current.response?.cards?.[0]?.data.suggestions).toEqual(
-      ["后端问题"],
-    );
-    expect(mocks.updateMessage).toHaveBeenCalledWith(
-      currentQARef.current.response,
-    );
-  });
-
-  it("falls back to backend Q&A content and generated suggestions", async () => {
-    const currentQARef = createCurrentQARef();
-    mocks.fetchBackendSuggestions.mockResolvedValue([]);
-    mocks.fetchQAContent.mockResolvedValue({
-      success: true,
-      qa_content: {
-        user_message: "提取后的问题",
-        assistant_response: "提取后的回答",
-      },
-    });
-    mocks.fetchGeneratedSuggestions.mockResolvedValue(["兜底问题"]);
-
-    renderHarness(currentQARef);
-
-    await act(async () => {
-      await hookApi.pollSuggestions();
-    });
-
-    expect(mocks.fetchQAContent).toHaveBeenCalledWith({
-      chatId: "chat-1",
-      userMessage: "用户问题",
-    });
-    expect(mocks.fetchGeneratedSuggestions).toHaveBeenCalledWith({
-      chatId: "chat-1",
-      turnId: "response-1",
-      userMessage: "提取后的问题",
-      assistantMessage: "提取后的回答",
-    });
-    expect(currentQARef.current.response?.cards?.[0]?.data.suggestions).toEqual(
-      ["兜底问题"],
-    );
-  });
-
-  it("uses local assistant text when Q&A content is unavailable", async () => {
-    const currentQARef = createCurrentQARef();
-    mocks.fetchBackendSuggestions.mockResolvedValue([]);
-    mocks.fetchQAContent.mockResolvedValue({ success: false });
-    mocks.fetchGeneratedSuggestions.mockResolvedValue(["本地兜底问题"]);
-
-    renderHarness(currentQARef);
-
-    await act(async () => {
-      await hookApi.pollSuggestions();
-    });
-
-    expect(mocks.fetchGeneratedSuggestions).toHaveBeenCalledWith({
+    expect(mocks.getSessionList).toHaveBeenCalled();
+    expect(mocks.fetchSuggestions).toHaveBeenCalledWith({
       chatId: "chat-1",
       turnId: "response-1",
       userMessage: "用户问题",
       assistantMessage: "助手回答",
     });
     expect(currentQARef.current.response?.cards?.[0]?.data.suggestions).toEqual(
-      ["本地兜底问题"],
+      ["前端问题"],
     );
+    expect(mocks.updateMessage).toHaveBeenCalledWith(
+      currentQARef.current.response,
+    );
+  });
+
+  it("uses session id when real chat id is unavailable", async () => {
+    const currentQARef = createCurrentQARef();
+    mocks.getRealIdForSession.mockReturnValue(null);
+    mocks.fetchSuggestions.mockResolvedValue(["前端问题"]);
+
+    renderHarness(currentQARef);
+
+    await act(async () => {
+      await hookApi.pollSuggestions();
+    });
+
+    expect(mocks.fetchSuggestions).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: "session-1" }),
+    );
+  });
+
+  it("does not call suggestions API when request or response text is missing", async () => {
+    const currentQARef = createCurrentQARef();
+    currentQARef.current.request!.cards[0].data.input = [
+      {
+        content: [],
+      },
+    ];
+
+    renderHarness(currentQARef);
+
+    await act(async () => {
+      await hookApi.pollSuggestions();
+    });
+
+    expect(mocks.fetchSuggestions).not.toHaveBeenCalled();
+    expect(mocks.updateMessage).not.toHaveBeenCalled();
   });
 });

@@ -644,6 +644,11 @@ async def put_agents_running_config(
         tenant_id=workspace.tenant_id,
     )
 
+    # 配置变更后重新注册 dream 到外部调度平台
+    cm = workspace.cron_manager
+    if cm is not None:
+        await cm.register_dream()
+
     # Hot reload config (async, non-blocking)
     schedule_agent_reload(
         request,
