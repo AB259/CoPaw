@@ -88,8 +88,8 @@ def _wait_for_backend_ready(
     host: str,
     port: int,
     log_lines: list[str],
-) -> dict[str, object]:
-    """等待后端启动完成并返回版本信息。"""
+) -> None:
+    """等待后端启动完成并校验版本接口。"""
     max_wait = 60
     start_time = time.time()
     last_error = None
@@ -113,7 +113,7 @@ def _wait_for_backend_ready(
                     version_data = response.json()
                     assert "version" in version_data
                     assert isinstance(version_data["version"], str)
-                    return version_data
+                    return
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = str(e)
                 time.sleep(1.0)

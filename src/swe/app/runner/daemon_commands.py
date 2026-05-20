@@ -2,9 +2,9 @@
 """Daemon command execution layer and DaemonCommandHandlerMixin.
 
 Shared by in-chat /daemon <sub> and CLI `swe daemon <sub>`.
-Logs: tail WORKING_DIR / "swe.log" when file logging is enabled. Restart:
-in-process reload of channels, cron and MCP (no process exit); works on
-Mac/Windows without a process manager.
+Logs: read file-backed WORKING_DIR / "swe.log" when file logging is enabled.
+Restart: in-process reload of channels, cron and MCP (no process exit);
+works on Mac/Windows without a process manager.
 """
 
 # pylint: disable=too-many-return-statements,no-name-in-module
@@ -189,14 +189,15 @@ def run_daemon_logs(lines: int = 100) -> str:
     """Tail last N lines from WORKING_DIR / swe.log."""
     if not FILE_LOG_ENABLED:
         return (
-            "**Console log unavailable**\n\n"
+            "**File log unavailable**\n\n"
+            "- This command reads the file-backed swe.log only.\n"
             "- File logging is disabled "
             "(SWE_FILE_LOG_ENABLED=false).\n"
             "- Check the app process stdout/stderr output instead."
         )
     log_path = WORKING_DIR / "swe.log"
     content = _get_last_lines(log_path, lines=lines)
-    return f"**Console log (last {lines} lines)**\n\n```\n{content}\n```"
+    return f"**File log (last {lines} lines)**\n\n```\n{content}\n```"
 
 
 async def run_daemon_approve(

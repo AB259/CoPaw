@@ -18,16 +18,13 @@ def test_run_daemon_logs_reports_disabled_fallback(
         False,
         raising=False,
     )
-    monkeypatch.setattr(
-        daemon_commands,
-        "WORKING_DIR",
-        Path("/tmp/daemon-disabled"),
-    )
 
     message = daemon_commands.run_daemon_logs(lines=25)
 
-    assert "Console log unavailable" in message
+    assert "File log unavailable" in message
     assert "SWE_FILE_LOG_ENABLED=false" in message
+    assert "This command reads the file-backed swe.log only." in message
+    assert "Check the app process stdout/stderr output instead." in message
 
 
 def test_run_daemon_version_reports_disabled_log_file(

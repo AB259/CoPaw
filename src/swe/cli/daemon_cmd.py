@@ -109,9 +109,9 @@ def version_cmd(agent_id: str) -> None:
     "--lines",
     default=100,
     type=int,
-    help="Number of last log lines to show when file logging is enabled.",
+    help="Number of last file-log lines to show from swe.log when enabled.",
 )
 def logs_cmd(lines: int) -> None:
-    """显示文件日志末尾内容；关闭文件日志时给出说明。"""
+    """显示 swe.log 文件日志；禁用时提示改查 stdout/stderr。"""
     lines = min(max(1, lines), 2000)
     click.echo(run_daemon_logs(lines=lines))
