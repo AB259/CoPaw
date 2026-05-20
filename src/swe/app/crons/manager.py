@@ -1027,9 +1027,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
         return changed, disabled_ids
 
     async def _ensure_task_binding(self, spec: CronJobSpec) -> CronJobSpec:
-        creator_user_id = (spec.meta or {}).get("creator_user_id")
-        if not self._should_bind_task_session(spec, creator_user_id):
+        creator_user_id_raw = (spec.meta or {}).get("creator_user_id")
+        if not self._should_bind_task_session(spec, creator_user_id_raw):
             return spec
+
+        # 类型检查通过后，显式转换为 str 类型
+        creator_user_id = str(creator_user_id_raw)
 
         # 从已持久化的任务中合并执行状态元数据，避免 PUT 等操作覆盖运行时状态
         existing_meta = await self._load_existing_task_meta(spec.id)
@@ -1205,12 +1208,15 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 preview,
             )
         else:
-            if not getattr(self._runner, "session", None):
-                return
-            preview = await self._load_task_preview_text(
-                task_session_id,
-                creator_user_id,
-            )
+            # 即使无法获取 preview，也应该继续更新任务执行记录
+            # 因为自动暂停逻辑依赖未读计数更新
+            if getattr(self._runner, "session", None):
+                preview = await self._load_task_preview_text(
+                    task_session_id,
+                    creator_user_id,
+                )
+            else:
+                preview = ""
         async with self._lock:
             _, auto_paused, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._apply_task_execution_success(
@@ -1226,6 +1232,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 ).external_job_id
                 if ext_id and self._scheduler_adapter:
                     await self._scheduler_adapter.pause_job(ext_id)
+                # 同步暂停状态到 Monitor 数据库
+                # 概览页面从 Monitor 读取任务状态，需要同步更新
+                updated_job = await self._repo.get_job(job.id)
+                if updated_job and self._monitor_sync_client is not None:
+                    await self._monitor_sync_client.sync_job(updated_job)
 
     async def _append_text_task_message(
         self,
