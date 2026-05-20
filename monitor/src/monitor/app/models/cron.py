@@ -332,6 +332,13 @@ class ExecutionSyncRequest(BaseModel):
     # 执行元数据
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
 
+    # 已读状态（手动执行且成功的任务默认已读）
+    is_read: bool = Field(default=False, description="是否已读")
+    read_at: Optional[datetime] = Field(
+        default=None,
+        description="已读时间",
+    )
+
 
 # ============================================================
 # Query Models (供前端查询)

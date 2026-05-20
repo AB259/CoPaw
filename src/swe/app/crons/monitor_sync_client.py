@@ -505,6 +505,12 @@ class MonitorSyncClient:
         Returns:
             Dict with execution sync fields
         """
+        # 手动执行且成功的任务默认标记为已读
+        is_read = is_manual and status == "success"
+        read_at = None
+        if is_read and end_time:
+            read_at = self._format_optional_time(end_time)
+
         return {
             "job_id": job.id,
             "job_name": job.name,
@@ -523,6 +529,8 @@ class MonitorSyncClient:
             "input_snapshot": self._format_optional_json(input_snapshot),
             "output_preview": self._truncate_preview(output_preview),
             "meta": "",
+            "is_read": is_read,
+            "read_at": read_at,
         }
 
     def _format_actual_time(self, time: datetime) -> str:
