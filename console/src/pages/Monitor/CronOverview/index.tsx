@@ -16,7 +16,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { DownloadOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
+import { DownloadOutlined, EyeOutlined, ReloadOutlined, CheckOutlined } from "@ant-design/icons";
 import { PageHeader } from "@/components/PageHeader";
 import {
   monitorApi,
@@ -370,6 +370,21 @@ export default function CronOverviewPage() {
     setDetailDrawerOpen(true);
   };
 
+  // Mark job as read
+  const handleMarkAsRead = async (jobId: string) => {
+    try {
+      const result = await monitorApi.markJobAsRead(jobId);
+      if (result.marked) {
+        message.success(`已标记 ${result.count} 条记录为已读`);
+        // 刷新执行记录列表
+        fetchExecutions();
+      }
+    } catch (error) {
+      console.error("Failed to mark as read:", error);
+      message.error("标记已读失败");
+    }
+  };
+
   // 构建带"全部"选项的筛选项列表（使用 useMemo 缓存）
   const userOptions = useMemo(() => {
     return [{ value: "", label: "全部" }, ...filterOptions.users];
@@ -488,11 +503,39 @@ export default function CronOverviewPage() {
       dataIndex: "status",
       key: "status",
       width: 80,
-      render: (status: string) => (
-        <Tag color={EXEC_STATUS_COLORS[status] || "default"}>
-          {EXEC_STATUS_LABELS[status] || status}
-        </Tag>
-      ),
+      render: (status: string, record: ExecutionItem) => {
+        const color = EXEC_STATUS_COLORS[status] || "default";
+        // 未读的成功任务添加高亮背景
+        if (status === "success" && !record.is_read) {
+          return (
+            <Tag color={color} style={{ fontWeight: "bold" }}>
+              {EXEC_STATUS_LABELS[status] || status}
+            </Tag>
+          );
+        }
+        return (
+          <Tag color={color}>
+            {EXEC_STATUS_LABELS[status] || status}
+          </Tag>
+        );
+      },
+    },
+    {
+      title: "已读",
+      dataIndex: "is_read",
+      key: "is_read",
+      width: 70,
+      render: (isRead: boolean, record: ExecutionItem) => {
+        // 只有成功的任务才显示已读状态
+        if (record.status !== "success") {
+          return "-";
+        }
+        return isRead ? (
+          <Tag color="green">已读</Tag>
+        ) : (
+          <Tag color="orange">未读</Tag>
+        );
+      },
     },
     {
       title: "执行时间",
@@ -523,16 +566,28 @@ export default function CronOverviewPage() {
     {
       title: "操作",
       key: "action",
-      width: 70,
+      width: 120,
       render: (_, record) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<EyeOutlined />}
-          onClick={() => handleViewExecution(record)}
-        >
-          详情
-        </Button>
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handleViewExecution(record)}
+          >
+            详情
+          </Button>
+          {record.status === "success" && !record.is_read && (
+            <Button
+              type="link"
+              size="small"
+              icon={<CheckOutlined />}
+              onClick={() => handleMarkAsRead(record.job_id)}
+            >
+              标记已读
+            </Button>
+          )}
+        </Space>
       ),
     },
   ];
@@ -723,7 +778,7 @@ export default function CronOverviewPage() {
                         setExecsPageSize(pageSize);
                       },
                     }}
-                    scroll={{ x: 900 }}
+                    scroll={{ x: 1020 }}
                   />
                 </>
               ),

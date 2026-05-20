@@ -780,6 +780,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     user_id,
                 ),
             )
+            # 同步标记已读到 Monitor 服务
+            if found and self._monitor_sync_client is not None:
+                await self._monitor_sync_client.mark_job_as_read(job_id)
             return found
 
     def build_task_view(

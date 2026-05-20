@@ -582,6 +582,87 @@ class QueryService:
             "job_ids": job_ids,
         }
 
+    async def mark_job_as_read(self, job_id: str) -> int:
+        """标记任务及其历史执行记录为已读。
+
+        将指定任务的所有成功执行的未读记录标记为已读，
+        同时更新该任务之前所有未读的成功执行记录。
+
+        Args:
+            job_id: 任务ID
+
+        Returns:
+            更新的记录数量
+        """
+        db = get_db_connection()
+        now = datetime.now(BEIJING_TZ)
+
+        # 更新该任务所有成功的未读执行记录
+        update_sql = """
+            UPDATE swe_cron_executions
+            SET is_read = TRUE, read_at = %s
+            WHERE job_id = %s
+            AND status = 'success'
+            AND is_read = FALSE
+        """
+        await db.execute(update_sql, (now, job_id))
+
+        # 获取更新的记录数量
+        count_sql = """
+            SELECT COUNT(*) as count
+            FROM swe_cron_executions
+            WHERE job_id = %s AND status = 'success' AND is_read = TRUE
+        """
+        result = await db.fetch_one(count_sql, (job_id,))
+        return result.get("count", 0) if result else 0
+
+    async def get_unread_count(self, tenant_id: Optional[str] = None) -> dict:
+        """获取未读任务数量统计。
+
+        按任务分组统计未读的成功执行记录数量，
+        用于前端展示未读提醒。
+
+        Args:
+            tenant_id: 租户ID筛选（可选）
+
+        Returns:
+            包含各任务未读数量的字典
+        """
+        db = get_db_connection()
+
+        conditions = ["status = 'success'", "is_read = FALSE"]
+        sql_params: List = []
+
+        if tenant_id:
+            conditions.append("tenant_id = %s")
+            sql_params.append(tenant_id)
+
+        where_clause = " AND ".join(conditions)
+
+        sql = f"""
+            SELECT job_id, job_name, COUNT(*) as unread_count
+            FROM swe_cron_executions
+            WHERE {where_clause}
+            GROUP BY job_id, job_name
+            ORDER BY unread_count DESC
+        """
+        rows = await db.fetch_all(
+            sql,
+            tuple(sql_params) if sql_params else None,
+        )
+
+        return {
+            "items": [
+                {
+                    "job_id": row["job_id"],
+                    "job_name": row["job_name"] or row["job_id"],
+                    "unread_count": row["unread_count"],
+                }
+                for row in rows
+            ],
+            "total_unread": sum(row["unread_count"] for row in rows),
+        }
+
 
 # Global query service instance
 _query_service: Optional[QueryService] = None
