@@ -147,10 +147,12 @@ class QueryService:
             )
             for row in rows
         ]
-        # Query execution count for each job
+        # Query execution count and today's status for each job
         if items:
             job_ids = [job.id for job in items]
             placeholders = ",".join("%s" for _ in job_ids)
+
+            # 查询总执行次数
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
                 FROM swe_cron_executions
@@ -161,8 +163,37 @@ class QueryService:
             count_map = {
                 row.get("job_id"): row.get("count", 0) for row in count_rows
             }
+
+            # 查询今日最新执行状态（北京时间今日）
+            today_start_beijing = datetime.now(BEIJING_TZ).replace(
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            # 转换为 UTC 时间查询数据库（北京时间 - 8小时 = UTC）
+            today_start_utc = today_start_beijing - timedelta(hours=8)
+            today_sql = f"""
+                SELECT job_id, status
+                FROM swe_cron_executions
+                WHERE job_id IN ({placeholders})
+                AND actual_time >= %s
+                ORDER BY actual_time DESC
+            """
+            today_rows = await db.fetch_all(
+                today_sql,
+                tuple(job_ids) + (today_start_utc,),
+            )
+            # 取每个 job_id 的第一条记录（最新的执行状态）
+            today_status_map = {}
+            for row in today_rows:
+                job_id = row.get("job_id")
+                if job_id not in today_status_map:
+                    today_status_map[job_id] = row.get("status")
+
             for job in items:
                 job.execution_count = count_map.get(job.id, 0)
+                job.today_status = today_status_map.get(job.id)
 
         return PaginatedResponse(
             items=items,
@@ -450,104 +481,106 @@ class QueryService:
 
         return items
 
+    async def get_filter_options(self) -> dict:
+        """获取所有筛选项的下拉选项列表。
 
-async def get_filter_options(self) -> dict:
-    """获取所有筛选项的下拉选项列表。
+        从任务表和执行表中聚合获取可选值，用于前端下拉框。
 
-    从任务表和执行表中聚合获取可选值，用于前端下拉框。
+        Returns:
+            包含各筛选项列表的字典
+        """
+        db = get_db_connection()
 
-    Returns:
-        包含各筛选项列表的字典
-    """
-    db = get_db_connection()
-
-    # 获取用户列表（tenant_id + tenant_name）
-    users_sql = """
-            SELECT DISTINCT tenant_id, tenant_name
+        # 获取用户列表（按 tenant_id 分组去重，避免同一用户多条记录）
+        users_sql = """
+            SELECT tenant_id, MAX(tenant_name) as tenant_name
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL AND tenant_id IS NOT NULL AND tenant_id != ''
+            GROUP BY tenant_id
             ORDER BY tenant_name, tenant_id
         """
-    users_rows = await db.fetch_all(users_sql)
-    users = [
-        {
-            "value": row["tenant_id"],
-            "label": row["tenant_name"] or row["tenant_id"],
-        }
-        for row in users_rows
-    ]
+        users_rows = await db.fetch_all(users_sql)
+        users = [
+            {
+                "value": row["tenant_id"],
+                "label": f"{row['tenant_name'] or ''}/{row['tenant_id']}",
+            }
+            for row in users_rows
+        ]
 
-    # 获取分行列表（bbk_id）
-    bbk_sql = """
+        # 获取分行列表（bbk_id）
+        bbk_sql = """
             SELECT DISTINCT bbk_id
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL AND bbk_id IS NOT NULL AND bbk_id != ''
             ORDER BY bbk_id
         """
-    bbk_rows = await db.fetch_all(bbk_sql)
-    bbk_ids = [
-        {"value": row["bbk_id"], "label": row["bbk_id"]} for row in bbk_rows
-    ]
+        bbk_rows = await db.fetch_all(bbk_sql)
+        bbk_ids = [
+            {"value": row["bbk_id"], "label": row["bbk_id"]}
+            for row in bbk_rows
+        ]
 
-    # 获取渠道列表（channel）
-    channel_sql = """
+        # 获取渠道列表（channel）
+        channel_sql = """
             SELECT DISTINCT channel
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL AND channel IS NOT NULL AND channel != ''
             ORDER BY channel
         """
-    channel_rows = await db.fetch_all(channel_sql)
-    channels = [
-        {"value": row["channel"], "label": row["channel"]}
-        for row in channel_rows
-    ]
+        channel_rows = await db.fetch_all(channel_sql)
+        channels = [
+            {"value": row["channel"], "label": row["channel"]}
+            for row in channel_rows
+        ]
 
-    # 获取来源/平台列表（source_id）
-    source_sql = """
+        # 获取来源/平台列表（source_id）
+        source_sql = """
             SELECT DISTINCT source_id
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL AND source_id IS NOT NULL AND source_id != ''
             ORDER BY source_id
         """
-    source_rows = await db.fetch_all(source_sql)
-    source_ids = [
-        {"value": row["source_id"], "label": row["source_id"]}
-        for row in source_rows
-    ]
+        source_rows = await db.fetch_all(source_sql)
+        source_ids = [
+            {"value": row["source_id"], "label": row["source_id"]}
+            for row in source_rows
+        ]
 
-    # 获取任务名称列表（name）
-    job_names_sql = """
+        # 获取任务名称列表（name）
+        job_names_sql = """
             SELECT DISTINCT name
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL AND name IS NOT NULL AND name != ''
             ORDER BY name
         """
-    job_names_rows = await db.fetch_all(job_names_sql)
-    job_names = [
-        {"value": row["name"], "label": row["name"]} for row in job_names_rows
-    ]
+        job_names_rows = await db.fetch_all(job_names_sql)
+        job_names = [
+            {"value": row["name"], "label": row["name"]}
+            for row in job_names_rows
+        ]
 
-    # 获取任务ID列表（用于执行记录筛选）
-    job_ids_sql = """
+        # 获取任务ID列表（用于执行记录筛选）
+        job_ids_sql = """
             SELECT DISTINCT id, name
             FROM swe_cron_jobs
             WHERE deleted_at IS NULL
             ORDER BY name
         """
-    job_ids_rows = await db.fetch_all(job_ids_sql)
-    job_ids = [
-        {"value": row["id"], "label": row["name"] or row["id"]}
-        for row in job_ids_rows
-    ]
+        job_ids_rows = await db.fetch_all(job_ids_sql)
+        job_ids = [
+            {"value": row["id"], "label": row["name"] or row["id"]}
+            for row in job_ids_rows
+        ]
 
-    return {
-        "users": users,
-        "bbk_ids": bbk_ids,
-        "channels": channels,
-        "source_ids": source_ids,
-        "job_names": job_names,
-        "job_ids": job_ids,
-    }
+        return {
+            "users": users,
+            "bbk_ids": bbk_ids,
+            "channels": channels,
+            "source_ids": source_ids,
+            "job_names": job_names,
+            "job_ids": job_ids,
+        }
 
 
 # Global query service instance

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Tabs,
@@ -25,18 +25,12 @@ import {
   FilterOption,
   FilterOptionsResponse,
 } from "../../../api/modules/monitor";
-import { CHANNELS } from "../../../constants/channel";
 import { useIframeStore } from "../../../stores/iframeStore";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
 
-// Status colors
-const JOB_STATUS_COLORS: Record<string, string> = {
-  active: "green",
-  paused: "orange",
-  deleted: "red",
-};
 
 const EXEC_STATUS_COLORS: Record<string, string> = {
   success: "green",
@@ -47,12 +41,6 @@ const EXEC_STATUS_COLORS: Record<string, string> = {
   running: "blue",
 };
 
-// Status translations
-const JOB_STATUS_LABELS: Record<string, string> = {
-  active: "运行中",
-  paused: "已暂停",
-  deleted: "已删除",
-};
 
 const EXEC_STATUS_LABELS: Record<string, string> = {
   success: "成功",
@@ -73,12 +61,6 @@ const TIME_RANGE_OPTIONS = [
   { value: "custom", label: "自定义" },
 ];
 
-// 状态选项
-const JOB_STATUS_OPTIONS = [
-  { value: "", label: "全部状态" },
-  { value: "active", label: "运行中" },
-  { value: "paused", label: "已暂停" },
-];
 
 const EXEC_STATUS_OPTIONS = [
   { value: "", label: "全部状态" },
@@ -89,13 +71,38 @@ const EXEC_STATUS_OPTIONS = [
   { value: "skipped", label: "跳过" },
 ];
 
-// 渠道选项（来自前端常量）
-const CHANNEL_OPTIONS = [
-  { value: "", label: "全部渠道" },
-  ...Object.values(CHANNELS).map((channel) => ({
-    value: channel,
-    label: channel,
+// 平台名称映射
+const PLATFORM_NAME_MAP: Record<string, string> = {
+  RMASSIST: "RM小助",
+  CMSJY: "远程小助",
+  UPPCLAW: "智像小助",
+  copilotClaw: "数据赋能小助",
+  ruice: "睿策小助",
+  privatebanking: "私行小助",
+  SZLS: "数智零售",
+  rtauto: "实时数据",
+};
+
+// 分行选项（来自前端常量）
+const BBK_OPTIONS = [
+  { value: "", label: "全部分行" },
+  ...BBK_ID_MAP,
+];
+
+// 平台选项（来自前端常量）
+const PLATFORM_OPTIONS = [
+  { value: "", label: "全部平台" },
+  ...Object.entries(PLATFORM_NAME_MAP).map(([value, label]) => ({
+    value,
+    label,
   })),
+];
+
+// 是否启用选项
+const ENABLED_OPTIONS = [
+  { value: "", label: "全部" },
+  { value: "true", label: "已启用" },
+  { value: "false", label: "已禁用" },
 ];
 
 export default function CronOverviewPage() {
@@ -107,12 +114,12 @@ export default function CronOverviewPage() {
   // 首次加载标记：控制是否自动触发查询
   const initialLoadDone = useRef(false);
 
-  // Filter options (loaded from API - 不包含 channels，渠道使用前端常量)
+  // Filter options (loaded from API - 仅用户从数据库查询)
   const [filterOptions, setFilterOptions] = useState<FilterOptionsResponse>({
     users: [],
-    bbk_ids: [],
-    channels: [], // 保留字段但不使用
-    source_ids: [],
+    bbk_ids: [], // 不使用，分行来自前端常量
+    channels: [], // 不使用
+    source_ids: [], // 不使用，平台来自前端常量
     job_names: [],
     job_ids: [],
   });
@@ -127,9 +134,12 @@ export default function CronOverviewPage() {
   // Jobs filters (dropdown selects)
   const [jobsUserFilter, setJobsUserFilter] = useState<string>("");
   const [jobsBbkFilter, setJobsBbkFilter] = useState<string>("");
-  const [jobsSourceFilter, setJobsSourceFilter] = useState<string>("");
-  const [jobsChannelFilter, setJobsChannelFilter] = useState<string>("");
-  const [jobsStatusFilter, setJobsStatusFilter] = useState<string>("");
+  const [jobsSourceFilter, setJobsSourceFilter] = useState<string>(() => {
+    // 默认选中登录人当前的平台，如果获取不到则使用 RMASSIST
+    const source = useIframeStore.getState().source;
+    return source || "RMASSIST";
+  });
+  const [jobsEnabledFilter, setJobsEnabledFilter] = useState<string>("true"); // 默认选中已启用
 
   // Executions state
   const [execsLoading, setExecsLoading] = useState(false);
@@ -141,7 +151,7 @@ export default function CronOverviewPage() {
   const [execsJobFilter, setExecsJobFilter] = useState<string>("");
   const [execsUserFilter, setExecsUserFilter] = useState<string>("");
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");
-  const [execsTimeRangeType, setExecsTimeRangeType] = useState<string>("last7days");
+  const [execsTimeRangeType, setExecsTimeRangeType] = useState<string>("today");
   const [execsCustomTimeRange, setExecsCustomTimeRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([dayjs().subtract(7, "day"), dayjs()]);
 
   // Execution detail drawer
@@ -211,12 +221,12 @@ export default function CronOverviewPage() {
     setJobsLoading(true);
     try {
       const sourceId = overrideSource || jobsSourceFilter;
+      const enabledValue = jobsEnabledFilter === "true" ? true : jobsEnabledFilter === "false" ? false : undefined;
       const result = await monitorApi.getJobs(jobsPage, jobsPageSize, {
         tenant_id: jobsUserFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
         source_id: sourceId || undefined,
-        status: jobsStatusFilter || undefined,
-        enabled: undefined,
+        enabled: enabledValue,
       });
       setJobs(result.items);
       setJobsTotal(result.total);
@@ -310,10 +320,12 @@ export default function CronOverviewPage() {
   const handleExportJobs = async () => {
     try {
       message.loading("正在导出...");
+      const enabledValue = jobsEnabledFilter === "true" ? true : jobsEnabledFilter === "false" ? false : undefined;
       const blob = await monitorApi.exportJobs({
         tenant_id: jobsUserFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
         source_id: jobsSourceFilter || undefined,
+        enabled: enabledValue,
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -358,10 +370,14 @@ export default function CronOverviewPage() {
     setDetailDrawerOpen(true);
   };
 
-  // 构建带"全部"选项的筛选项列表
-  const buildSelectOptions = (options: FilterOption[]): FilterOption[] => {
-    return [{ value: "", label: "全部" }, ...options];
-  };
+  // 构建带"全部"选项的筛选项列表（使用 useMemo 缓存）
+  const userOptions = useMemo(() => {
+    return [{ value: "", label: "全部" }, ...filterOptions.users];
+  }, [filterOptions.users]);
+
+  const jobIdOptions = useMemo(() => {
+    return [{ value: "", label: "全部" }, ...filterOptions.job_ids];
+  }, [filterOptions.job_ids]);
 
   // Jobs table columns
   const jobsColumns: ColumnsType<CronJobItem> = [
@@ -398,25 +414,34 @@ export default function CronOverviewPage() {
       dataIndex: "bbk_id",
       key: "bbk_id",
       width: 100,
-      render: (bbk: string) => bbk || "-",
+      render: (bbk: string) => BBK_ID_TO_NAME_MAP[bbk] || bbk || "-",
     },
     {
-      title: "渠道",
-      dataIndex: "channel",
-      key: "channel",
-      width: 100,
-      render: (channel: string) => channel || "-",
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
-      width: 80,
-      render: (status: string) => (
-        <Tag color={JOB_STATUS_COLORS[status] || "default"}>
-          {JOB_STATUS_LABELS[status] || status}
+      title: "是否启用",
+      dataIndex: "enabled",
+      key: "enabled",
+      width: 90,
+      render: (enabled: boolean) => (
+        <Tag color={enabled ? "green" : "orange"}>
+          {enabled ? "已启用" : "已禁用"}
         </Tag>
       ),
+    },
+    {
+      title: "今日执行状态",
+      dataIndex: "today_status",
+      key: "today_status",
+      width: 100,
+      render: (status: string | null) => {
+        if (!status) {
+          return <Tag color="default">未执行</Tag>;
+        }
+        return (
+          <Tag color={EXEC_STATUS_COLORS[status] || "default"}>
+            {EXEC_STATUS_LABELS[status] || status}
+          </Tag>
+        );
+      },
     },
     {
       title: "执行次数",
@@ -534,57 +559,39 @@ export default function CronOverviewPage() {
                     <Space size="middle" wrap>
                       <Select
                         placeholder="用户"
-                        value={jobsUserFilter || undefined}
+                        value={jobsUserFilter}
                         onChange={(value) => setJobsUserFilter(value || "")}
                         style={{ width: 180 }}
-                        allowClear
                         showSearch
                         filterOption={(input, option) =>
                           (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
                         }
-                        options={buildSelectOptions(filterOptions.users)}
+                        options={userOptions}
                         loading={filterOptionsLoading}
+                        virtual={false}
                       />
                       <Select
                         placeholder="分行"
-                        value={jobsBbkFilter || undefined}
+                        value={jobsBbkFilter}
                         onChange={(value) => setJobsBbkFilter(value || "")}
                         style={{ width: 120 }}
-                        allowClear
-                        options={buildSelectOptions(filterOptions.bbk_ids)}
-                        loading={filterOptionsLoading}
-                      />
-                      {/* 平台筛选：有 iframe source 时显示为固定标签，否则显示下拉框 */}
-                      {currentUserSource ? (
-                        <Tag color="blue" style={{ margin: 0, padding: "4px 8px" }}>
-                          平台: {currentUserSource}
-                        </Tag>
-                      ) : (
-                        <Select
-                          placeholder="平台"
-                          value={jobsSourceFilter || undefined}
-                          onChange={(value) => setJobsSourceFilter(value || "")}
-                          style={{ width: 140 }}
-                          allowClear
-                          options={buildSelectOptions(filterOptions.source_ids)}
-                          loading={filterOptionsLoading}
-                        />
-                      )}
-                      <Select
-                        placeholder="渠道"
-                        value={jobsChannelFilter || undefined}
-                        onChange={(value) => setJobsChannelFilter(value || "")}
-                        style={{ width: 120 }}
-                        allowClear
-                        options={CHANNEL_OPTIONS}
+                        options={BBK_OPTIONS}
                       />
                       <Select
-                        placeholder="状态"
-                        value={jobsStatusFilter || undefined}
-                        onChange={(value) => setJobsStatusFilter(value || "")}
+                        placeholder="平台"
+                        value={jobsSourceFilter || undefined}
+                        onChange={(value) => setJobsSourceFilter(value || "")}
+                        style={{ width: 160 }}
+                        allowClear
+                        options={PLATFORM_OPTIONS}
+                      />
+                      <Select
+                        placeholder="是否启用"
+                        value={jobsEnabledFilter || undefined}
+                        onChange={(value) => setJobsEnabledFilter(value || "")}
                         style={{ width: 120 }}
                         allowClear
-                        options={JOB_STATUS_OPTIONS}
+                        options={ENABLED_OPTIONS}
                       />
                       <Button
                         type="primary"
@@ -632,36 +639,35 @@ export default function CronOverviewPage() {
                     <Space size="middle" wrap>
                       <Select
                         placeholder="任务"
-                        value={execsJobFilter || undefined}
+                        value={execsJobFilter}
                         onChange={(value) => setExecsJobFilter(value || "")}
                         style={{ width: 200 }}
-                        allowClear
                         showSearch
                         filterOption={(input, option) =>
                           (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
                         }
-                        options={buildSelectOptions(filterOptions.job_ids)}
+                        options={jobIdOptions}
                         loading={filterOptionsLoading}
+                        virtual={false}
                       />
                       <Select
                         placeholder="用户"
-                        value={execsUserFilter || undefined}
+                        value={execsUserFilter}
                         onChange={(value) => setExecsUserFilter(value || "")}
                         style={{ width: 180 }}
-                        allowClear
                         showSearch
                         filterOption={(input, option) =>
                           (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
                         }
-                        options={buildSelectOptions(filterOptions.users)}
+                        options={userOptions}
                         loading={filterOptionsLoading}
+                        virtual={false}
                       />
                       <Select
                         placeholder="状态"
-                        value={execsStatusFilter || undefined}
+                        value={execsStatusFilter}
                         onChange={(value) => setExecsStatusFilter(value || "")}
                         style={{ width: 120 }}
-                        allowClear
                         options={EXEC_STATUS_OPTIONS}
                       />
                       <Select

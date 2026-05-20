@@ -44,6 +44,7 @@ export interface CronJobItem {
   status: string;
   pause_reason: string;
   execution_count: number;
+  today_status: string | null; // 今日最新执行状态: success/error/cancelled/timeout/skipped
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
@@ -134,7 +135,9 @@ export const monitorApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== null && value !== "") {
+          params.append(key, value);
+        }
       });
     }
     return request(`/monitor/cron/executions?${params.toString()}`);

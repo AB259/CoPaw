@@ -123,6 +123,10 @@ class CronJobModel(BaseModel):
 
     # 统计字段（不在数据库中，运行时计算）
     execution_count: int = Field(default=0, description="已执行次数")
+    today_status: Optional[str] = Field(
+        default=None,
+        description="今日最新执行状态: success/error/cancelled/timeout/skipped",
+    )
 
     def get_meta_dict(self) -> Dict[str, Any]:
         """Parse meta string to dict."""
@@ -153,9 +157,9 @@ class ExecutionModel(BaseModel):
     job_id: str = Field(..., description="任务ID")
     job_name: str = Field(default="", description="任务名称 (冗余存储)")
     tenant_id: str = Field(..., description="租户ID (分行号)")
-    tenant_name: str = Field(
-        default="",
-        description="租户姓名 (从任务表JOIN获取)",
+    tenant_name: Optional[str] = Field(
+        default=None,
+        description="租户姓名 (从任务表JOIN获取，可能为空)",
     )
 
     # 执行时间
