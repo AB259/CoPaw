@@ -12,7 +12,7 @@
 
 ## daemon 日志命令行为
 
-`/daemon logs` 与 `swe daemon logs` 仅在文件日志启用时读取 `swe.log`。当 `SWE_FILE_LOG_ENABLED` 未开启时，这两个入口无法提供完整运行时日志；请改为检查容器日志、Supervisor 日志、systemd journal 或进程 `stdout/stderr`。
+`/daemon logs` 与 `swe daemon logs` 仅在文件日志启用时读取 `swe.log`。当 `SWE_FILE_LOG_ENABLED` 未开启时，这两个入口不会返回运行时日志内容，只会提示运维改为检查容器日志、Supervisor 日志、systemd journal 或进程 `stdout/stderr`。
 
 ## query error dump
 
