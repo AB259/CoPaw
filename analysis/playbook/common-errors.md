@@ -158,3 +158,37 @@
 
 - 对用户可见、需要进入历史的 runner 合成消息，先写入 `runtime.agent.memory`，再 `yield`
 - 测试同时断言 stream 输出和 session state 末尾内容，避免只验证前端当次可见
+
+## Tenant bootstrap 时报 default workspace 缺少 agent.json
+
+### 症状
+
+- 首次访问租户、`ensure_bootstrap()` 自愈，或 `TenantInitializer.initialize()` 期间直接失败
+- 常见异常为：
+  - `FileNotFoundError: Agent config not found: <tenant>/workspaces/default/agent.json`
+- 伴随日志里可能先看到：
+  - `Config file not found, copying from md_files templates...`
+  - `Source file not found: .../src/swe/agents/md_files/config.json`
+
+### 典型原因
+
+- `ensure_default_agent_exists()` 只保证 root `config.json`、`chats.json` 和 `jobs.json`，不会直接生成 default workspace 的 `agent.json`
+- `ensure_default_workspace_scaffold()` 在没有模板 `agent.json` 时，如果先 `load_agent_config()`，就会在 fallback 生成之前触发异常
+- cached tenant 自愈场景下，`config.json` 或 `agent.json` 被删除后再次 bootstrap，也会走到同一条缺口
+
+### 第一落点
+
+- [src/swe/app/workspace/tenant_initializer.py](/Users/shixiangyi/code/Swe/src/swe/app/workspace/tenant_initializer.py)
+- 重点看 `ensure_default_workspace_scaffold()` 是否遵循“优先复制模板，没有模板再按 tenant root config 合成 fallback agent.json”
+- [src/swe/app/migration.py](/Users/shixiangyi/code/Swe/src/swe/app/migration.py)
+- 重点看 `ensure_default_agent_exists()` / `_do_ensure_default_agent()` 只负责最小 bootstrap，不要误以为它会补齐 workspace 级 `agent.json`
+
+### 第一阶段处理
+
+- 先确认 default 模板租户是否存在 `workspaces/default/agent.json`
+- 有模板时，优先检查模板复制路径和 `workspace_dir` 重写是否正确
+- 没模板时，检查 fallback `AgentProfileConfig` 是否从 tenant root `config.json` 正确构造并落盘
+- 回归至少覆盖三类路径：
+  - 首次初始化
+  - 从 default 模板复制 agent 配置
+  - cached tenant 删除 `agent.json` 后再次 `ensure_bootstrap()` 自愈
