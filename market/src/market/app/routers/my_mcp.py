@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 from urllib.parse import unquote
@@ -28,6 +29,8 @@ from ..my_mcp_helpers import (
     mark_request_state,
     save_agent_config_for_request,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market/my-mcp", tags=["my-mcp"])
 MCP_CLIENT_NOT_FOUND_TEMPLATE = "MCP client '{client_key}' not found"
@@ -369,6 +372,29 @@ async def create_my_mcp(
     agent_config.mcp.clients[body.client_key] = new_client
     save_agent_config_for_request(context, agent_config, request)
 
+    # Log create operation
+    marketplace = request.app.state.marketplace
+    if marketplace.db.is_connected:
+        try:
+            await marketplace.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    context.source_id,
+                    context.user_id,
+                    context.user_name,
+                    "create",
+                    "mcp",
+                    body.name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log create operation: %s", e)
+
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
     return detail
@@ -421,6 +447,29 @@ async def update_my_mcp(
     agent_config.mcp.clients[client_key] = updated_client
     save_agent_config_for_request(context, agent_config, request)
 
+    # Log edit operation
+    marketplace = request.app.state.marketplace
+    if marketplace.db.is_connected:
+        try:
+            await marketplace.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    context.source_id,
+                    context.user_id,
+                    context.user_name,
+                    "edit",
+                    "mcp",
+                    updated_client.name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log edit operation: %s", e)
+
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
     return detail
@@ -441,8 +490,36 @@ async def delete_my_mcp(
             detail=_mcp_client_not_found_detail(client_key),
         )
 
+    # Get client name before deletion for logging
+    deleted_client = agent_config.mcp.clients[client_key]
+    deleted_name = deleted_client.name
+
     del agent_config.mcp.clients[client_key]
     save_agent_config_for_request(context, agent_config, request)
+
+    # Log delete operation
+    marketplace = request.app.state.marketplace
+    if marketplace.db.is_connected:
+        try:
+            await marketplace.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    context.source_id,
+                    context.user_id,
+                    context.user_name,
+                    "delete",
+                    "mcp",
+                    deleted_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log delete operation: %s", e)
+
     return {"message": f"MCP client '{client_key}' deleted"}
 
 

@@ -284,7 +284,6 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         if path in exempt_paths:
             return True
 
-        # Prefix match for certain routes
         if any(
             path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES
         ):

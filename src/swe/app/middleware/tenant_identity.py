@@ -99,6 +99,7 @@ PUBLIC_ROUTE_EXEMPT_PREFIXES = (
     "/static/",
     "/console/",
     "/api/assets/text/",
+    "/api/internal/",
 )
 
 
@@ -115,7 +116,6 @@ def is_tenant_exempt(path: str) -> bool:
     if path in TENANT_EXEMPT_ROUTES:
         return True
 
-    # Prefix match for certain routes
     if any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES):
         return True
 
