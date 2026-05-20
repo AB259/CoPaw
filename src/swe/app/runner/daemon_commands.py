@@ -2,8 +2,9 @@
 """Daemon command execution layer and DaemonCommandHandlerMixin.
 
 Shared by in-chat /daemon <sub> and CLI `swe daemon <sub>`.
-Logs: tail WORKING_DIR / "swe.log". Restart: in-process reload of channels,
-cron and MCP (no process exit); works on Mac/Windows without a process manager.
+Logs: tail WORKING_DIR / "swe.log" when file logging is enabled. Restart:
+in-process reload of channels, cron and MCP (no process exit); works on
+Mac/Windows without a process manager.
 """
 
 # pylint: disable=too-many-return-statements,no-name-in-module
@@ -16,7 +17,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from agentscope.message import Msg, TextBlock
 
-from ...constant import WORKING_DIR
+from ...constant import FILE_LOG_ENABLED, WORKING_DIR
 from ...config import load_config
 
 if TYPE_CHECKING:
@@ -172,16 +173,27 @@ def run_daemon_version(context: DaemonContext) -> str:
         from ...__version__ import __version__ as ver
     except ImportError:
         ver = "unknown"
+    if FILE_LOG_ENABLED:
+        log_file = str(context.working_dir / "swe.log")
+    else:
+        log_file = "disabled (SWE_FILE_LOG_ENABLED=false)"
     return (
         f"**Daemon version**\n\n"
         f"- Version: {ver}\n"
         f"- Working dir: {context.working_dir}\n"
-        f"- Log file: {WORKING_DIR / 'swe.log'}"
+        f"- Log file: {log_file}"
     )
 
 
 def run_daemon_logs(lines: int = 100) -> str:
     """Tail last N lines from WORKING_DIR / swe.log."""
+    if not FILE_LOG_ENABLED:
+        return (
+            "**Console log unavailable**\n\n"
+            "- File logging is disabled "
+            "(SWE_FILE_LOG_ENABLED=false).\n"
+            "- Check the app process stdout/stderr output instead."
+        )
     log_path = WORKING_DIR / "swe.log"
     content = _get_last_lines(log_path, lines=lines)
     return f"**Console log (last {lines} lines)**\n\n```\n{content}\n```"
