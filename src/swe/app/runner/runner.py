@@ -85,6 +85,8 @@ from ..post_turn_continuation_store import (
 )
 from ..post_turn_validation import validate_task_completion
 from ..suggestions import generate_suggestions, store_suggestions
+from ..source_system_config import is_chat_task_progress_enabled
+from ..source_system_config.runtime import get_current_source_system_config
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
@@ -3426,20 +3428,30 @@ class AgentRunner(Runner):
         **kwargs,
     ) -> AsyncGenerator[Event, None]:
         """Wrap base streaming to normalize reasoning end boundaries."""
+        task_progress_enabled = is_chat_task_progress_enabled(
+            get_current_source_system_config(),
+        )
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
             progress = None
-            channel_meta = getattr(request, "channel_meta", None) or {}
-            chat_id = channel_meta.get("chat_id")
-            if not chat_id and self._chat_manager is not None:
-                chat_id = await self._chat_manager.get_chat_id_by_session(
-                    getattr(request, "session_id", "") or "",
-                    getattr(request, "channel", DEFAULT_CHANNEL),
-                )
-            if chat_id and self._task_tracker is not None:
-                progress = await self._task_tracker.get_task_progress(chat_id)
-            yield attach_task_progress(event, progress)
+            if task_progress_enabled:
+                channel_meta = getattr(request, "channel_meta", None) or {}
+                chat_id = channel_meta.get("chat_id")
+                if not chat_id and self._chat_manager is not None:
+                    chat_id = await self._chat_manager.get_chat_id_by_session(
+                        getattr(request, "session_id", "") or "",
+                        getattr(request, "channel", DEFAULT_CHANNEL),
+                    )
+                if chat_id and self._task_tracker is not None:
+                    progress = await self._task_tracker.get_task_progress(
+                        chat_id,
+                    )
+            yield attach_task_progress(
+                event,
+                progress,
+                enabled=task_progress_enabled,
+            )
 
     async def init_handler(self, *args, **kwargs):
         """

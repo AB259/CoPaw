@@ -159,6 +159,39 @@
 - 对用户可见、需要进入历史的 runner 合成消息，先写入 `runtime.agent.memory`，再 `yield`
 - 测试同时断言 stream 输出和 session state 末尾内容，避免只验证前端当次可见
 
+## 当前 Source 系统配置页返回 403 或保存后步骤条行为未变化
+
+### 症状
+
+- 打开 `system-config-page` 直接显示 403，或页面入口在菜单中不可见
+- 页面能打开，但保存 `任务进度步骤条` 开关后，聊天页仍继续展示步骤条
+- 后端 current-source API 返回 `Manager role required`
+
+### 典型原因
+
+- iframe 上下文没有透传 `isSuperManager` / `manager`，导致前端未发送 `X-User-Role`
+- 前端误以为只隐藏 UI 就够了，但没有刷新 effective source config store
+- 后端 raw current-source 配置虽然写入成功，但仍被旧的 effective config 缓存命中，或者下一轮请求前没有重新读取
+
+### 第一落点
+
+- [console/src/api/authHeaders.ts](/Users/shixiangyi/code/Swe/console/src/api/authHeaders.ts)
+- 重点看 `isSuperManager -> admin`、`manager -> manager` 的头映射是否存在
+- [console/src/pages/SystemConfigPage/index.tsx](/Users/shixiangyi/code/Swe/console/src/pages/SystemConfigPage/index.tsx)
+- 重点看保存/删除成功后是否调用 `loadEffectiveConfig(activeSourceId)`
+- [src/swe/app/source_system_config/router.py](/Users/shixiangyi/code/Swe/src/swe/app/source_system_config/router.py)
+- 重点看 `/api/source-system-config/current` 是否只从 `request.state.source_id` 取目标 source，且仍要求 manager/admin
+- [src/swe/agents/react_agent.py](/Users/shixiangyi/code/Swe/src/swe/agents/react_agent.py)
+- [src/swe/agents/tools/update_task_progress.py](/Users/shixiangyi/code/Swe/src/swe/agents/tools/update_task_progress.py)
+- [src/swe/app/runner/runner.py](/Users/shixiangyi/code/Swe/src/swe/app/runner/runner.py)
+- 重点看 prompt、tool、stream 三段是否都走了 `chat_task_progress_enabled` 判定
+
+### 第一阶段处理
+
+- 先确认请求头里已经带上 `X-User-Role: admin|manager`
+- 再确认保存或删除后，前端已经刷新 effective config store，而不是只刷新当前页面表单
+- 如果聊天页行为没变化，抓下一轮请求的 effective config，再核对 prompt、tool、stream 三处是否都已关闭
+
 ## Tenant bootstrap 时报 default workspace 缺少 agent.json
 
 ### 症状

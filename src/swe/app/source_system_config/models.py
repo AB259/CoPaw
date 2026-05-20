@@ -6,6 +6,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .registry import (
+    build_default_source_system_config_payload,
+    merge_source_system_config_with_defaults,
+)
+
 
 class SourceSystemConfig(BaseModel):
     """Source 系统配置载荷，业务 key 由具体使用方自行约定。"""
@@ -27,14 +32,13 @@ class SourceSystemConfig(BaseModel):
     def merged_with_defaults(self) -> "SourceSystemConfig":
         """将 source 覆盖合并到内置默认配置。"""
         return SourceSystemConfig.model_validate(
-            {
-                **DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict(),
-                **self.as_dict(),
-            },
+            merge_source_system_config_with_defaults(self.as_dict()),
         )
 
 
-DEFAULT_SOURCE_SYSTEM_CONFIG = SourceSystemConfig()
+DEFAULT_SOURCE_SYSTEM_CONFIG = SourceSystemConfig.model_validate(
+    build_default_source_system_config_payload(),
+)
 
 
 class SourceSystemConfigRecord(BaseModel):
@@ -60,6 +64,17 @@ class EffectiveSourceSystemConfig(BaseModel):
     updated_at: datetime | None = None
 
 
+class CurrentSourceSystemConfigResponse(BaseModel):
+    """当前请求 source 的原始配置响应。"""
+
+    source_id: str = Field(..., min_length=1, max_length=64)
+    config: SourceSystemConfig
+    version: int = Field(default=0, ge=0)
+    is_default: bool = False
+    updated_by: str | None = Field(default=None, max_length=128)
+    updated_at: datetime | None = None
+
+
 class SourceSystemConfigUpsert(BaseModel):
     """Source 系统配置创建或更新请求。"""
 
@@ -67,3 +82,11 @@ class SourceSystemConfigUpsert(BaseModel):
 
     config: SourceSystemConfig
     updated_by: str | None = Field(default=None, max_length=128)
+
+
+class CurrentSourceSystemConfigUpdateRequest(BaseModel):
+    """当前请求 source 的原始配置更新请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    config: SourceSystemConfig
