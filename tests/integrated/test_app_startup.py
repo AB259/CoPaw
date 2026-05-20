@@ -40,7 +40,7 @@ def _tee_stream(stream, buffer: list[str]) -> None:
 
 
 def _subprocess_env() -> dict[str, str]:
-    """Force subprocesses to import the current worktree sources."""
+    """强制子进程从当前 worktree 导入源码。"""
     root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     pythonpath_parts = [str(root / "src")]
@@ -48,7 +48,40 @@ def _subprocess_env() -> dict[str, str]:
     if existing_pythonpath:
         pythonpath_parts.append(existing_pythonpath)
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    console_static_dir = _resolve_console_static_dir(root)
+    if console_static_dir is None:
+        pytest.skip("Console static build not available for startup test")
+    env["SWE_CONSOLE_STATIC_DIR"] = str(console_static_dir)
     return env
+
+
+def _resolve_console_static_dir(root: Path) -> Path | None:
+    """解析可用于启动测试的 console 静态目录。"""
+    candidates = [root / "console" / "dist"]
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=root,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        result = None
+
+    if result is not None:
+        common_dir = Path(result.stdout.strip())
+        if not common_dir.is_absolute():
+            common_dir = (root / common_dir).resolve()
+        shared_root = common_dir.parent
+        candidates.append(shared_root / "console" / "dist")
+
+    for candidate in candidates:
+        index_path = candidate / "index.html"
+        if candidate.is_dir() and index_path.is_file():
+            return candidate
+    return None
 
 
 def test_app_startup_and_console() -> None:
