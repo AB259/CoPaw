@@ -592,13 +592,18 @@ class TraceManager:
         self._update_trace_totals(trace_id, span, None)
 
         # Add to pending cache and queue atomically
+        # 在锁内检查是否需要立即 flush，避免锁外检查导致的竞态条件
+        need_flush = False
         async with self._span_queue_lock:
             self._pending_spans[span_id] = span
             self._span_queue.append(span)
-
-            # Check if we need to flush
             if len(self._span_queue) >= self.config.batch_size:
-                asyncio.create_task(self._flush_spans())
+                need_flush = True
+
+        # 在锁外执行 flush，使用 await 确保写入完成
+        # 防止 end_trace 时数据尚未写入数据库
+        if need_flush:
+            await self._flush_spans()
 
         return span_id
 
@@ -989,35 +994,111 @@ class TraceManager:
                 logger.error("Error in flush loop: %s", e)
 
     async def _flush_spans(self) -> None:
-        """Flush queued spans to storage."""
+        """Flush queued spans to storage.
+
+        Handles race condition with update_span and ensures data integrity:
+        1. Keep spans in _pending_spans during INSERT
+        2. After successful INSERT, check for spans updated during INSERT
+        3. UPDATE those spans that were modified during the race window
+        4. Only clear _pending_spans after successful write
+        5. On failure, re-queue spans for retry (avoid data loss)
+        """
         async with self._span_queue_lock:
             if not self._span_queue:
                 return
             spans = self._span_queue.copy()
             self._span_queue.clear()
-            # Clear pending cache atomically with queue clear
-            for span in spans:
-                self._pending_spans.pop(span.span_id, None)
+            # Record span IDs that were originally in queue (without end_time)
+            # for later detection of updates during INSERT
+            spans_before_insert = {
+                span.span_id: span.end_time for span in spans
+            }
 
-        if spans:
-            try:
-                if self._db is None:
-                    # Log-only mode: output spans directly (only skill-related)
-                    for span in spans:
-                        if span.skill_name:
-                            logger.info(
-                                "[SKILL SPAN] skill='%s', type=%s",
-                                span.skill_name,
-                                (
-                                    span.event_type.value
-                                    if hasattr(span.event_type, "value")
-                                    else span.event_type
-                                ),
-                            )
+        if not spans:
+            return
+
+        flush_success = False
+        try:
+            if self._db is None:
+                self._flush_spans_log_only(spans)
+                flush_success = True
+            else:
+                rowcount = await self.store.batch_create_spans(spans)
+                # 验证写入是否成功（至少写入了一部分数据）
+                if rowcount > 0:
+                    await self._update_spans_modified_during_flush(
+                        spans,
+                        spans_before_insert,
+                    )
+                    flush_success = True
                 else:
-                    await self.store.batch_create_spans(spans)
-            except Exception as e:
-                logger.error("Failed to flush spans: %s", e)
+                    logger.warning(
+                        "batch_create_spans returned 0 rows, treating as failure",
+                    )
+        except Exception as e:
+            logger.error(
+                "Failed to flush spans (will retry later): %s. "
+                "Affected %d spans: %s",
+                e,
+                len(spans),
+                [s.span_id[:8] for s in spans[:5]],  # 只显示前 5 个 span_id
+            )
+
+        # 只有写入成功时才清除 _pending_spans
+        # 写入失败时将 spans 重新放回队列，等待下次 flush 重试
+        async with self._span_queue_lock:
+            if flush_success:
+                for span in spans:
+                    self._pending_spans.pop(span.span_id, None)
+            else:
+                # 将失败的 spans 重新放回队列头部，优先重试
+                # 避免与新 spans 混在一起导致顺序混乱
+                for span in reversed(spans):
+                    self._span_queue.insert(0, span)
+                logger.info(
+                    "Re-queued %d failed spans for retry",
+                    len(spans),
+                )
+
+    def _flush_spans_log_only(self, spans: list["Span"]) -> None:
+        """Log skill-related spans in log-only mode."""
+        for span in spans:
+            if span.skill_name:
+                logger.info(
+                    "[SKILL SPAN] skill='%s', type=%s",
+                    span.skill_name,
+                    (
+                        span.event_type.value
+                        if hasattr(span.event_type, "value")
+                        else span.event_type
+                    ),
+                )
+
+    async def _update_spans_modified_during_flush(
+        self,
+        spans: list["Span"],
+        spans_before_insert: dict[str, Optional["datetime"]],
+    ) -> None:
+        """UPDATE spans that were modified during INSERT race window.
+
+        Args:
+            spans: List of spans that were flushed
+            spans_before_insert: Dict mapping span_id to original end_time
+        """
+        for span in spans:
+            # If span has end_time now but didn't before, it was updated
+            if (
+                span.end_time is not None
+                and spans_before_insert.get(span.span_id) is None
+            ):
+                try:
+                    await self.store.update_span(span)
+                except Exception as update_error:
+                    logger.warning(
+                        "Failed to update span %s after flush: %s",
+                        span.span_id,
+                        update_error,
+                    )
 
     async def _cleanup_loop(self) -> None:
         """Background loop for cleaning up old trace data."""
