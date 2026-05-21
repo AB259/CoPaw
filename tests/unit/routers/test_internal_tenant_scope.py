@@ -97,4 +97,7 @@ def test_internal_cron_callback_dispatches_job_param_tenant() -> None:
         "default",
         tenant_id="runtime-scope",
     )
-    cron_manager.run_job.assert_awaited_once_with("job-1")
+    cron_manager.run_job.assert_awaited_once_with(
+        "job-1",
+        is_manual=False,
+    )
