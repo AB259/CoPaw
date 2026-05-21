@@ -114,4 +114,4 @@ def version_cmd(agent_id: str) -> None:
 def logs_cmd(lines: int) -> None:
     """显示 swe.log 文件日志；禁用时提示改查 stdout/stderr。"""
     lines = min(max(1, lines), 2000)
-    click.echo(run_daemon_logs(lines=lines))
+    click.echo(run_daemon_logs(lines=lines, context=DaemonContext()))

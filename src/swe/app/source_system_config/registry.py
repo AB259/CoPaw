@@ -28,6 +28,8 @@ CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
 )
 
 _MISSING = object()
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
 
 
 def build_default_source_system_config_payload() -> dict[str, Any]:
@@ -75,7 +77,32 @@ def is_chat_task_progress_enabled(config: Any | None) -> bool:
     )
     if value is _MISSING:
         return bool(CHAT_TASK_PROGRESS_ENABLED_SWITCH.default_value)
-    return bool(value)
+    return _coerce_registered_boolean_value(
+        CHAT_TASK_PROGRESS_ENABLED_SWITCH.key,
+        value,
+        default=bool(CHAT_TASK_PROGRESS_ENABLED_SWITCH.default_value),
+        strict=False,
+    )
+
+
+def normalize_registered_switch_values(
+    raw_config: dict[str, Any],
+) -> dict[str, Any]:
+    """规范化已注册开关的值，兼容常见布尔脏值。"""
+    normalized = deepcopy(raw_config)
+    for switch in CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES:
+        value = _get_nested_value(normalized, switch.path)
+        if value is _MISSING:
+            continue
+        if isinstance(switch.default_value, bool):
+            coerced = _coerce_registered_boolean_value(
+                switch.key,
+                value,
+                default=bool(switch.default_value),
+                strict=True,
+            )
+            _set_nested_value(normalized, switch.path, coerced)
+    return normalized
 
 
 def _normalize_config_payload(config: Any | None) -> dict[str, Any]:
@@ -155,6 +182,47 @@ def _delete_nested_path(
             parent.pop(key, None)
 
 
+def _set_nested_value(
+    payload: dict[str, Any],
+    path: tuple[str, ...],
+    value: Any,
+) -> None:
+    """写入嵌套路径，保持原有父节点结构。"""
+    current: dict[str, Any] = payload
+    for key in path[:-1]:
+        next_current = current.get(key)
+        if not isinstance(next_current, dict):
+            next_current = {}
+            current[key] = next_current
+        current = next_current
+    current[path[-1]] = value
+
+
+def _coerce_registered_boolean_value(
+    key: str,
+    value: Any,
+    *,
+    default: bool,
+    strict: bool,
+) -> bool:
+    """将注册布尔开关收敛为真实布尔值。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TRUE_STRINGS:
+            return True
+        if normalized in _FALSE_STRINGS:
+            return False
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if strict:
+        raise ValueError(
+            f"{key} must be a boolean-compatible value, got {value!r}",
+        )
+    return default
+
+
 __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
@@ -162,5 +230,6 @@ __all__ = [
     "build_default_source_system_config_payload",
     "is_chat_task_progress_enabled",
     "merge_source_system_config_with_defaults",
+    "normalize_registered_switch_values",
     "prune_registered_default_overrides",
 ]

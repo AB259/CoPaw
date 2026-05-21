@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .registry import (
     build_default_source_system_config_payload,
     merge_source_system_config_with_defaults,
+    normalize_registered_switch_values,
 )
 
 
@@ -23,7 +24,7 @@ class SourceSystemConfig(BaseModel):
         """只接受 JSON object，避免数组或标量让调用方语义不明确。"""
         if not isinstance(data, dict):
             raise ValueError("source system config must be a JSON object")
-        return data
+        return normalize_registered_switch_values(data)
 
     def as_dict(self) -> dict[str, Any]:
         """返回普通 dict，供合并默认配置和序列化使用。"""

@@ -18,6 +18,9 @@ from swe.app.source_system_config.models import (
     EffectiveSourceSystemConfig,
     SourceSystemConfig,
 )
+from swe.app.source_system_config.registry import (
+    is_chat_task_progress_enabled,
+)
 from swe.app.source_system_config.runtime import bind_source_system_config
 from swe.config.context import (
     reset_current_task_progress_chat_id,
@@ -153,3 +156,17 @@ class TestUpdateTaskProgressSwitch:
             )
             is event
         )
+
+
+def test_is_chat_task_progress_enabled_reads_false_string_as_disabled():
+    """兼容历史脏值时，字符串 false 不应再被 bool() 误判为开启。"""
+    assert (
+        is_chat_task_progress_enabled(
+            {
+                "feature_switches": {
+                    "chat_task_progress_enabled": "false",
+                },
+            },
+        )
+        is False
+    )

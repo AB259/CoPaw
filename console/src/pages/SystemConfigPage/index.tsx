@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Card, Result, Space, Spin, Switch, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -44,32 +44,68 @@ export default function SystemConfigPage() {
   const [record, setRecord] =
     useState<CurrentSourceSystemConfigResponse | null>(null);
   const [draftConfig, setDraftConfig] = useState<SourceSystemConfig>({});
+  const requestSeqRef = useRef(0);
+  const activeSourceRef = useRef(activeSourceId);
+
+  useEffect(() => {
+    activeSourceRef.current = activeSourceId;
+  }, [activeSourceId]);
+
+  const beginRequest = (sourceId: string) => {
+    requestSeqRef.current += 1;
+    return {
+      sourceId,
+      requestId: requestSeqRef.current,
+    };
+  };
+
+  const isCurrentRequest = (request: {
+    sourceId: string;
+    requestId: number;
+  }) => {
+    return (
+      activeSourceRef.current === request.sourceId &&
+      requestSeqRef.current === request.requestId
+    );
+  };
+
+  const isLoadedSourceCurrent =
+    record !== null && record.source_id === activeSourceId;
+  const formDisabled =
+    loading || saving || !!error || !isLoadedSourceCurrent;
 
   useEffect(() => {
     if (!canManage) {
+      requestSeqRef.current += 1;
       setLoading(false);
+      setSaving(false);
       setError(null);
       setRecord(null);
       setDraftConfig({});
       return;
     }
 
-    let cancelled = false;
+    const request = beginRequest(activeSourceId);
     setLoading(true);
+    setSaving(false);
     setError(null);
     setRecord(null);
+    setDraftConfig({});
 
     sourceSystemConfigApi
       .getCurrent()
       .then((response) => {
-        if (cancelled) {
+        if (
+          !isCurrentRequest(request) ||
+          response.source_id !== request.sourceId
+        ) {
           return;
         }
         setRecord(response);
         setDraftConfig(response.config);
       })
       .catch((requestError) => {
-        if (cancelled) {
+        if (!isCurrentRequest(request)) {
           return;
         }
         setError(
@@ -79,14 +115,10 @@ export default function SystemConfigPage() {
         );
       })
       .finally(() => {
-        if (!cancelled) {
+        if (isCurrentRequest(request)) {
           setLoading(false);
         }
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [activeSourceId, canManage]);
 
   if (!canManage) {
@@ -112,6 +144,9 @@ export default function SystemConfigPage() {
   }
 
   const handleSwitchChange = (key: string, checked: boolean) => {
+    if (formDisabled) {
+      return;
+    }
     const definition = CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES.find(
       (item) => item.key === key,
     );
@@ -124,15 +159,28 @@ export default function SystemConfigPage() {
   };
 
   const handleSave = async () => {
+    if (formDisabled) {
+      return;
+    }
+    const request = beginRequest(activeSourceId);
     setSaving(true);
     setError(null);
     try {
       const nextRecord = await sourceSystemConfigApi.updateCurrent({
         config: draftConfig,
       });
+      if (
+        !isCurrentRequest(request) ||
+        nextRecord.source_id !== request.sourceId
+      ) {
+        return;
+      }
       setRecord(nextRecord);
       setDraftConfig(nextRecord.config);
-      await loadEffectiveConfig(activeSourceId);
+      await loadEffectiveConfig(request.sourceId);
+      if (!isCurrentRequest(request)) {
+        return;
+      }
       message.success(
         t("sourceSystemConfigPage.saveSuccess", {
           defaultValue: "当前 Source 配置已保存",
@@ -143,22 +191,43 @@ export default function SystemConfigPage() {
         requestError instanceof Error
           ? requestError.message
           : String(requestError);
+      if (!isCurrentRequest(request)) {
+        return;
+      }
       setError(nextError);
       message.error(nextError);
     } finally {
-      setSaving(false);
+      if (isCurrentRequest(request)) {
+        setSaving(false);
+      }
     }
   };
 
   const handleDelete = async () => {
+    if (formDisabled) {
+      return;
+    }
+    const request = beginRequest(activeSourceId);
     setSaving(true);
     setError(null);
     try {
       await sourceSystemConfigApi.deleteCurrent();
+      if (!isCurrentRequest(request)) {
+        return;
+      }
       const nextRecord = await sourceSystemConfigApi.getCurrent();
+      if (
+        !isCurrentRequest(request) ||
+        nextRecord.source_id !== request.sourceId
+      ) {
+        return;
+      }
       setRecord(nextRecord);
       setDraftConfig(nextRecord.config);
-      await loadEffectiveConfig(activeSourceId);
+      await loadEffectiveConfig(request.sourceId);
+      if (!isCurrentRequest(request)) {
+        return;
+      }
       message.success(
         t("sourceSystemConfigPage.deleteSuccess", {
           defaultValue: "当前 Source 配置已恢复默认态",
@@ -169,10 +238,15 @@ export default function SystemConfigPage() {
         requestError instanceof Error
           ? requestError.message
           : String(requestError);
+      if (!isCurrentRequest(request)) {
+        return;
+      }
       setError(nextError);
       message.error(nextError);
     } finally {
-      setSaving(false);
+      if (isCurrentRequest(request)) {
+        setSaving(false);
+      }
     }
   };
 
@@ -186,15 +260,17 @@ export default function SystemConfigPage() {
         subRow={
           <Space size={8}>
             <Tag color="blue">{activeSourceId}</Tag>
-            <Tag color={record?.is_default ? "default" : "gold"}>
-              {record?.is_default
-                ? t("sourceSystemConfigPage.defaultState", {
-                    defaultValue: "继承默认值",
-                  })
-                : t("sourceSystemConfigPage.overrideState", {
-                    defaultValue: "存在显式覆盖",
-                  })}
-            </Tag>
+            {record ? (
+              <Tag color={record.is_default ? "default" : "gold"}>
+                {record.is_default
+                  ? t("sourceSystemConfigPage.defaultState", {
+                      defaultValue: "继承默认值",
+                    })
+                  : t("sourceSystemConfigPage.overrideState", {
+                      defaultValue: "存在显式覆盖",
+                    })}
+              </Tag>
+            ) : null}
           </Space>
         }
       />
@@ -284,6 +360,7 @@ export default function SystemConfigPage() {
                         draftConfig,
                         definition,
                       )}
+                      disabled={formDisabled}
                       onChange={(checked) =>
                         handleSwitchChange(definition.key, checked)
                       }
@@ -297,13 +374,14 @@ export default function SystemConfigPage() {
               <Button
                 danger
                 onClick={handleDelete}
-                disabled={saving || record?.is_default}
+                disabled={formDisabled || record?.is_default}
               >
                 {t("common.delete")}
               </Button>
               <Button
                 type="primary"
                 loading={saving}
+                disabled={formDisabled}
                 onClick={handleSave}
               >
                 {t("common.save")}

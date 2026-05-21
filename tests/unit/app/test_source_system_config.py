@@ -86,6 +86,33 @@ class TestSourceSystemConfigModels:
             "provider_policy": {"default_model": "qwen-max"},
         }
 
+    def test_registered_boolean_switch_normalizes_common_string_values(self):
+        """历史脏值中的常见布尔字符串应被收敛为真实布尔值。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "feature_switches": {
+                    "chat_task_progress_enabled": "false",
+                },
+            },
+        )
+
+        assert config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+        }
+
+    def test_registered_boolean_switch_rejects_unknown_string_values(self):
+        """无法识别的布尔脏值不能静默写入配置。"""
+        with pytest.raises(ValueError, match="chat_task_progress_enabled"):
+            SourceSystemConfig.model_validate(
+                {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": "disabled",
+                    },
+                },
+            )
+
 
 class TestSourceSystemConfigStore:
     """验证 source 系统配置数据库存储。"""
