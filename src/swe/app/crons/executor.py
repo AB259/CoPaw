@@ -15,6 +15,7 @@ from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
+from ...config.context import canonicalize_scope_id, resolve_scope_id
 from ...tracing import has_trace_manager, get_trace_manager
 from ...tracing.models import TraceStatus
 
@@ -116,8 +117,19 @@ class CronExecutor:
 
         # Extract tenant_id from job spec (added for tenant isolation)
         tenant_id = getattr(job, "tenant_id", None)
+        source_id = getattr(job, "source_id", None)
+        job_scope_id = getattr(job, "scope_id", None)
+        scope_id = (
+            canonicalize_scope_id(job_scope_id)
+            if job_scope_id is not None
+            else resolve_scope_id(tenant_id, source_id)
+        )
         if tenant_id:
             dispatch_meta["tenant_id"] = tenant_id
+        if source_id:
+            dispatch_meta["source_id"] = source_id
+        if scope_id:
+            dispatch_meta["scope_id"] = scope_id
 
         logger.info(
             "cron execute: job_id=%s channel=%s task_type=%s "
@@ -136,6 +148,8 @@ class CronExecutor:
                 tenant_id=tenant_id,
                 user_id=target_user_id,
                 workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
@@ -145,12 +159,14 @@ class CronExecutor:
                 target_session_id,
                 dispatch_meta,
             )
+        result = result or {}
+        output_preview = str(result.get("output_preview") or "")
 
         return ExecutionResult(
-            trace_id=result["trace_id"],
-            output_preview=result["output_preview"][:100],
+            trace_id=str(result.get("trace_id") or ""),
+            output_preview=output_preview[:100],
             input_snapshot=result.get("input_snapshot"),
-            executor_leader=result.get("executor_leader", ""),
+            executor_leader=str(result.get("executor_leader") or ""),
         )
 
     async def _execute_job(
@@ -192,7 +208,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron send_text: job_id=%s channel=%s len=%s",
             job.id,
@@ -200,7 +220,7 @@ class CronExecutor:
             len(job.text or ""),
         )
 
-        # 创建 trace 记录
+        # 保留抽出的 helper，同时继续传递 scope 级租户标识。
         trace_id = await self._create_trace_for_text_job(
             job,
             target_user_id,
@@ -213,7 +233,7 @@ class CronExecutor:
                 target_user_id,
                 target_session_id,
                 dispatch_meta,
-                tenant_id,
+                runtime_tenant_id,
             )
         finally:
             await self._end_trace_for_text_job(trace_id)
@@ -282,7 +302,7 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-        tenant_id: str,
+        runtime_tenant_id: str,
     ) -> None:
         """发送 text 到 channel 并推送到 console。
 
@@ -291,7 +311,7 @@ class CronExecutor:
             target_user_id: 目标用户 ID
             target_session_id: 目标会话 ID
             dispatch_meta: dispatch 元数据
-            tenant_id: 租户 ID
+            runtime_tenant_id: 运行时 scope/tenant 标识
         """
         await self._channel_manager.send_text(
             channel=job.dispatch.channel,
@@ -305,7 +325,7 @@ class CronExecutor:
             await self._push_to_console(
                 task_chat_id,
                 job.text.strip(),
-                tenant_id,
+                runtime_tenant_id,
             )
 
     async def _end_trace_for_text_job(self, trace_id: Optional[str]) -> None:
@@ -458,7 +478,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron agent: job_id=%s channel=%s timeout=%ss",
             job.id,
@@ -517,7 +541,7 @@ class CronExecutor:
                 await self._push_to_console(
                     task_chat_id,
                     "\n".join(console_text_parts),
-                    tenant_id,
+                    runtime_tenant_id,
                 )
             # 正常完成，构建执行结果
             result = self._build_agent_execution_result(
@@ -532,7 +556,7 @@ class CronExecutor:
                 job.id,
                 job.runtime.timeout_seconds,
             )
-            await self._notify_timeout(job, tenant_id)
+            await self._notify_timeout(job, runtime_tenant_id)
             await self._end_trace_on_exception(
                 trace_id,
                 TraceStatus.ERROR,
@@ -582,6 +606,16 @@ class CronExecutor:
         # 传递 source_id 用于 tracing 数据隔离
         if job.source_id:
             req["source_id"] = job.source_id
+        scope_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                job.source_id,
+            )
+        )
+        if scope_id:
+            req["scope_id"] = scope_id
         # 传递 bbk_id 用于 tracing 用户标识
         if job.bbk_id:
             req["bbk_id"] = job.bbk_id
@@ -597,9 +631,17 @@ class CronExecutor:
         req: Dict[str, Any],
     ) -> None:
         """Resolve and apply auth token to request."""
+        runtime_tenant_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                getattr(job, "source_id", None),
+            )
+        )
         try:
             resolved = resolve_auth_token_for_execution(
-                tenant_id=getattr(job, "tenant_id", None),
+                tenant_id=runtime_tenant_id,
                 workspace_dir=dispatch_meta.get("workspace_dir"),
             )
         except ValueError as exc:

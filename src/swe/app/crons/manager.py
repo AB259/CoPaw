@@ -18,6 +18,11 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
+from ...config.context import (
+    canonicalize_scope_id,
+    resolve_runtime_identity,
+    resolve_scope_id,
+)
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from .auth_state import prefetch_auth_token
 from .cron_utils import compute_next_run_at
@@ -465,6 +470,15 @@ class CronManager:  # pylint: disable=too-many-public-methods
         # 外部调度归属必须跟当前运行时租户一致，避免旧任务里的 tenant_id 污染回调路由。
         return self._tenant_id or spec.tenant_id or ""
 
+    @staticmethod
+    def _get_job_runtime_tenant_id(spec: CronJobSpec) -> str | None:
+        """解析任务执行时实际使用的租户隔离键。"""
+        if spec.scope_id is not None:
+            return canonicalize_scope_id(spec.scope_id)
+        return (
+            resolve_scope_id(spec.tenant_id, spec.source_id) or spec.tenant_id
+        )
+
     async def _sync_job_to_external_scheduler(
         self,
         spec: CronJobSpec,
@@ -538,10 +552,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             try:
                 synced = await self._sync_job_to_external_scheduler(job)
                 ext_id = (synced.meta or {}).get("external_job_id", "")
+                runtime_tenant_id = self._get_external_scheduler_tenant_id(
+                    synced,
+                )
                 await self._persist_external_job_binding(
                     job.id,
                     ext_id,
-                    self._tenant_id,
+                    runtime_tenant_id,
                 )
                 st = self._states.get(job.id, CronJobState())
                 st.external_job_id = ext_id
@@ -1833,35 +1850,70 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """执行一次心跳任务（供外部调度平台调用）。"""
         from .heartbeat import run_heartbeat_once
 
-        workspace_dir = (
-            Path(self._runner.workspace_dir)
-            if self._runner.workspace_dir
-            else None
+        workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
+            self._resolve_runtime_context()
         )
-        await run_heartbeat_once(
-            runner=self._runner,
-            channel_manager=self._channel_manager,
-            agent_id=self._agent_id,
-            tenant_id=self._tenant_id,
-            workspace_dir=workspace_dir,
-        )
+        with (
+            bind_tenant_context(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
+            ),
+            bind_llm_workload(LLM_WORKLOAD_CRON),
+        ):
+            await run_heartbeat_once(
+                runner=self._runner,
+                channel_manager=self._channel_manager,
+                agent_id=self._agent_id,
+                tenant_id=runtime_tenant_id,
+                workspace_dir=workspace_dir,
+            )
 
     async def run_dream(self) -> None:
         """执行一次梦境任务（供外部调度平台调用）。"""
-        workspace_dir = (
-            Path(self._runner.workspace_dir)
-            if self._runner.workspace_dir
-            else None
+        workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
+            self._resolve_runtime_context()
         )
-        with bind_tenant_context(
-            tenant_id=self._tenant_id,
-            workspace_dir=workspace_dir,
+        with (
+            bind_tenant_context(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
+            ),
+            bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
             await self._runner.memory_manager.dream_memory(
-                tenant_id=self._tenant_id,
+                tenant_id=runtime_tenant_id,
                 trigger="cron",
             )
         logger.debug("Dream task executed successfully")
+
+    def _resolve_runtime_context(
+        self,
+    ) -> tuple[Path | None, str | None, str | None, str | None, str | None]:
+        """从工作区 runtime tenant 还原 logical tenant/source/scope。"""
+        workspace_dir_value = getattr(self._runner, "workspace_dir", None)
+        workspace_dir = (
+            Path(workspace_dir_value) if workspace_dir_value else None
+        )
+        runtime_tenant_id = self._tenant_id
+        workspace = getattr(self._runner, "_workspace", None)
+        workspace_tenant_id = getattr(workspace, "tenant_id", None)
+        if workspace_tenant_id:
+            runtime_tenant_id = workspace_tenant_id
+
+        tenant_id, source_id, scope_id = resolve_runtime_identity(
+            runtime_tenant_id,
+        )
+        return (
+            workspace_dir,
+            tenant_id,
+            source_id,
+            scope_id,
+            scope_id or tenant_id,
+        )
 
     # ── 系统任务（heartbeat / dream）调度平台注册 ──
 
@@ -1908,9 +1960,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     if job.schedule and job.schedule.cron
                     else "0 0 1 1 *"
                 )
+                runtime_tenant_id = self._get_external_scheduler_tenant_id(job)
                 try:
                     ext_id = await self._scheduler_adapter.register_job(
-                        tenant_id=job.tenant_id or self._tenant_id or "",
+                        tenant_id=runtime_tenant_id,
                         agent_id=self._agent_id or "",
                         task_type="job",
                         job_id=job.id,
@@ -1922,7 +1975,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         st = self._states.get(job.id, CronJobState())
                         st.external_job_id = ext_id
                         self._states[job.id] = st
-                        await self._persist_external_job_id(job.id, ext_id)
+                        await self._persist_external_job_id(
+                            job.id,
+                            ext_id,
+                            runtime_tenant_id,
+                        )
                         if not job.enabled:
                             await self._scheduler_adapter.pause_job(
                                 ext_id,
@@ -1945,9 +2002,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self,
         job_id: str,
         ext_id: str,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """将 external_job_id 写入 jobs.json 中对应任务的 meta 字段。"""
-        await self._persist_external_job_binding(job_id, ext_id)
+        await self._persist_external_job_binding(job_id, ext_id, tenant_id)
 
     async def _persist_external_job_binding(
         self,
@@ -2218,16 +2276,67 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     workspaces.add(ws)
         return workspaces
 
+    async def _collect_prefetch_targets(
+        self,
+    ) -> set[
+        tuple[str | None, str | None, str | None, str | None, str | None]
+    ]:
+        """收集 auth token 预热所需的租户上下文。"""
+        targets = set()
+        try:
+            jobs = await self._repo.list_jobs()
+        except Exception:
+            return targets
+        for job in jobs:
+            if job.task_type != "agent":
+                continue
+            workspace_dir = None
+            if job.dispatch and job.dispatch.meta:
+                workspace_dir = job.dispatch.meta.get("workspace_dir")
+            runtime_tenant_id = self._get_job_runtime_tenant_id(job)
+            tenant_id, source_id, scope_id = resolve_runtime_identity(
+                runtime_tenant_id,
+                job.source_id,
+            )
+            targets.add(
+                (
+                    runtime_tenant_id,
+                    workspace_dir,
+                    job.dispatch.target.user_id,
+                    source_id,
+                    scope_id,
+                ),
+            )
+        return targets
+
     async def _prefetch_loop(self) -> None:
         """后台循环：每30~60分钟随机间隔，预热所有已知 workspace 的 auth token。"""
-        from .auth_state import prefetch_auth_token
-
         while True:
             try:
                 await asyncio.sleep(random.randint(1800, 3600))
-                for ws_dir in await self._collect_prefetch_workspaces():
+                for (
+                    runtime_tenant_id,
+                    workspace_dir,
+                    user_id,
+                    source_id,
+                    scope_id,
+                ) in await self._collect_prefetch_targets():
                     try:
-                        prefetch_auth_token(workspace_dir=ws_dir)
+                        tenant_id, _, _ = resolve_runtime_identity(
+                            runtime_tenant_id,
+                            source_id,
+                        )
+                        with bind_tenant_context(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            workspace_dir=workspace_dir,
+                            source_id=source_id,
+                            scope_id=scope_id,
+                        ):
+                            prefetch_auth_token(
+                                tenant_id=runtime_tenant_id,
+                                workspace_dir=workspace_dir,
+                            )
                     except Exception:
                         pass
             except asyncio.CancelledError:
