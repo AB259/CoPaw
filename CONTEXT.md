@@ -3251,3 +3251,27 @@ Domain Expert: "It exposes a Shared Conversation Snapshot made from at least one
 Developer: "Can the owner revoke or expire the link?"
 
 Domain Expert: "No. It is a Permanent Share Link: every generation creates a new opaque Share Token, and the link remains valid without time expiry or owner revocation."
+
+## Wealth Workbench Language
+
+Console-side domain language for the standalone-route Wealth Workbench page (ported from the single-file prototype 智能财富工作台.html).
+
+**Plan Draft (草稿)**:
+The unsubmitted form state of the Create Plan page. It is session-scoped and never persisted in the mock phase; durability is a concern of the later API-integration phase, not of the client.
+_Avoid_: localStorage draft, persisted draft, auto-saved artifact
+
+**Workbench Role (角色)**:
+One of 客户经理 / 支行行长 / 分行中台. It gates page access in the Wealth Workbench through the Role Permission Matrix (角色权限矩阵) — the task pages (today / pending / done) are reachable only by 客户经理 — and selects the data scope of every view. In embedded deployment the Role is resolved from the host-supplied positionId, never chosen in-page.
+_Avoid_: account type, user preference, switchable profile
+
+**Role Permission Matrix (角色权限矩阵)**:
+The single decision point for page access in the Wealth Workbench: each Workbench Role maps to the page groups it may open (board / create / tasks). Route guards, navigation, and top-bar affordances all read the Matrix; they never inspect account fields directly. Operation-level permissions are deliberately out of scope for now.
+_Avoid_: per-component role checks, boolean flags on accounts
+
+**Role Preview (角色预览)**:
+A mock-phase-only aid inside the Wealth Workbench that temporarily overrides the effective Workbench Role so a developer can confirm which pages each Role may access. It is not an identity source and never says "switch account": in production the host system's External Identity decides the Role, and the preview entry is hidden once real identity and APIs go live.
+_Avoid_: account switcher, identity provider, user selection feature, production role picker
+
+**Distribution Target (分发目标)**:
+The set of 客户经理 who receive a published Plan. For 支行行长 and 分行中台 the creator picks them in a dedicated wizard step from the branch's user pool (the tenants-by-source API filtered client-side by the operator's own branch id), and the chosen sapId list travels with the publish request. A 客户经理 never picks targets: their Plan is distributed to themselves by default.
+_Avoid_: plan audience, CC list, sharing recipients
