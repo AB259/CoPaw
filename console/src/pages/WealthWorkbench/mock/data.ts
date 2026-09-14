@@ -1,87 +1,21 @@
 /**
  * 智能财富工作台 —— mock 静态数据
- * 规划数据已随接口闭环移除；本文件保留的是外部接口未就绪前的占位数据
- * （客户与触达 / 账户 / 分发用户池），随各接口接入逐步删除。
+ * 规划、账户与分发用户池已随接口闭环移除；本文件保留的是外部接口未就绪前的
+ * 占位数据（客户与触达），随各接口接入逐步删除。
  */
-import type { Account, Customer, DistributeTarget } from "../types";
+import type { Customer } from "../types";
 
 /** 平台可用能力总量（示例），不随本期覆盖场景筛选缩减 */
 export const PLATFORM_CAPABILITY_COUNT = 12;
 
-export const accounts: Account[] = [
-  {
-    id: "rm",
-    name: "张**",
-    role: "客户经理",
-    department: "xxx支行",
-    source: "我的关注",
-  },
-  {
-    id: "president",
-    name: "李**",
-    role: "支行行长",
-    department: "xxxx支行",
-    source: "行长关注",
-  },
-  {
-    id: "middle",
-    name: "王**",
-    role: "分行中台",
-    department: "xxxx 分行",
-    source: "分行关注",
-  },
-];
-
-/**
- * 分发目标用户池（mock）：无父系统身份的本地开发环境兜底数据，
- * 模拟「本分行下的客户经理列表」。嵌入环境走真实接口，见 distributeTargets.ts。
- * 人数特意给足，便于验证列表滚动、已选标签滚动与弹窗名单截断的样式效果。
- */
-export const distributeTargets: DistributeTarget[] = [
-  { sapId: "zhangwl", name: "张**", orgName: "xxx支行" },
-  { sapId: "chenjy", name: "陈**", orgName: "xxx支行" },
-  { sapId: "liuxt", name: "刘**", orgName: "xxx支行" },
-  { sapId: "zhaom", name: "赵**", orgName: "xxx支行营业部" },
-  { sapId: "sunq", name: "孙**", orgName: "xxx支行营业部" },
-  { sapId: "zhouhr", name: "周**", orgName: "xx社区支行" },
-  { sapId: "wuj", name: "吴**", orgName: "xxx支行" },
-  { sapId: "zhengf", name: "郑**", orgName: "xxx支行" },
-  { sapId: "wangly", name: "王**", orgName: "xxx支行营业部" },
-  { sapId: "fengc", name: "冯**", orgName: "xxx支行营业部" },
-  { sapId: "chux", name: "褚**", orgName: "xx社区支行" },
-  { sapId: "weiy", name: "卫**", orgName: "xx社区支行" },
-  { sapId: "jiangsh", name: "蒋**", orgName: "xxx支行" },
-  { sapId: "shenh", name: "沈**", orgName: "xxx支行" },
-  { sapId: "hanjy", name: "韩**", orgName: "xxx支行营业部" },
-  { sapId: "yangf", name: "杨**", orgName: "xxx支行营业部" },
-  { sapId: "zhuy", name: "朱**", orgName: "xx社区支行" },
-  { sapId: "qiny", name: "秦**", orgName: "xxx支行" },
-  { sapId: "youx", name: "尤**", orgName: "xxx支行" },
-  { sapId: "xuh", name: "许**", orgName: "xxx支行营业部" },
-  { sapId: "hel", name: "何**", orgName: "xxx支行营业部" },
-  { sapId: "lvj", name: "吕**", orgName: "xx社区支行" },
-  { sapId: "shir", name: "施**", orgName: "xxx支行" },
-  { sapId: "kongw", name: "孔**", orgName: "xxx支行" },
-  { sapId: "caoy", name: "曹**", orgName: "xxx支行营业部" },
-  { sapId: "yanh", name: "严**", orgName: "xxx支行营业部" },
-  { sapId: "huaj", name: "华**", orgName: "xx社区支行" },
-  { sapId: "jinw", name: "金**", orgName: "xx社区支行" },
-  { sapId: "weit", name: "魏**", orgName: "xxx支行" },
-  { sapId: "taoj", name: "陶**", orgName: "xxx支行" },
-  { sapId: "jiangy", name: "姜**", orgName: "xxx支行营业部" },
-  { sapId: "qif", name: "戚**", orgName: "xxx支行营业部" },
-  { sapId: "xiey", name: "谢**", orgName: "xx社区支行" },
-  { sapId: "zoum", name: "邹**", orgName: "xxx支行" },
-];
-
 /** 产品大类：中文名 ↔ 英文 code，与后端 CATEGORY_CODE_BY_LABEL 一致 */
 export const SCENE_CATEGORIES = [
   { label: "保险", code: "insurance" },
-  { label: "理财", code: "finance" },
+  { label: "贷款", code: "loan" },
   { label: "存款", code: "deposit" },
-  { label: "代发", code: "payroll" },
-  { label: "跨境", code: "cross_border" },
+  { label: "理财", code: "finance" },
   { label: "基金", code: "fund" },
+  { label: "代发", code: "payroll" },
 ] as const;
 
 /**
@@ -91,12 +25,12 @@ export const SCENE_CATEGORIES = [
 const CUSTOMER_TASK_SCENES: { name: string; category: string }[] = [
   { name: "保障潜客经营", category: "保险" },
   { name: "保障缺口经营", category: "保险" },
-  { name: "产品到期承接", category: "理财" },
+  { name: "信贷需求挖掘", category: "贷款" },
   { name: "高价值揽客", category: "存款" },
-  { name: "代发客户经营", category: "代发" },
+  { name: "产品到期承接", category: "理财" },
   { name: "理财重点客户经营", category: "理财" },
-  { name: "跨境客户经营", category: "跨境" },
   { name: "基金定投提升", category: "基金" },
+  { name: "代发客户经营", category: "代发" },
 ];
 
 export const labels = ["总行重点", "分行重点", "行长指派"];

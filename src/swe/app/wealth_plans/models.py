@@ -29,11 +29,11 @@ BOARD_STATUS_DISTRIBUTE_FAILED = "分发失败"
 # 产品大类中文名 ↔ 英文 code，外部接口入参与落库统一使用英文 code
 CATEGORY_CODE_BY_LABEL: dict[str, str] = {
     "保险": "insurance",
-    "理财": "finance",
+    "贷款": "loan",
     "存款": "deposit",
-    "代发": "payroll",
-    "跨境": "cross_border",
+    "理财": "finance",
     "基金": "fund",
+    "代发": "payroll",
 }
 CATEGORY_LABEL_BY_CODE: dict[str, str] = {
     code: label for label, code in CATEGORY_CODE_BY_LABEL.items()
@@ -217,7 +217,6 @@ class SceneSkillItem(BaseModel):
     cronExample: str | None = None
     mcpRelationList: list[str] = Field(default_factory=list)
     skillBbkLabel: str | None = None
-    ready: bool = True
 
 
 class SceneSkillListResponse(BaseModel):
