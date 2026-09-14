@@ -1,7 +1,7 @@
 /**
  * 智能财富工作台 —— mock 静态数据
- * 规划、账户与分发用户池已随接口闭环移除；本文件保留的是外部接口未就绪前的
- * 占位数据（客户与触达），随各接口接入逐步删除。
+ * 规划、账户、分发用户池与今日客户名单已随接口闭环移除；本文件仅保留
+ * 触达历史（已完成页）的占位数据，待触达记录接口就绪后删除。
  */
 import type { Customer } from "../types";
 
@@ -17,21 +17,6 @@ export const SCENE_CATEGORIES = [
   { label: "基金", code: "fund" },
   { label: "代发", code: "payroll" },
 ] as const;
-
-/**
- * 客户清单占位的「场景名 ↔ 大类」对，仅供 buildCustomers 生成任务页演示数据；
- * 接入名单/触达接口后随客户 mock 整体删除。
- */
-const CUSTOMER_TASK_SCENES: { name: string; category: string }[] = [
-  { name: "保障潜客经营", category: "保险" },
-  { name: "保障缺口经营", category: "保险" },
-  { name: "信贷需求挖掘", category: "贷款" },
-  { name: "高价值揽客", category: "存款" },
-  { name: "产品到期承接", category: "理财" },
-  { name: "理财重点客户经营", category: "理财" },
-  { name: "基金定投提升", category: "基金" },
-  { name: "代发客户经营", category: "代发" },
-];
 
 export const labels = ["总行重点", "分行重点", "行长指派"];
 
@@ -79,45 +64,12 @@ const reasons = [
   "薪资代发客户，具备理财配置潜力",
 ];
 
-const extraOpportunities: Record<number, string[]> = {
-  1: [
-    "近期新增大额活期资金，可进一步了解资金使用安排",
-    "客户关注养老保障，可补充保险保障需求沟通",
-  ],
-  4: ["家庭资产以存款为主，存在多元化资产配置需求"],
-  7: [
-    "基金持有期限较长，可结合风险偏好沟通定投安排",
-    "账户有闲置资金，可关注后续分批配置需求",
-  ],
-  10: ["工资结余持续增长，具备定期储蓄和长期配置潜力"],
-};
-
-export function buildCustomers(): Customer[] {
-  return names.map((n, i) => {
-    const done = i >= 19;
-    // 客户清单为占位 mock：task/category 对齐真实场景名，
-    // 便于任务页按场景筛选的交互演示；接入任务实例接口后整体替换。
-    const scene = CUSTOMER_TASK_SCENES[i % CUSTOMER_TASK_SCENES.length];
-    const c: Customer = {
-      id: i + 1,
-      name: n + "**",
-      label: labels[(i + Math.floor(i / 3)) % 3],
-      reason: reasons[i % 10],
-      category: scene.category,
-      task: scene.name,
-      done,
-      channel: done ? "电话" : "",
-      time: done ? "2026-09-08 09:" + String(10 + i).padStart(2, "0") : "",
-      note: done ? "已沟通客户需求，完成本次经营任务。" : "",
-    };
-    c.opportunities = [c.reason, ...(extraOpportunities[c.id] || [])];
-    return c;
-  });
-}
-
+/** 已完成页的触达历史占位数据；今日客户名单已走 /wealth/name-list 真实接口 */
 export function buildHistory(): Customer[] {
   return Array.from({ length: 34 }, (_, i) => ({
-    id: 100 + i,
+    id: `hist-${i}`,
+    custUid: "",
+    skillId: "",
     name: names[i % 28] + "**",
     label: labels[i % 3],
     reason: reasons[i % 10],

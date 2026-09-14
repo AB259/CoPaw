@@ -13,7 +13,7 @@ import {
   validateDraft,
   planScheduledOn,
 } from "./store";
-import { cycleRange, DEFAULT_SCHEDULE } from "./utils";
+import { cycleRange, DEFAULT_SCHEDULE, todayKey } from "./utils";
 import type { Plan, PlanItem } from "./types";
 
 vi.mock("../../api/request", () => ({ request: vi.fn() }));
@@ -24,6 +24,24 @@ const INSURANCE = "skill-wealth-insurance-1";
 const INSURANCE_2 = "skill-wealth-insurance-2";
 const FINANCE = "skill-wealth-finance-3";
 const LOAN = "skill-wealth-loan-4";
+
+/** 客户名单夹具：仅 LOAN 技能返回两个客户，其余技能为空 */
+const NAME_LIST_FIXTURE = [
+  {
+    custUid: "CUST001",
+    custNm: "张三",
+    sapId: "10086",
+    filename: "http://example/cust001",
+    recomReason: "命中贷款核验规则",
+  },
+  {
+    custUid: "CUST002",
+    custNm: "李四",
+    sapId: "10086",
+    filename: "http://example/cust002",
+    recomReason: "",
+  },
+];
 
 /** 后端 /wealth/plans 的返回形状（PlanView 夹具） */
 interface FixturePlanView {
@@ -160,6 +178,11 @@ async function requestHandler(
         : SCENE_FIXTURES,
     };
   }
+  if (path.startsWith("/wealth/name-list")) {
+    const skillId =
+      new URL(path, "http://test").searchParams.get("skill_id") ?? "";
+    return { items: skillId === LOAN ? NAME_LIST_FIXTURE : [] };
+  }
   if (path === "/wealth/plans" && method === "GET") {
     return { items: planViews };
   }
@@ -202,12 +225,41 @@ function makeItem(patch: Partial<PlanItem> = {}): PlanItem {
   };
 }
 
+/** 构造一个「今天有排程」的已发布规划（日期按运行当天动态计算，保证测试与日期无关） */
+function makeTodayPlan(): Plan {
+  const today = todayKey();
+  return {
+    id: "plan-today",
+    name: "今日规划",
+    source: "我的关注",
+    desc: "",
+    customers: 0,
+    tasks: 0,
+    rate: 0,
+    status: "已自动下发",
+    publishStatus: "published",
+    period: "自定义",
+    start: today,
+    end: today,
+    items: [
+      makeItem({
+        id: LOAN,
+        sceneName: "信贷需求挖掘",
+        categoryLabel: "贷款",
+        categoryCode: "loan",
+        start: today,
+        end: today,
+      }),
+    ],
+  };
+}
+
 async function initStore() {
   resetMockDb();
   planViews = fixturePlanViews();
   mockRequest.mockImplementation(requestHandler as never);
   // 显式声明测试身份为客户经理（RB0101），不依赖 FALLBACK_ROLE 兜底
-  useIframeStore.setState({ positionId: "RB0101" });
+  useIframeStore.setState({ positionId: "RB0101", userId: null });
   useWealthStore.setState({
     initialized: false,
     accountId: "rm",
@@ -215,6 +267,7 @@ async function initStore() {
     scenesLoading: false,
     plans: [],
     customers: [],
+    customersLoading: false,
     history: [],
     draft: { name: "", items: [] },
     savedAt: "",
@@ -424,6 +477,45 @@ describe("WealthWorkbench store", () => {
     expect(useWealthStore.getState().targetSapIds).toEqual(["zhangwl"]);
     useWealthStore.getState().toggleTarget("zhangwl");
     expect(useWealthStore.getState().targetSapIds).toEqual([]);
+  });
+
+  it("loadTodayCustomers 经营视角传 sapId 拉取今日名单，客户视角不传", async () => {
+    useIframeStore.setState({ userId: "10086" });
+    useWealthStore.setState({ plans: [makeTodayPlan()] });
+    const nameListCalls = () =>
+      mockRequest.mock.calls
+        .filter(([p]) => String(p).startsWith("/wealth/name-list"))
+        .map(([p]) => String(p));
+
+    await useWealthStore.getState().loadTodayCustomers("business");
+    expect(nameListCalls().slice(-1)[0]).toContain("sap_id=10086");
+    const customers = useWealthStore.getState().customers;
+    expect(customers).toHaveLength(2);
+    expect(customers[0]).toMatchObject({
+      id: `${LOAN}|CUST001`,
+      task: "信贷需求挖掘",
+      category: "贷款",
+      reason: "命中贷款核验规则",
+      done: false,
+    });
+
+    await useWealthStore.getState().loadTodayCustomers("customer");
+    expect(nameListCalls().slice(-1)[0]).not.toContain("sap_id=");
+  });
+
+  it("触达登记后切换视角重新拉取，触达结果回填", async () => {
+    useWealthStore.setState({ plans: [makeTodayPlan()] });
+    await useWealthStore.getState().loadTodayCustomers("business");
+    const id = useWealthStore.getState().customers[0]?.id ?? "";
+    await useWealthStore.getState().reportContact(id, "电话", "done", "已沟通");
+    expect(
+      useWealthStore.getState().customers.find((c) => c.id === id)?.done,
+    ).toBe(true);
+
+    await useWealthStore.getState().loadTodayCustomers("customer");
+    expect(
+      useWealthStore.getState().customers.find((c) => c.id === id)?.done,
+    ).toBe(true);
   });
 
   it("editPlan 将规划内容载入草稿并设置编辑态", () => {
