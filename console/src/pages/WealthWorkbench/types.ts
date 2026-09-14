@@ -19,21 +19,19 @@ export interface Account {
   source: string;
 }
 
-/** 经营场景（/wealth/scene-skills 返回，外部接口或后端兜底的统一形状） */
+/** 经营场景（/wealth/scene-skills 返回，与外部 skill-config 接口字段对齐） */
 export interface Scene {
-  /** 场景标识：外部接口 skillId，兜底为 skill-wealth-{code}-{n} */
+  /** 场景标识：外部接口 skillId */
   id: string;
   /** 外部接口 itemId，发布时回传 */
   itemId?: string | null;
   name: string;
-  /** 产品大类中文名：保险 / 理财 / 存款 / 代发 / 跨境 / 基金 */
+  /** 产品大类中文名：保险 / 贷款 / 存款 / 理财 / 基金 / 代发 */
   category: string;
-  /** 产品大类英文 code：insurance / finance / deposit / payroll / cross_border / fund */
+  /** 产品大类英文 code：insurance / loan / deposit / finance / fund / payroll */
   categoryCode: string;
   icon: string;
   desc: string;
-  /** AI 能力是否就绪 */
-  ready: boolean;
   /** 来源标签：总部预置 / 分行自建 */
   source: string;
   cronExample?: string | null;

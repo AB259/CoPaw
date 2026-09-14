@@ -7,12 +7,7 @@
  */
 import { parseCron, serializeCron } from "@/utils/parseCron";
 import { request } from "../../api/request";
-import {
-  accounts,
-  buildCustomers,
-  buildHistory,
-  SCENE_CATEGORIES,
-} from "./mock/data";
+import { buildCustomers, buildHistory, SCENE_CATEGORIES } from "./mock/data";
 import { DEFAULT_SCHEDULE } from "./utils";
 import type {
   Account,
@@ -23,13 +18,6 @@ import type {
   PlanItem,
   Scene,
 } from "./types";
-
-/**
- * 是否显示「角色预览」入口。
- * 岗位映射（POSITION_ROLE_MAP）已生效，生产身份由父系统 positionId 唯一决定，
- * 预览器随之关闭（见 Topbar / AccountSwitcher）；本地演示如需临时打开可置回 true。
- */
-export const IS_MOCK = false;
 
 /** 模拟网络延迟（毫秒），让离线 mock 的异步行为贴近真实接口 */
 const MOCK_LATENCY_MS = 60;
@@ -97,7 +85,6 @@ interface SceneSkillItem {
   cronExample?: string | null;
   mcpRelationList: string[];
   skillBbkLabel?: string | null;
-  ready: boolean;
 }
 
 interface SceneSkillListResponse {
@@ -111,11 +98,11 @@ interface SceneSkillListResponse {
 /** 大类英文 code → 场景图标（原型图标集） */
 const CATEGORY_ICON: Record<string, string> = {
   insurance: "shield",
-  finance: "layer",
-  deposit: "chart",
-  payroll: "user",
-  cross_border: "globe",
-  fund: "layer",
+  loan: "bank",
+  deposit: "safe",
+  finance: "chart",
+  fund: "pie",
+  payroll: "money",
 };
 
 const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
@@ -131,7 +118,6 @@ function mapScene(item: SceneSkillItem): Scene {
     categoryCode: item.category,
     icon: CATEGORY_ICON[item.category] ?? "layer",
     desc: item.senceDesc ?? "",
-    ready: item.ready,
     source: item.skillBbkLabel ?? "",
     cronExample: item.cronExample,
     mcpRelations: item.mcpRelationList ?? [],
@@ -304,11 +290,6 @@ export interface BootstrapData {
   savedAt: string;
 }
 
-export async function fetchAccounts(): Promise<Account[]> {
-  await sleep(MOCK_LATENCY_MS);
-  return clone(accounts);
-}
-
 /** 拉取账户视角下的工作台全量数据（规划走真实接口，其余本期仍为 mock） */
 export async function fetchBootstrap(
   accountId: string,
@@ -329,16 +310,6 @@ export async function fetchBootstrap(
     draft: cached ? clone(cached.draft) : newAccountDraft(),
     savedAt: cached?.at ?? "",
   };
-}
-
-/** 切换账户前暂存当前账户草稿（会话级，不落盘） */
-export async function stashDraft(
-  accountId: string,
-  draft: Draft,
-  savedAt: string,
-): Promise<void> {
-  await sleep(0);
-  db.drafts[accountId] = { draft: clone(draft), at: savedAt };
 }
 
 /** 保存草稿：仅记录保存时间并写内存表（草稿不进后端，见 CONTEXT.md） */

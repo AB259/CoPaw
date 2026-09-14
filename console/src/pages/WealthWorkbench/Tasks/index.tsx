@@ -18,11 +18,11 @@ export type TaskPageKind = "today" | "pending" | "done";
 /** 任务树大类图标（对应 Icon 组件的命名） */
 const CATEGORY_ICONS: Record<string, string> = {
   保险: "shield",
+  贷款: "bank",
+  存款: "safe",
   理财: "money",
-  存款: "bank",
-  代发: "user",
-  跨境: "globe",
   基金: "pie",
+  代发: "user",
 };
 
 /** 树节点来源标签的配色：复用重点标签的既有色板 */
