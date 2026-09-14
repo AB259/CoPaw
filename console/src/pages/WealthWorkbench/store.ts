@@ -13,6 +13,7 @@ import { useIframeStore } from "../../stores/iframeStore";
 import * as api from "./api";
 import {
   canAccessPage,
+  FALLBACK_ROLE,
   needsDistributeTargets,
   resolveRole,
   type WealthPage,
@@ -205,9 +206,13 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
 
   init: async () => {
     if (get().initialized) return;
-    const accounts = await api.fetchAccounts();
-    // 生产环境生效角色由父系统 positionId 解析；mock 期无身份时回退默认角色
+    // 生效角色由父系统 positionId 解析；未识别身份（unknown）整页拦截，不加载业务数据
     const accountId = resolveRole(useIframeStore.getState().positionId);
+    if (accountId === FALLBACK_ROLE) {
+      set({ initialized: true, accountId });
+      return;
+    }
+    const accounts = await api.fetchAccounts();
     const scenePool = await api.fetchScenePool();
     const data = await api.fetchBootstrap(accountId);
     set({ initialized: true, accounts, accountId, scenePool, ...data });
