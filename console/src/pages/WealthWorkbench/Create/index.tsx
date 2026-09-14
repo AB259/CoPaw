@@ -274,7 +274,9 @@ function TaskSchedule({ item, scene }: { item: PlanItem; scene: Scene }) {
 export default function Create() {
   const account = useWealthStore(selectCurrentAccount);
   const draft = useWealthStore((s) => s.draft);
-  const scenePool = useWealthStore((s) => s.scenePool);
+  const scenesByCategory = useWealthStore((s) => s.scenesByCategory);
+  const scenesLoading = useWealthStore((s) => s.scenesLoading);
+  const loadScenes = useWealthStore((s) => s.loadScenes);
   const savedAt = useWealthStore((s) => s.savedAt);
   const editingId = useWealthStore((s) => s.editingId);
   const toggleScene = useWealthStore((s) => s.toggleScene);
@@ -308,6 +310,15 @@ export default function Create() {
     return () => clearEditingId();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 大类标签 → 英文 code；「全部」传空串。按当前选中大类懒加载场景（会话级缓存）
+  const filterCode =
+    filterCategory === "全部"
+      ? ""
+      : SCENE_CATEGORIES.find((c) => c.label === filterCategory)?.code ?? "";
+  useEffect(() => {
+    void loadScenes(filterCode);
+  }, [filterCode, loadScenes]);
 
   const scrollTo = (
     target: "scene" | "direction" | "target",
@@ -384,9 +395,8 @@ export default function Create() {
     });
   };
 
-  const visibleScenes = scenePool.filter(
-    (s) => filterCategory === "全部" || s.category === filterCategory,
-  );
+  const visibleScenes = scenesByCategory[filterCode] ?? [];
+  const allScenes = Object.values(scenesByCategory).flat();
 
   return (
     <>
@@ -457,7 +467,11 @@ export default function Create() {
             </div>
           </div>
           <div className={styles.scenes}>
-            {visibleScenes.length ? (
+            {scenesLoading && !(filterCode in scenesByCategory) ? (
+              <div className={styles.empty} style={{ gridColumn: "1/-1" }}>
+                场景加载中…
+              </div>
+            ) : visibleScenes.length ? (
               visibleScenes.map((s, i) => {
                 const chosen = draft.items.some((x) => x.id === s.id);
                 return (
@@ -525,7 +539,7 @@ export default function Create() {
           <div className={styles.selectedList}>
             {draft.items.length ? (
               draft.items.map((x, i) => {
-                const s = scenePool.find((sc) => sc.id === x.id);
+                const s = allScenes.find((sc) => sc.id === x.id);
                 const display: Scene =
                   s ??
                   ({

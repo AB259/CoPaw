@@ -1,7 +1,7 @@
 /**
  * 智能财富工作台 —— store 行为测试
- * request 层用内存夹具 mock（规划接口已不做假数据回退），
- * 账户/场景池/草稿走真实实现：场景接口 reject 时回退本地兜底场景表。
+ * request 层用内存夹具 mock（规划接口已不做假数据回退）；
+ * 场景接口按 category 返回 SceneSkillItem 夹具，账户/草稿走真实实现。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetMockDb } from "./api";
@@ -100,14 +100,64 @@ function fixturePlanViews(): FixturePlanView[] {
   ];
 }
 
-/** request 夹具：规划 CRUD 走内存表，场景接口 reject 以触发本地兜底 */
+/** 场景接口夹具：SceneSkillItem 形状，按 category 过滤，空串返回全部 */
+const SCENE_FIXTURES = [
+  {
+    skillId: INSURANCE,
+    itemId: "item-wealth-insurance-1",
+    senceName: "保障潜客经营",
+    category: "insurance",
+    senceDesc: "挖掘高潜保险客户",
+    mcpRelationList: ["mcp-customer", "mcp-insurance"],
+    skillBbkLabel: "总部预置",
+    ready: true,
+  },
+  {
+    skillId: INSURANCE_2,
+    itemId: "item-wealth-insurance-2",
+    senceName: "保障缺口经营",
+    category: "insurance",
+    senceDesc: "识别客户保障缺口",
+    mcpRelationList: ["mcp-customer", "mcp-insurance"],
+    skillBbkLabel: "总部预置",
+    ready: true,
+  },
+  {
+    skillId: FINANCE,
+    itemId: "item-wealth-finance-3",
+    senceName: "产品到期承接",
+    category: "finance",
+    senceDesc: "优先承接近期到期资金",
+    mcpRelationList: ["mcp-wealth"],
+    skillBbkLabel: "总部预置",
+    ready: true,
+  },
+  {
+    skillId: NOT_READY,
+    itemId: "item-wealth-cross_border-7",
+    senceName: "跨境客户经营",
+    category: "cross_border",
+    senceDesc: "拓展跨境客户",
+    mcpRelationList: ["mcp-cross-border"],
+    skillBbkLabel: "总部预置",
+    ready: false,
+  },
+];
+
+/** request 夹具：规划 CRUD 走内存表；场景接口按 category 参数返回夹具 */
 async function requestHandler(
   path: string,
   options: RequestInit = {},
 ): Promise<unknown> {
   const method = options.method ?? "GET";
   if (path.startsWith("/wealth/scene-skills")) {
-    throw new TypeError("Failed to fetch");
+    const category =
+      new URL(path, "http://test").searchParams.get("category") ?? "";
+    return {
+      items: category
+        ? SCENE_FIXTURES.filter((s) => s.category === category)
+        : SCENE_FIXTURES,
+    };
   }
   if (path === "/wealth/plans" && method === "GET") {
     return { items: planViews };
@@ -161,7 +211,8 @@ async function initStore() {
     initialized: false,
     accounts: [],
     accountId: "rm",
-    scenePool: [],
+    scenesByCategory: {},
+    scenesLoading: false,
     plans: [],
     customers: [],
     history: [],
@@ -178,31 +229,63 @@ async function initStore() {
   await useWealthStore.getState().init();
 }
 
+/** 直接塞入一份可发布的草稿（替代已移除的预填 mock 草稿） */
+function seedDraft() {
+  useWealthStore.setState({
+    draft: {
+      name: "九月规划",
+      items: [
+        makeItem(),
+        makeItem({
+          id: FINANCE,
+          sceneName: "产品到期承接",
+          categoryLabel: "理财",
+          categoryCode: "finance",
+        }),
+      ],
+    },
+  });
+}
+
 describe("WealthWorkbench store", () => {
   beforeEach(async () => {
     await initStore();
   });
 
-  it("init 加载账户、场景池与工作台数据", () => {
+  it("init 加载账户与工作台数据；场景不进系统时预加载", () => {
     const s = useWealthStore.getState();
     expect(s.accounts).toHaveLength(3);
-    expect(s.scenePool.length).toBeGreaterThan(0);
+    expect(s.scenesByCategory).toEqual({});
     expect(s.plans).toHaveLength(6);
-    expect(s.draft.items.map((x) => x.id)).toEqual([INSURANCE, FINANCE]);
+    expect(s.draft).toEqual({ name: "", items: [] });
   });
 
-  it("toggleScene 选择/移除场景，未就绪场景不可选", () => {
+  it("loadScenes 按大类查询且每次都取最新；toggleScene 选择/移除场景", async () => {
+    const sceneCalls = () =>
+      mockRequest.mock.calls.filter(([p]) =>
+        String(p).startsWith("/wealth/scene-skills"),
+      ).length;
+    await useWealthStore.getState().loadScenes("");
+    await useWealthStore.getState().loadScenes(""); // 不做缓存，每次都重新查询
+    expect(sceneCalls()).toBe(2);
+    expect(
+      useWealthStore.getState().scenesByCategory[""]?.map((s) => s.id),
+    ).toEqual([INSURANCE, INSURANCE_2, FINANCE, NOT_READY]);
+
     const { toggleScene } = useWealthStore.getState();
     const ids = () => useWealthStore.getState().draft.items.map((x) => x.id);
+    toggleScene(INSURANCE);
+    expect(ids()).toEqual([INSURANCE]);
     toggleScene(INSURANCE_2);
-    expect(ids()).toEqual([INSURANCE, FINANCE, INSURANCE_2]);
+    expect(ids()).toEqual([INSURANCE, INSURANCE_2]);
     toggleScene(NOT_READY); // 能力建设中
-    expect(ids()).toEqual([INSURANCE, FINANCE, INSURANCE_2]);
+    expect(ids()).toEqual([INSURANCE, INSURANCE_2]);
     toggleScene(INSURANCE_2);
-    expect(ids()).toEqual([INSURANCE, FINANCE]);
+    expect(ids()).toEqual([INSURANCE]);
   });
 
   it("moveScene / dropScene 调整顺序", () => {
+    seedDraft();
     const { moveScene, dropScene } = useWealthStore.getState();
     const ids = () => useWealthStore.getState().draft.items.map((x) => x.id);
     moveScene(0, 1);
@@ -212,6 +295,7 @@ describe("WealthWorkbench store", () => {
   });
 
   it("setTaskCycle 预设周期自动带出起止日期", () => {
+    useWealthStore.setState({ draft: { name: "x", items: [makeItem()] } });
     const { setTaskCycle } = useWealthStore.getState();
     setTaskCycle(INSURANCE, "本季");
     const item = useWealthStore
@@ -224,6 +308,7 @@ describe("WealthWorkbench store", () => {
   });
 
   it("updateSchedule 修改场景排程", () => {
+    useWealthStore.setState({ draft: { name: "x", items: [makeItem()] } });
     const { updateSchedule } = useWealthStore.getState();
     updateSchedule(INSURANCE, {
       type: "weekly",
@@ -296,6 +381,7 @@ describe("WealthWorkbench store", () => {
   });
 
   it("publishPlan 成功后更新列表并清除编辑态", async () => {
+    seedDraft();
     const ok = await useWealthStore.getState().publishPlan();
     expect(ok).toBe(true);
     const s = useWealthStore.getState();
@@ -305,12 +391,14 @@ describe("WealthWorkbench store", () => {
   });
 
   it("publishPlan 客户经理默认分发给自己", async () => {
+    seedDraft();
     await useWealthStore.getState().publishPlan();
     expect(useWealthStore.getState().plans[0]?.targetSapIds).toEqual(["rm"]);
   });
 
   it("publishPlan 行长未选分发目标时校验失败", async () => {
     await useWealthStore.getState().previewRole("president");
+    seedDraft();
     const ok = await useWealthStore.getState().publishPlan();
     expect(ok).toBe(false);
     expect(useWealthStore.getState().plans).toHaveLength(6);
@@ -319,6 +407,7 @@ describe("WealthWorkbench store", () => {
 
   it("publishPlan 行长选择分发目标后发布成功并记录 sapIds", async () => {
     await useWealthStore.getState().previewRole("president");
+    seedDraft();
     useWealthStore.getState().toggleTarget("zhangwl");
     useWealthStore.getState().toggleTarget("chenjy");
     const ok = await useWealthStore.getState().publishPlan();
@@ -350,7 +439,7 @@ describe("WealthWorkbench store", () => {
     let s = useWealthStore.getState();
     expect(s.accountId).toBe("president");
     expect(s.editingId).toBeNull();
-    expect(s.draft.name).toBe("九月重点客户经营计划");
+    expect(s.draft).toEqual({ name: "", items: [] });
     expect(s.toastText).toContain("角色视角预览");
     await useWealthStore.getState().previewRole("rm");
     s = useWealthStore.getState();
