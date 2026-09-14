@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetMockDb } from "./api";
 import { request } from "../../api/request";
+import { useIframeStore } from "../../stores/iframeStore";
 import { useWealthStore, validateDraft, planScheduledOn } from "./store";
 import { cycleRange, DEFAULT_SCHEDULE } from "./utils";
 import type { Plan, PlanItem } from "./types";
@@ -154,6 +155,8 @@ async function initStore() {
   resetMockDb();
   planViews = fixturePlanViews();
   mockRequest.mockImplementation(requestHandler as never);
+  // 显式声明测试身份为客户经理（RB0101），不依赖 FALLBACK_ROLE 兜底
+  useIframeStore.setState({ positionId: "RB0101" });
   useWealthStore.setState({
     initialized: false,
     accounts: [],

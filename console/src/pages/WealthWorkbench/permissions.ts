@@ -10,12 +10,13 @@
  *
  * 矩阵（与原型一致的最小版本）：
  * - 三个角色均可访问 规划看板 / 创建计划；
- * - 仅客户经理可访问 任务三页（今日任务 / 待触达客户 / 已完成）。
+ * - 仅客户经理可访问 任务三页（今日任务 / 待触达客户 / 已完成）；
+ * - 未识别身份（unknown）无任何页面权限，入口整页拦截。
  * 操作级权限（发布 / 编辑 / 删除 / 触达登记）暂不按角色区分，矩阵预留扩展。
  */
 
-/** 工作台角色；与 mock 账户 id 一一对应 */
-export type WealthRole = "rm" | "president" | "middle";
+/** 工作台角色；unknown 为未识别身份的伪角色（deny by default，无任何权限） */
+export type WealthRole = "rm" | "president" | "middle" | "unknown";
 
 /** 受权限控制的页面组；tasks 代表今日任务 / 待触达客户 / 已完成三页 */
 export type WealthPage = "board" | "create" | "tasks";
@@ -25,17 +26,27 @@ export const ROLE_PERMISSIONS: Record<WealthRole, readonly WealthPage[]> = {
   rm: ["board", "create", "tasks"],
   president: ["board", "create"],
   middle: ["board", "create"],
+  unknown: [],
 };
 
-/** 兜底角色：positionId 缺失或未命中映射表时使用（保持当前默认账户行为） */
-export const FALLBACK_ROLE: WealthRole = "rm";
+/**
+ * 兜底角色：positionId 缺失或未命中映射表时使用（deny by default）。
+ * 未识别身份无任何页面权限：入口整页拦截为「暂无访问权限」提示，
+ * 不加载业务数据，见 index.tsx 的 unknown 分支。
+ */
+export const FALLBACK_ROLE: WealthRole = "unknown";
 
 /**
- * positionId → 角色映射表。
- * TODO(phase-2): 真实岗位编号规则尚未提供，暂为占位空表；
- * 若第二阶段接口直接返回角色字段，则删除本表与 resolveRole 的查表逻辑。
+ * positionId → 角色映射表（父系统岗位编号清单）：
+ * - RB0101 客户经理；RB0208 支行行长；RB0304 / RB0906 均为分行中台。
+ * 新增岗位类型时在此登记；未知编号由 resolveRole 回退 FALLBACK_ROLE 并留痕。
  */
-export const POSITION_ROLE_MAP: Record<string, WealthRole> = {};
+export const POSITION_ROLE_MAP: Record<string, WealthRole> = {
+  RB0101: "rm",
+  RB0208: "president",
+  RB0304: "middle",
+  RB0906: "middle",
+};
 
 /** 由父系统岗位编号解析工作台角色；未命中时回退 FALLBACK_ROLE 并留痕 */
 export function resolveRole(positionId: string | null | undefined): WealthRole {

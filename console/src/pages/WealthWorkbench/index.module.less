@@ -3291,3 +3291,32 @@
     }
   }
 }
+
+/* 未识别身份（unknown）整页拦截提示 */
+.root {
+  .denied {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 12px;
+    text-align: center;
+    padding: 24px;
+  }
+  .deniedIcon {
+    width: 56px;
+    height: 56px;
+    color: var(--muted);
+  }
+  .deniedTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .deniedDesc {
+    font-size: 14px;
+    color: var(--muted);
+    max-width: 360px;
+  }
+}

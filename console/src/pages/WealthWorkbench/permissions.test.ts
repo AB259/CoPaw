@@ -6,7 +6,6 @@ import {
   canAccessPage,
   FALLBACK_ROLE,
   needsDistributeTargets,
-  POSITION_ROLE_MAP,
   resolveRole,
   ROLE_PERMISSIONS,
 } from "./permissions";
@@ -22,22 +21,26 @@ describe("WealthWorkbench permissions", () => {
     expect(canAccessPage("middle", "tasks")).toBe(false);
   });
 
+  it("unknown 伪角色无任何页面权限", () => {
+    for (const page of ["board", "create", "tasks"] as const) {
+      expect(canAccessPage("unknown", page)).toBe(false);
+    }
+  });
+
   it("矩阵覆盖全部角色", () => {
     expect(Object.keys(ROLE_PERMISSIONS).sort()).toEqual([
       "middle",
       "president",
       "rm",
+      "unknown",
     ]);
   });
 
-  it("resolveRole 命中映射表", () => {
-    const key = Object.keys(POSITION_ROLE_MAP)[0];
-    if (key) {
-      expect(resolveRole(key)).toBe(POSITION_ROLE_MAP[key]);
-    } else {
-      // 映射表当前为占位空表，跳过命中分支
-      expect(POSITION_ROLE_MAP).toEqual({});
-    }
+  it("resolveRole 命中映射表：RB0101 客户经理 / RB0208 行长 / RB0304、RB0906 中台", () => {
+    expect(resolveRole("RB0101")).toBe("rm");
+    expect(resolveRole("RB0208")).toBe("president");
+    expect(resolveRole("RB0304")).toBe("middle");
+    expect(resolveRole("RB0906")).toBe("middle");
   });
 
   it("仅行长/中台需要选择分发目标，客户经理发给自己", () => {
@@ -46,7 +49,12 @@ describe("WealthWorkbench permissions", () => {
     expect(needsDistributeTargets("middle")).toBe(true);
   });
 
-  it("resolveRole 缺失或未知 positionId 回退默认角色", () => {
+  it("resolveRole 缺失或未知 positionId 回退 unknown（deny by default）", () => {
+    // 未识别身份无任何页面权限，入口整页拦截
+    expect(FALLBACK_ROLE).toBe("unknown");
+    expect(canAccessPage(FALLBACK_ROLE, "board")).toBe(false);
+    expect(canAccessPage(FALLBACK_ROLE, "create")).toBe(false);
+    expect(canAccessPage(FALLBACK_ROLE, "tasks")).toBe(false);
     expect(resolveRole(null)).toBe(FALLBACK_ROLE);
     expect(resolveRole(undefined)).toBe(FALLBACK_ROLE);
     expect(resolveRole("")).toBe(FALLBACK_ROLE);

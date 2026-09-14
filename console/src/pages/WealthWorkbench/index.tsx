@@ -11,7 +11,7 @@ import cx from "classnames";
 import styles from "./index.module.less";
 import { useWealthStore, useCanAccess } from "./store";
 import { DialogHost } from "./components/DialogHost";
-import { IconDefs } from "./components/Icon";
+import { Icon, IconDefs } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { Ticker } from "./components/Ticker";
 import { Toast } from "./components/Toast";
@@ -34,6 +34,22 @@ export default function WealthWorkbench() {
 
   if (!initialized) {
     return <div className={styles.root} />;
+  }
+
+  // 未识别身份（positionId 缺失或未命中映射）：整页拦截，不渲染任何业务数据
+  if (accountId === "unknown") {
+    return (
+      <div className={styles.root}>
+        <IconDefs />
+        <div className={styles.denied}>
+          <Icon name="shield" className={styles.deniedIcon} />
+          <div className={styles.deniedTitle}>暂无访问权限</div>
+          <div className={styles.deniedDesc}>
+            当前登录岗位未纳入智能财富工作台使用范围，请联系管理员开通。
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const taskRoute = (page: "today" | "pending" | "done") =>

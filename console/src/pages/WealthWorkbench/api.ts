@@ -26,11 +26,11 @@ import type {
 } from "./types";
 
 /**
- * 是否仍处于 mock 数据阶段。
- * 「角色预览」入口仅在 mock 阶段显示；身份映射（POSITION_ROLE_MAP）生效后
- * 置为 false，顶栏预览器随之隐藏（见 Topbar）。
+ * 是否显示「角色预览」入口。
+ * 岗位映射（POSITION_ROLE_MAP）已生效，生产身份由父系统 positionId 唯一决定，
+ * 预览器随之关闭（见 Topbar / AccountSwitcher）；本地演示如需临时打开可置回 true。
  */
-export const IS_MOCK = true;
+export const IS_MOCK = false;
 
 /** 模拟网络延迟（毫秒），让离线 mock 的异步行为贴近真实接口 */
 const MOCK_LATENCY_MS = 60;
