@@ -26,68 +26,7 @@ _PLAN_TABLE = "swe_wealth_plans"
 _SCENE_TABLE = "swe_wealth_plan_scenes"
 _TARGET_TABLE = "swe_wealth_plan_targets"
 
-_CREATE_PLAN_TABLE_SQL = f"""
-    CREATE TABLE IF NOT EXISTS {_PLAN_TABLE} (
-        id VARCHAR(64) NOT NULL,
-        sap_id VARCHAR(128) NOT NULL,
-        creator_name VARCHAR(128) NULL,
-        bbk_id VARCHAR(64) NULL,
-        source_id VARCHAR(128) NULL,
-        agent_id VARCHAR(64) NULL,
-        name VARCHAR(255) NOT NULL,
-        description TEXT NULL,
-        source_label VARCHAR(32) NULL,
-        period_start VARCHAR(16) NULL,
-        period_end VARCHAR(16) NULL,
-        status VARCHAR(32) NOT NULL DEFAULT 'publishing',
-        publish_error TEXT NULL,
-        skill_dispatch_task_id VARCHAR(64) NULL,
-        skill_dispatch_status VARCHAR(32) NULL,
-        skill_dispatch_error TEXT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ON UPDATE CURRENT_TIMESTAMP,
-        published_at DATETIME NULL,
-        PRIMARY KEY (id),
-        INDEX idx_sap (sap_id),
-        INDEX idx_bbk (bbk_id)
-    )
-"""
-
-_CREATE_SCENE_TABLE_SQL = f"""
-    CREATE TABLE IF NOT EXISTS {_SCENE_TABLE} (
-        id BIGINT NOT NULL AUTO_INCREMENT,
-        plan_id VARCHAR(64) NOT NULL,
-        scene_id VARCHAR(64) NOT NULL,
-        item_id VARCHAR(64) NULL,
-        scene_name VARCHAR(255) NOT NULL,
-        category VARCHAR(32) NOT NULL,
-        direction VARCHAR(512) NULL,
-        cycle VARCHAR(16) NULL,
-        start_date VARCHAR(16) NULL,
-        end_date VARCHAR(16) NULL,
-        cron_expr VARCHAR(64) NOT NULL,
-        mcp_relations VARCHAR(512) NULL,
-        cron_job_id VARCHAR(64) NULL,
-        broadcast_task_id VARCHAR(64) NULL,
-        sort_order INT NOT NULL DEFAULT 0,
-        PRIMARY KEY (id),
-        INDEX idx_plan (plan_id)
-    )
-"""
-
-_CREATE_TARGET_TABLE_SQL = f"""
-    CREATE TABLE IF NOT EXISTS {_TARGET_TABLE} (
-        id BIGINT NOT NULL AUTO_INCREMENT,
-        plan_id VARCHAR(64) NOT NULL,
-        sap_id VARCHAR(64) NOT NULL,
-        target_name VARCHAR(128) NULL,
-        sort_order INT NOT NULL DEFAULT 0,
-        PRIMARY KEY (id),
-        INDEX idx_plan (plan_id),
-        INDEX idx_sap (sap_id)
-    )
-"""
+# 建表 SQL 见 scripts/sql/wealth_plan_tables.sql，由运维手动导入，启动时不自动建表。
 
 _INSERT_PLAN_SQL = f"""
     INSERT INTO {_PLAN_TABLE} (
@@ -207,17 +146,6 @@ class WealthPlanStore:
     def is_available(self) -> bool:
         """返回当前是否配置了数据库存储对象。"""
         return self.db is not None
-
-    async def initialize(self) -> None:
-        """幂等初始化三张表。"""
-        if not self.is_available:
-            return
-        for sql in (
-            _CREATE_PLAN_TABLE_SQL,
-            _CREATE_SCENE_TABLE_SQL,
-            _CREATE_TARGET_TABLE_SQL,
-        ):
-            await self.db.execute(sql)
 
     async def create(self, record: WealthPlanRecord) -> WealthPlanRecord:
         """写入规划主表 + 场景子表 + 目标子表。"""
