@@ -119,7 +119,7 @@ async def test_submit_skipped_when_no_items() -> None:
 async def test_submit_skipped_when_unconfigured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("SWE_MARKET_API_BASE", raising=False)
+    monkeypatch.delenv("SWE_MARKET_API_BASE_URL", raising=False)
 
     assert await submit_distribution(make_plan()) is None
 
@@ -127,7 +127,7 @@ async def test_submit_skipped_when_unconfigured(
 async def test_submit_posts_batch_and_returns_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SWE_MARKET_API_BASE", "http://market.local")
+    monkeypatch.setenv("SWE_MARKET_API_BASE_URL", "http://market.local")
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -165,7 +165,7 @@ async def test_submit_posts_batch_and_returns_status(
 async def test_submit_raises_on_non_200(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SWE_MARKET_API_BASE", "http://market.local")
+    monkeypatch.setenv("SWE_MARKET_API_BASE_URL", "http://market.local")
     monkeypatch.setattr(
         market_dispatch,
         "_new_client",
@@ -179,7 +179,7 @@ async def test_submit_raises_on_non_200(
 
 
 async def test_query_batch_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SWE_MARKET_API_BASE", "http://market.local")
+    monkeypatch.setenv("SWE_MARKET_API_BASE_URL", "http://market.local")
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -204,7 +204,7 @@ async def test_query_batch_status(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_query_returns_none_when_unconfigured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("SWE_MARKET_API_BASE", raising=False)
+    monkeypatch.delenv("SWE_MARKET_API_BASE_URL", raising=False)
 
     assert await query_batch_status("RMASSIST", "b") is None
 

@@ -57,6 +57,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/wealth", tags=["wealth"])
 
+# 外部场景接口基础地址：默认值在 src/swe/config/envs/{dev,prd}.json 维护，
+# 启动时由 load_env_defaults() 注入 os.environ；进程环境变量/K8s env 优先。
 _SKILL_CONFIG_API_BASE_ENV = "SWE_SKILL_CONFIG_API_BASE"
 _SKILL_CONFIG_PATH = "/api/agent/workspace/skill-config/list"
 _SKILL_CONFIG_TIMEOUT_SECONDS = 8

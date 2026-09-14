@@ -20,7 +20,9 @@ from .models import WealthPlanRecord
 
 logger = logging.getLogger(__name__)
 
-MARKET_API_BASE_ENV = "SWE_MARKET_API_BASE"
+# market 服务基础地址：默认值在 src/swe/config/envs/{dev,prd}.json 维护，
+# 启动时由 load_env_defaults() 注入 os.environ；进程环境变量/K8s env 优先。
+MARKET_API_BASE_ENV = "SWE_MARKET_API_BASE_URL"
 _MARKET_DISTRIBUTIONS_PATH = "/api/market/distributions"
 _MARKET_TIMEOUT_SECONDS = 8
 
@@ -90,7 +92,7 @@ async def submit_distribution(
     """提交批量分发，返回 (batch_id, 批次状态)。
 
     返回 None 表示该规划无需分发（无技能/MCP item）或分发腿未配置
-    （缺 SWE_MARKET_API_BASE / source_id）；传输或非 200 响应抛异常。
+    （缺 SWE_MARKET_API_BASE_URL / source_id）；传输或非 200 响应抛异常。
     """
     skill_ids, mcp_ids, tenant_ids = collect_distribution_items(plan)
     if not skill_ids and not mcp_ids:
