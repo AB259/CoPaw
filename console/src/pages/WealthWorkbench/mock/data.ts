@@ -1,9 +1,9 @@
 /**
  * 智能财富工作台 —— mock 静态数据
  * 规划数据已随接口闭环移除；本文件保留的是外部接口未就绪前的占位数据
- * （场景兜底 / 客户与触达 / 账户 / 分发用户池），随各接口接入逐步删除。
+ * （客户与触达 / 账户 / 分发用户池），随各接口接入逐步删除。
  */
-import type { Account, Customer, DistributeTarget, Scene } from "../types";
+import type { Account, Customer, DistributeTarget } from "../types";
 
 /** 平台可用能力总量（示例），不随本期覆盖场景筛选缩减 */
 export const PLATFORM_CAPABILITY_COUNT = 12;
@@ -85,114 +85,18 @@ export const SCENE_CATEGORIES = [
 ] as const;
 
 /**
- * 场景池的离线兜底（后端不可达的本地开发环境用）。
- * id 与后端 scene_fallback.py 的兜底数据保持一致，避免离线/在线切换错位。
+ * 客户清单占位的「场景名 ↔ 大类」对，仅供 buildCustomers 生成任务页演示数据；
+ * 接入名单/触达接口后随客户 mock 整体删除。
  */
-export const scenes: Scene[] = [
-  {
-    id: "skill-wealth-insurance-1",
-    itemId: "item-wealth-insurance-1",
-    name: "保障潜客经营",
-    category: "保险",
-    categoryCode: "insurance",
-    icon: "shield",
-    desc: "挖掘高潜保险客户，提升保险客户覆盖",
-    ready: true,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-insurance"],
-  },
-  {
-    id: "skill-wealth-insurance-2",
-    itemId: "item-wealth-insurance-2",
-    name: "保障缺口经营",
-    category: "保险",
-    categoryCode: "insurance",
-    icon: "safe",
-    desc: "识别客户保障缺口，提供综合保障方案",
-    ready: true,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-insurance"],
-  },
-  {
-    id: "skill-wealth-finance-3",
-    itemId: "item-wealth-finance-3",
-    name: "产品到期承接",
-    category: "理财",
-    categoryCode: "finance",
-    icon: "layer",
-    desc: "优先承接近期到期资金，提升客户资产留存",
-    ready: true,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-wealth"],
-  },
-  {
-    id: "skill-wealth-deposit-4",
-    itemId: "item-wealth-deposit-4",
-    name: "高价值揽客",
-    category: "存款",
-    categoryCode: "deposit",
-    icon: "chart",
-    desc: "挖掘客户资金变动机会，提升存款贡献",
-    ready: true,
-    source: "分行自建",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-deposit"],
-  },
-  {
-    id: "skill-wealth-payroll-5",
-    itemId: "item-wealth-payroll-5",
-    name: "代发客户经营",
-    category: "代发",
-    categoryCode: "payroll",
-    icon: "user",
-    desc: "深化代发客户产品覆盖，提升存款贡献",
-    ready: true,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-payroll"],
-  },
-  {
-    id: "skill-wealth-finance-6",
-    itemId: "item-wealth-finance-6",
-    name: "理财重点客户经营",
-    category: "理财",
-    categoryCode: "finance",
-    icon: "pie",
-    desc: "提升理财配置比例，增强客户黏性",
-    ready: true,
-    source: "分行自建",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-wealth"],
-  },
-  {
-    id: "skill-wealth-cross_border-7",
-    itemId: "item-wealth-cross_border-7",
-    name: "跨境客户经营",
-    category: "跨境",
-    categoryCode: "cross_border",
-    icon: "globe",
-    desc: "拓展跨境客户，提升国际业务贡献",
-    ready: false,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-cross-border"],
-  },
-  {
-    id: "skill-wealth-fund-8",
-    itemId: "item-wealth-fund-8",
-    name: "基金定投提升",
-    category: "基金",
-    categoryCode: "fund",
-    icon: "layer",
-    desc: "推动基金定投业务发展",
-    ready: true,
-    source: "总部预置",
-    cronExample: "0 9 * * *",
-    mcpRelations: ["mcp-customer", "mcp-fund"],
-  },
+const CUSTOMER_TASK_SCENES: { name: string; category: string }[] = [
+  { name: "保障潜客经营", category: "保险" },
+  { name: "保障缺口经营", category: "保险" },
+  { name: "产品到期承接", category: "理财" },
+  { name: "高价值揽客", category: "存款" },
+  { name: "代发客户经营", category: "代发" },
+  { name: "理财重点客户经营", category: "理财" },
+  { name: "跨境客户经营", category: "跨境" },
+  { name: "基金定投提升", category: "基金" },
 ];
 
 export const labels = ["总行重点", "分行重点", "行长指派"];
@@ -259,7 +163,7 @@ export function buildCustomers(): Customer[] {
     const done = i >= 19;
     // 客户清单为占位 mock：task/category 对齐真实场景名，
     // 便于任务页按场景筛选的交互演示；接入任务实例接口后整体替换。
-    const scene = scenes[i % scenes.length];
+    const scene = CUSTOMER_TASK_SCENES[i % CUSTOMER_TASK_SCENES.length];
     const c: Customer = {
       id: i + 1,
       name: n + "**",

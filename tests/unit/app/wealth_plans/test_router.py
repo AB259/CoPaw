@@ -228,17 +228,22 @@ def test_scene_skills_rejects_unknown_category(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
-def test_scene_skills_fallback_when_external_absent(
+def test_scene_skills_empty_when_external_absent(
     client: TestClient,
 ) -> None:
+    """外部接口未配置/不可达时返回空列表，不做假数据兜底。"""
     resp = client.get("/api/wealth/scene-skills?category=insurance")
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["fallback"] is True
-    names = [item["senceName"] for item in body["items"]]
-    assert names == ["保障潜客经营", "保障缺口经营"]
-    assert body["items"][0]["skillId"].startswith("skill-wealth-insurance-")
+    assert resp.json() == {"items": []}
+
+
+def test_scene_skills_allows_empty_category(client: TestClient) -> None:
+    """category 为空串表示查询全部大类，不再 400。"""
+    resp = client.get("/api/wealth/scene-skills?category=")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"items": []}
 
 
 async def _make_broadcast_store(

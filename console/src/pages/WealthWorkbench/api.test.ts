@@ -1,8 +1,8 @@
 /**
  * 智能财富工作台 —— 数据访问层测试
- * 规划接口不做假数据回退：离线时读路径返回空列表、写路径上抛
+ * 规划与场景接口不做假数据回退：离线时读路径返回空列表、写路径上抛
  * （错误传播用例见 api.http-errors.test.ts）。
- * 本文件覆盖客户/触达/草稿等内存 mock 行为与场景池兜底。
+ * 本文件覆盖客户/触达/草稿等内存 mock 行为。
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import * as api from "./api";
@@ -12,16 +12,12 @@ describe("WealthWorkbench api", () => {
     api.resetMockDb();
   });
 
-  it("fetchBootstrap 返回客户、历史与默认草稿；规划接口不可达时 plans 为空", async () => {
+  it("fetchBootstrap 返回客户、历史与空草稿；规划接口不可达时 plans 为空", async () => {
     const data = await api.fetchBootstrap("rm");
     expect(data.plans).toEqual([]);
     expect(data.customers).toHaveLength(28);
     expect(data.history).toHaveLength(34);
-    expect(data.draft.name).toBe("九月重点客户经营计划");
-    expect(data.draft.items.map((x) => x.id)).toEqual([
-      "skill-wealth-insurance-1",
-      "skill-wealth-finance-3",
-    ]);
+    expect(data.draft).toEqual({ name: "", items: [] });
     expect(data.savedAt).toBe("");
   });
 
@@ -29,10 +25,9 @@ describe("WealthWorkbench api", () => {
     expect(await api.fetchPlanList()).toEqual([]);
   });
 
-  it("fetchScenePool 场景接口不可达时回退本地兜底场景", async () => {
-    const pool = await api.fetchScenePool();
-    expect(pool.length).toBeGreaterThan(0);
-    expect(pool[0]?.id).toBe("skill-wealth-insurance-1");
+  it("fetchScenesByCategory 场景接口不可达时返回空列表（不做假数据兜底）", async () => {
+    expect(await api.fetchScenesByCategory("insurance")).toEqual([]);
+    expect(await api.fetchScenesByCategory("")).toEqual([]);
   });
 
   it("saveDraft 按账户隔离草稿并记录保存时间", async () => {
@@ -44,7 +39,7 @@ describe("WealthWorkbench api", () => {
     expect(data.savedAt).toBe(savedAt);
     // 其他账户不受影响
     const rmData = await api.fetchBootstrap("rm");
-    expect(rmData.draft.name).toBe("九月重点客户经营计划");
+    expect(rmData.draft).toEqual({ name: "", items: [] });
   });
 
   it("reportContact 登记触达结果", async () => {
@@ -68,6 +63,6 @@ describe("WealthWorkbench api", () => {
     api.resetMockDb();
     const data = await api.fetchBootstrap("rm");
     expect(data.customers.find((c) => c.id === 1)?.done).toBe(false);
-    expect(data.draft.name).toBe("九月重点客户经营计划");
+    expect(data.draft).toEqual({ name: "", items: [] });
   });
 });

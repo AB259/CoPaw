@@ -222,4 +222,3 @@ class SceneSkillItem(BaseModel):
 
 class SceneSkillListResponse(BaseModel):
     items: list[SceneSkillItem] = Field(default_factory=list)
-    fallback: bool = False

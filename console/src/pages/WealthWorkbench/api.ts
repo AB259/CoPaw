@@ -11,7 +11,6 @@ import {
   accounts,
   buildCustomers,
   buildHistory,
-  scenes as fallbackScenes,
   SCENE_CATEGORIES,
 } from "./mock/data";
 import { DEFAULT_SCHEDULE } from "./utils";
@@ -103,7 +102,6 @@ interface SceneSkillItem {
 
 interface SceneSkillListResponse {
   items: SceneSkillItem[];
-  fallback: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,23 +177,24 @@ function mapPlan(view: PlanView): Plan {
 }
 
 // ---------------------------------------------------------------------------
-// 场景池：/wealth/scene-skills（外部接口代理，后端自带兜底）
+// 场景查询：/wealth/scene-skills（外部接口代理）
 // ---------------------------------------------------------------------------
 
-/** 拉取全部产品大类的经营场景；后端不可达时回退到本地兜底场景表 */
-export async function fetchScenePool(): Promise<Scene[]> {
+/**
+ * 按产品大类查询经营场景；categoryCode 传空串表示查询全部大类。
+ * 接口不可达时返回空列表，由页面展示空态，不做假数据兜底。
+ */
+export async function fetchScenesByCategory(
+  categoryCode: string,
+): Promise<Scene[]> {
   try {
-    const groups = await Promise.all(
-      SCENE_CATEGORIES.map((c) =>
-        request<SceneSkillListResponse>(
-          `/wealth/scene-skills?category=${encodeURIComponent(c.code)}`,
-        ),
-      ),
+    const resp = await request<SceneSkillListResponse>(
+      `/wealth/scene-skills?category=${encodeURIComponent(categoryCode)}`,
     );
-    return groups.flatMap((g) => g.items.map(mapScene));
+    return resp.items.map(mapScene);
   } catch (error) {
-    console.warn("[Wealth] 场景接口不可用，回退本地兜底场景", error);
-    return clone(fallbackScenes);
+    console.warn("[Wealth] 场景接口不可用，返回空列表", error);
+    return [];
   }
 }
 
@@ -294,23 +293,7 @@ export function resetMockDb(): void {
 }
 
 export function newAccountDraft(): Draft {
-  return {
-    name: "九月重点客户经营计划",
-    items: ["skill-wealth-insurance-1", "skill-wealth-finance-3"].map((id) => {
-      const scene = fallbackScenes.find((s) => s.id === id)!;
-      return {
-        id,
-        sceneName: scene.name,
-        categoryLabel: scene.category,
-        categoryCode: scene.categoryCode,
-        itemId: scene.itemId,
-        mcpRelations: scene.mcpRelations,
-        direction: scene.desc,
-        cycle: "本月",
-        schedule: { ...DEFAULT_SCHEDULE },
-      };
-    }),
-  };
+  return { name: "", items: [] };
 }
 
 export interface BootstrapData {

@@ -59,8 +59,10 @@ interface WealthState {
   accounts: Account[];
   /** 生效角色对应的账户 id；生产环境由 positionId 解析，mock 期可被预览覆盖 */
   accountId: WealthRole;
-  /** 经营场景池（/wealth/scene-skills，含后端兜底数据） */
-  scenePool: Scene[];
+  /** 按大类缓存的经营场景（/wealth/scene-skills）；键为大类英文 code，空串表示全部 */
+  scenesByCategory: Record<string, Scene[]>;
+  /** 场景查询进行中（按分类点击懒加载） */
+  scenesLoading: boolean;
   plans: Plan[];
   customers: Customer[];
   history: Customer[];
@@ -85,6 +87,9 @@ interface WealthState {
   // —— 分发目标（行长/中台） ——
   loadTargets: () => Promise<void>;
   toggleTarget: (sapId: string) => void;
+
+  // —— 经营场景（按分类点击查询，每次都取最新数据） ——
+  loadScenes: (categoryCode: string) => Promise<void>;
 
   // —— 草稿编辑（纯内存） ——
   setDraftName: (name: string) => void;
@@ -190,7 +195,8 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
   initialized: false,
   accounts: [],
   accountId: "rm",
-  scenePool: [],
+  scenesByCategory: {},
+  scenesLoading: false,
   plans: [],
   customers: [],
   history: [],
@@ -213,9 +219,8 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
       return;
     }
     const accounts = await api.fetchAccounts();
-    const scenePool = await api.fetchScenePool();
     const data = await api.fetchBootstrap(accountId);
-    set({ initialized: true, accounts, accountId, scenePool, ...data });
+    set({ initialized: true, accounts, accountId, ...data });
   },
 
   previewRole: async (id) => {
@@ -256,13 +261,26 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
     });
   },
 
+  loadScenes: async (categoryCode) => {
+    // 每次点击分类都重新查询最新数据；按大类分键存储，
+    // 快速切换标签时各响应只写自己的 key，天然免疫乱序覆盖
+    set({ scenesLoading: true });
+    const scenes = await api.fetchScenesByCategory(categoryCode);
+    set((s) => ({
+      scenesByCategory: { ...s.scenesByCategory, [categoryCode]: scenes },
+      scenesLoading: false,
+    }));
+  },
+
   setDraftName: (name) => set((s) => ({ draft: { ...s.draft, name } })),
 
   toggleScene: (id) => {
-    const { draft, scenePool } = get();
+    const { draft, scenesByCategory } = get();
     const index = draft.items.findIndex((x) => x.id === id);
     if (index < 0) {
-      const scene = scenePool.find((s) => s.id === id);
+      const scene = Object.values(scenesByCategory)
+        .flat()
+        .find((s) => s.id === id);
       if (!scene?.ready) return;
       const range = cycleRange("本月");
       set({

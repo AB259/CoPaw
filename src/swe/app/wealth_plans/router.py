@@ -50,7 +50,6 @@ from .publish import (
     delete_removed_scene_jobs,
     launch_publish,
 )
-from .scene_fallback import fallback_scene_skills
 from .store import WealthPlanStore, new_plan_id
 
 logger = logging.getLogger(__name__)
@@ -89,25 +88,23 @@ def _fmt_dt(value: datetime | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 经营场景查询（外部接口代理 + 本地兜底）
+# 经营场景查询（外部接口代理）
 # ---------------------------------------------------------------------------
 
 
 @router.get("/scene-skills", response_model=SceneSkillListResponse)
 async def list_scene_skills(
     request: Request,
-    category: str,
+    category: str = "",
 ) -> SceneSkillListResponse:
-    """按产品大类查询子技能场景；外部接口不可用时返回本地兜底数据。"""
-    if category not in CATEGORY_LABEL_BY_CODE:
+    """按产品大类查询子技能场景；category 为空串表示查询全部大类。
+
+    外部接口不可用时返回空列表，由前端展示空态，不做假数据兜底。
+    """
+    if category and category not in CATEGORY_LABEL_BY_CODE:
         raise HTTPException(status_code=400, detail="unknown category")
     items = await _fetch_external_scene_skills(request, category)
-    if items:
-        return SceneSkillListResponse(items=items, fallback=False)
-    return SceneSkillListResponse(
-        items=fallback_scene_skills(category),
-        fallback=True,
-    )
+    return SceneSkillListResponse(items=items)
 
 
 async def _fetch_external_scene_skills(
