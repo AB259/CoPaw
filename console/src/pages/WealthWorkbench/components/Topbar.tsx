@@ -20,8 +20,8 @@ function NotificationsDialogBody() {
         <div className={styles.recommendation}>
           <h3>今日客户清单已准备</h3>
           <p>
-            目标客户 28 人，尚有 {customers.filter((c) => !c.done).length}{" "}
-            人待触达。
+            目标客户 {customers.length} 人，尚有{" "}
+            {customers.filter((c) => !c.done).length} 人待触达。
           </p>
         </div>
       ) : (

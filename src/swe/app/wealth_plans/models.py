@@ -221,3 +221,18 @@ class SceneSkillItem(BaseModel):
 
 class SceneSkillListResponse(BaseModel):
     items: list[SceneSkillItem] = Field(default_factory=list)
+
+
+class NameListItem(BaseModel):
+    """客户名单明细，字段与外部 name-list 接口 data.list 保持一致。"""
+
+    custUid: str
+    custNm: str
+    sapId: str | None = None
+    bbkOrgId: str | None = None
+    filename: str | None = None
+    recomReason: str | None = None
+
+
+class NameListResponse(BaseModel):
+    items: list[NameListItem] = Field(default_factory=list)

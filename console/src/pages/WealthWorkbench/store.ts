@@ -22,6 +22,7 @@ import {
 } from "./permissions";
 import { fetchDistributeTargets } from "./distributeTargets";
 import {
+  buildTaskTree,
   CYCLE_LABELS,
   cycleRange,
   DEFAULT_SCHEDULE,
@@ -65,6 +66,8 @@ interface WealthState {
   scenesLoading: boolean;
   plans: Plan[];
   customers: Customer[];
+  /** 客户名单查询中（今日任务视角切换时重新拉取） */
+  customersLoading: boolean;
   history: Customer[];
   draft: Draft;
   savedAt: string;
@@ -81,6 +84,12 @@ interface WealthState {
   init: () => Promise<void>;
   /** 看板轮询：有规划处于发布中时刷新列表 */
   refreshPlans: () => Promise<void>;
+  /**
+   * 拉取今日任务的客户经营清单（/wealth/name-list）。
+   * 经营视角（business）传当前登录人 sapId 只看自己名下客户；
+   * 客户视角（customer）不传，看全分行客户池。仅客户经理可访问任务页。
+   */
+  loadTodayCustomers: (view: "business" | "customer") => Promise<void>;
 
   // —— 分发目标（行长/中台） ——
   loadTargets: () => Promise<void>;
@@ -109,7 +118,7 @@ interface WealthState {
 
   // —— 客户触达 ——
   reportContact: (
-    id: number,
+    id: string,
     channel: string,
     outcome: "done" | "pending",
     note: string,
@@ -220,6 +229,7 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
   scenesLoading: false,
   plans: [],
   customers: [],
+  customersLoading: false,
   history: [],
   draft: { name: "", items: [] },
   savedAt: "",
@@ -241,11 +251,32 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
     }
     const data = await api.fetchBootstrap(accountId);
     set({ initialized: true, accountId, ...data });
+    await get().loadTodayCustomers("business");
   },
 
   refreshPlans: async () => {
     const plans = await api.fetchPlanList();
     set({ plans });
+  },
+
+  loadTodayCustomers: async (view) => {
+    const { accountId, plans } = get();
+    // 仅客户经理有任务页；行长/中台不发名单查询
+    if (!canAccessPage(accountId, "tasks")) return;
+    set({ customersLoading: true });
+    const tasks = buildTaskTree(plans, todayKey()).flatMap((g) =>
+      g.nodes.map((n) => ({
+        skillId: n.sceneId,
+        sceneName: n.sceneName,
+        category: g.category,
+      })),
+    );
+    const sapId =
+      view === "business"
+        ? useIframeStore.getState().userId || undefined
+        : undefined;
+    const customers = await api.fetchTodayCustomers(tasks, sapId);
+    set({ customers, customersLoading: false });
   },
 
   loadTargets: async () => {

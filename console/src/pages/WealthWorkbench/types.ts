@@ -99,10 +99,16 @@ export interface DistributeTarget {
 
 /** 客户 / 触达记录 */
 export interface Customer {
-  id: number;
+  /** 页面内唯一标识：`${skillId}|${custUid}`（同一客户可出现在多个任务下） */
+  id: string;
+  /** 外部 name-list 返回的客户 UID */
+  custUid: string;
+  /** 所属经营场景的技能 ID（触达登记/名单接口入参） */
+  skillId: string;
   name: string;
-  /** 重点标签：总行重点 / 分行重点 / 行长指派 */
+  /** 重点标签：总行重点 / 分行重点 / 行长指派（真实名单暂无此概念，置空） */
   label: string;
+  /** 推荐理由（外部 name-list 的 recomReason） */
   reason: string;
   category: string;
   task: string;
@@ -111,4 +117,6 @@ export interface Customer {
   time: string;
   note: string;
   opportunities?: string[];
+  /** 客户详情跳转链接（外部 name-list 的 filename，可直接 iframe 渲染） */
+  link?: string;
 }
