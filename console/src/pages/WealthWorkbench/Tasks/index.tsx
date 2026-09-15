@@ -155,9 +155,14 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
   const canViewTasks = useCanAccess("tasks");
   const customers = useWealthStore((s) => s.customers);
   const customersLoading = useWealthStore((s) => s.customersLoading);
-  const history = useWealthStore((s) => s.history);
+  const pendingCustomers = useWealthStore((s) => s.pendingCustomers);
+  const pendingLoading = useWealthStore((s) => s.pendingLoading);
+  const doneCustomers = useWealthStore((s) => s.doneCustomers);
+  const doneLoading = useWealthStore((s) => s.doneLoading);
   const plans = useWealthStore((s) => s.plans);
   const loadTodayCustomers = useWealthStore((s) => s.loadTodayCustomers);
+  const loadPendingCustomers = useWealthStore((s) => s.loadPendingCustomers);
+  const loadDoneCustomers = useWealthStore((s) => s.loadDoneCustomers);
   const openDialog = useWealthStore((s) => s.openDialog);
   const reportContactSaveRef = useRef<() => void>(() => {});
   const navigate = useNavigate();
@@ -196,14 +201,17 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
     }
   }, [isBiz, taskTree, selectedTask, selectedCategory]);
 
+  /** 当前页的名单数据源：今日=customers；待触达/已完成=各自接口名单 */
+  const pool =
+    page === "done"
+      ? doneCustomers
+      : page === "pending"
+      ? pendingCustomers
+      : customers;
+
   /** 原型 customerList：ignoreLabel 用于标签浮层计数 */
   const buildList = (ignoreLabel: boolean) => {
-    let list =
-      page === "done"
-        ? [...customers.filter((c) => c.done), ...history]
-        : page === "pending"
-        ? customers.filter((c) => !c.done)
-        : customers;
+    let list = page === "pending" ? pool.filter((c) => !c.done) : pool;
     if (isBiz)
       list = list.filter(
         (c) => c.task === selectedTask && c.category === selectedCategory,
@@ -226,17 +234,14 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
   const list = useMemo(
     () => buildList(false),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      page,
-      customers,
-      history,
-      isBiz,
-      selectedTask,
-      selectedCategory,
-      search,
-      taskLabel,
-    ],
+    [page, pool, isBiz, selectedTask, selectedCategory, search, taskLabel],
   );
+
+  // 待触达 / 已完成页进入时加载各自名单（touched 区分口径）
+  useEffect(() => {
+    if (page === "pending") void loadPendingCustomers();
+    if (page === "done") void loadDoneCustomers();
+  }, [page, loadPendingCustomers, loadDoneCustomers]);
 
   const doneToday = customers.filter(
     (c) => c.done && (taskLabel === "全部" || matchLabel(c.label, taskLabel)),
@@ -329,8 +334,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
     choices[next]?.focus();
   };
 
-  const getCustomer = (id: string) =>
-    [...customers, ...history].find((c) => c.id === id);
+  const getCustomer = (id: string) => pool.find((c) => c.id === id);
 
   /** 客户经营方案弹窗（原型 showScheme） */
   const showScheme = (id: string) => {
@@ -780,9 +784,15 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={doneView ? 6 : 5}>
+                  <td colSpan={doneView ? 6 : isBiz ? 4 : 5}>
                     <div className={styles.empty}>
-                      {customersLoading
+                      {(
+                        page === "pending"
+                          ? pendingLoading
+                          : page === "done"
+                          ? doneLoading
+                          : customersLoading
+                      )
                         ? "客户清单加载中…"
                         : isBiz && selectedTask && !search.trim()
                         ? `「${selectedTask}」暂无客户名单，待定时任务执行后生成`

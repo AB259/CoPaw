@@ -19,7 +19,7 @@ export function Sidebar({
   onToggleCollapse: () => void;
 }) {
   const customers = useWealthStore((s) => s.customers);
-  const history = useWealthStore((s) => s.history);
+  const doneCustomers = useWealthStore((s) => s.doneCustomers);
   const plans = useWealthStore((s) => s.plans);
   const hasTasks = useCanAccess("tasks");
   const [tasksOpen, setTasksOpen] = useState(true);
@@ -122,9 +122,11 @@ export function Sidebar({
                   >
                     <Icon name="check" />
                     <span className={styles.navLabel}>已完成</span>
-                    <span className={styles.badge}>
-                      {history.length + done}
-                    </span>
+                    {doneCustomers.length > 0 && (
+                      <span className={styles.badge}>
+                        {doneCustomers.length}
+                      </span>
+                    )}
                   </button>
                 </div>
               )}

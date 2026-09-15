@@ -8,7 +8,7 @@
  */
 import { parseCron, serializeCron } from "@/utils/parseCron";
 import { request } from "../../api/request";
-import { buildHistory, SCENE_CATEGORIES } from "./mock/data";
+import { SCENE_CATEGORIES } from "./mock/data";
 import { DEFAULT_SCHEDULE } from "./utils";
 import type {
   Account,
@@ -207,11 +207,13 @@ interface NameListResponse {
 /**
  * 查询客户名单。两个视角都传 sapId（当前登录客户经理）：
  * 传 skillId 为经营视角（按技能过滤）；不传为客户视角（该经理全部技能客户）。
+ * touched 透传外部接口的触达状态过滤：0 未触达 / 1 已触达 / 2 全部；缺省不过滤。
  * 接口不可达时返回空列表，由页面展示空态，不做假数据兜底。
  */
 export async function fetchNameList(
   skillId?: string,
   sapId?: string,
+  touched?: number,
 ): Promise<NameListItemView[]> {
   try {
     const params = new URLSearchParams();
@@ -220,6 +222,9 @@ export async function fetchNameList(
     }
     if (sapId) {
       params.set("sap_id", sapId);
+    }
+    if (touched !== undefined) {
+      params.set("touched", String(touched));
     }
     const resp = await request<NameListResponse>(
       `/wealth/name-list?${params.toString()}`,
@@ -250,12 +255,14 @@ export async function fetchTodayCustomers(
 ): Promise<Customer[]> {
   const uniqueTasks = [...new Map(tasks.map((t) => [t.skillId, t])).values()];
   if (view === "customer") {
-    return fetchCustomerViewCustomers(uniqueTasks, sapId);
+    return fetchCustomerViewCustomers(uniqueTasks, sapId, {
+      touched: TOUCHED_ALL,
+    });
   }
   const groups = await Promise.all(
     uniqueTasks.map(async (t) => ({
       task: t,
-      list: await fetchNameList(t.skillId, sapId),
+      list: await fetchNameList(t.skillId, sapId, TOUCHED_ALL),
     })),
   );
   const seen = new Set<string>();
@@ -291,6 +298,33 @@ export async function fetchTodayCustomers(
   return customers;
 }
 
+/** 触达状态过滤（外部接口 touched 字段）：0 未触达 / 1 已触达 / 2 全部 */
+const TOUCHED_PENDING = 0;
+const TOUCHED_DONE = 1;
+const TOUCHED_ALL = 2;
+
+/** 待触达客户名单：客户视角口径（仅 sapId + touched=0），触达覆盖层生效（登记后从列表消失） */
+export async function fetchPendingCustomers(
+  tasks: TodayTaskRef[],
+  sapId?: string,
+): Promise<Customer[]> {
+  return fetchCustomerViewCustomers(tasks, sapId, { touched: TOUCHED_PENDING });
+}
+
+/**
+ * 已完成名单：客户视角口径（仅 sapId + touched=1），名单内客户均为已触达。
+ * 接口暂不返回触达方式/完成时间/经营结果，对应列置空，待字段补齐。
+ */
+export async function fetchDoneCustomers(
+  tasks: TodayTaskRef[],
+  sapId?: string,
+): Promise<Customer[]> {
+  return fetchCustomerViewCustomers(tasks, sapId, {
+    touched: TOUCHED_DONE,
+    done: true,
+  });
+}
+
 /**
  * 客户视角名单：一次查询（不带 skillId），按客户聚合。
  * 重点标签列展示客户命中的场景名（skillId → 今日任务树场景名映射，
@@ -299,9 +333,10 @@ export async function fetchTodayCustomers(
 async function fetchCustomerViewCustomers(
   tasks: TodayTaskRef[],
   sapId?: string,
+  opts: { touched?: number; done?: boolean } = {},
 ): Promise<Customer[]> {
   const sceneBySkill = new Map(tasks.map((t) => [t.skillId, t]));
-  const list = await fetchNameList(undefined, sapId);
+  const list = await fetchNameList(undefined, sapId, opts.touched);
   const byCust = new Map<string, NameListItemView[]>();
   for (const item of list) {
     const bucket = byCust.get(item.custUid) ?? [];
@@ -321,7 +356,7 @@ async function fetchCustomerViewCustomers(
         entries.map((e) => e.recomReason ?? "").filter((r) => r.length > 0),
       ),
     ];
-    const mark = db.contacts[custUid];
+    const mark = opts.done ? undefined : db.contacts[custUid];
     customers.push({
       id: custUid,
       custUid,
@@ -331,7 +366,7 @@ async function fetchCustomerViewCustomers(
       reason: reasons[0] ?? "",
       category: scenes[0]?.category ?? "",
       task: scenes.map((t) => t.sceneName).join("、"),
-      done: mark?.done ?? false,
+      done: opts.done ? true : mark?.done ?? false,
       channel: mark?.channel ?? "",
       time: mark?.time ?? "",
       note: mark?.note ?? "",
@@ -339,7 +374,9 @@ async function fetchCustomerViewCustomers(
       link: first.filename ?? undefined,
     });
   }
-  db.customers = clone(customers);
+  if (opts.touched === TOUCHED_ALL) {
+    db.customers = clone(customers);
+  }
   return customers;
 }
 
@@ -429,7 +466,6 @@ interface WealthDb {
   customers: Customer[];
   /** 触达登记覆盖层（触达记录接口未出前的会话级实现） */
   contacts: Record<string, ContactMark>;
-  history: Customer[];
   /** 按账户隔离的会话级草稿 */
   drafts: Record<string, DraftEntry>;
 }
@@ -440,7 +476,6 @@ function createInitialDb(): WealthDb {
   return {
     customers: [],
     contacts: {},
-    history: buildHistory(),
     drafts: {},
   };
 }
@@ -456,12 +491,11 @@ export function newAccountDraft(): Draft {
 
 export interface BootstrapData {
   plans: Plan[];
-  history: Customer[];
   draft: Draft;
   savedAt: string;
 }
 
-/** 拉取账户视角下的工作台基础数据（规划走真实接口；客户名单由 fetchTodayCustomers 单独加载） */
+/** 拉取账户视角下的工作台基础数据（规划走真实接口；客户名单由各页面单独加载） */
 export async function fetchBootstrap(
   accountId: string,
 ): Promise<BootstrapData> {
@@ -476,7 +510,6 @@ export async function fetchBootstrap(
   await sleep(MOCK_LATENCY_MS);
   return {
     plans,
-    history: clone(db.history),
     draft: cached ? clone(cached.draft) : newAccountDraft(),
     savedAt: cached?.at ?? "",
   };

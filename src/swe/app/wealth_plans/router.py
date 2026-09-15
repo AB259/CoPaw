@@ -161,14 +161,19 @@ async def list_name_list(
     request: Request,
     skill_id: str = "",
     sap_id: str = "",
+    touched: int | None = None,
 ) -> NameListResponse:
     """客户名单查询；两个视角都传 sap_id（当前登录客户经理）。
 
     skill_id 非空为经营视角（按技能过滤）；为空为客户视角
     （该经理名下全部技能客户，一次查全）。
+    touched 透传外部接口的触达状态过滤：0 未触达（待触达）/
+    1 已触达（已完成）/ 2 全部（今日任务）；缺省不过滤。
     外部接口不可用时返回空列表，由前端展示空态，不做假数据兜底。
     """
-    items = await _fetch_external_name_list(request, skill_id, sap_id)
+    if touched is not None and touched not in (0, 1, 2):
+        raise HTTPException(status_code=400, detail="invalid touched")
+    items = await _fetch_external_name_list(request, skill_id, sap_id, touched)
     return NameListResponse(items=items)
 
 
@@ -176,16 +181,19 @@ async def _fetch_external_name_list(
     request: Request,
     skill_id: str,
     sap_id: str,
+    touched: int | None,
 ) -> list[NameListItem]:
     base = os.environ.get(_SKILL_CONFIG_API_BASE_ENV, "").strip().rstrip("/")
     if not base:
         return []
     bbk_id = getattr(request.state, "bbk_id", None) or ""
-    body: dict[str, str] = {
+    body: dict[str, Any] = {
         "bbkId": bbk_id,
-        "platformSource": "workspace",
-        "pageSource": "name-list",
+        "platformSource": "AGENT_WORKSPACE",
+        "pageSource": "AGENT_WORKSPACE_TASK_LIST",
     }
+    if touched is not None:
+        body["touched"] = touched
     if skill_id:
         body["skillId"] = skill_id
     if sap_id:

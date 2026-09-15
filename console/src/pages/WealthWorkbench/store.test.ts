@@ -271,7 +271,10 @@ async function initStore() {
     plans: [],
     customers: [],
     customersLoading: false,
-    history: [],
+    pendingCustomers: [],
+    pendingLoading: false,
+    doneCustomers: [],
+    doneLoading: false,
     draft: { name: "", items: [] },
     savedAt: "",
     editingId: null,
@@ -530,6 +533,26 @@ describe("WealthWorkbench store", () => {
     expect(
       useWealthStore.getState().customers.find((c) => c.id === id)?.done,
     ).toBe(true);
+  });
+
+  it("loadPendingCustomers / loadDoneCustomers 按 touched 拉取各自名单", async () => {
+    useIframeStore.setState({ userId: "10086" });
+    useWealthStore.setState({ plans: [makeTodayPlan()] });
+    const nameListCalls = () =>
+      mockRequest.mock.calls
+        .filter(([p]) => String(p).startsWith("/wealth/name-list"))
+        .map(([p]) => String(p));
+
+    await useWealthStore.getState().loadPendingCustomers();
+    await useWealthStore.getState().loadDoneCustomers();
+
+    const calls = nameListCalls();
+    expect(calls.some((c) => c.includes("touched=0"))).toBe(true);
+    expect(calls.some((c) => c.includes("touched=1"))).toBe(true);
+    expect(useWealthStore.getState().pendingCustomers).toHaveLength(2);
+    const done = useWealthStore.getState().doneCustomers;
+    expect(done).toHaveLength(2);
+    expect(done.every((c) => c.done)).toBe(true);
   });
 
   it("editPlan 将规划内容载入草稿并设置编辑态", () => {
