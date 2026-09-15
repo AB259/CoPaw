@@ -1,7 +1,7 @@
 /**
  * 智能财富工作台 —— 任务页（今日任务 / 待触达客户 / 已完成）
  * 对应原型 tasksHTML：经营/客户双视角、任务树、重点标签表头筛选、
- * 分页、经营方案/触达记录两类弹窗，执行列外链跳转电访与客户洞察。
+ * 经营方案/触达记录两类弹窗，执行列外链跳转电访与客户洞察。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
@@ -100,8 +100,6 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
 
   const [view, setView] = useState<"business" | "customer">("business");
   const [taskLabel, setTaskLabel] = useState("全部");
-  const [taskPage, setTaskPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState("");
   const [selectedTask, setSelectedTask] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -168,18 +166,16 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
     [page, pool, isBiz, selectedTask, selectedCategory, search, taskLabel],
   );
 
-  // 待触达 / 已完成页进入时加载各自名单（touched 区分口径）
+  // 进入任务页加载名单：今日任务按当前视角查询；待触达/已完成按 touched 口径各查一次
   useEffect(() => {
+    if (page === "today") void loadTodayCustomers(view);
     if (page === "pending") void loadPendingCustomers();
     if (page === "done") void loadDoneCustomers();
-  }, [page, loadPendingCustomers, loadDoneCustomers]);
+  }, [page, view, loadTodayCustomers, loadPendingCustomers, loadDoneCustomers]);
 
   const doneToday = customers.filter(
     (c) => c.done && (taskLabel === "全部" || matchLabel(c.label, taskLabel)),
   ).length;
-  const pages = Math.max(1, Math.ceil(list.length / pageSize));
-  const currentPage = Math.min(pages, taskPage);
-  const rows = list.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // 标签筛选浮层：外部点击 / Escape / 滚动 / 缩放时关闭
   useEffect(() => {
@@ -240,7 +236,6 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
 
   const applyTagFilter = (label: string) => {
     setTaskLabel(label);
-    setTaskPage(1);
     setTagFilterOpen(false);
     triggerRef.current?.focus();
   };
@@ -349,7 +344,6 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                     onClick={() => {
                       setSelectedTask(n.sceneName);
                       setSelectedCategory(g.category);
-                      setTaskPage(1);
                     }}
                   >
                     <span className={cx(styles.tag, sourceTagClass(n.source))}>
@@ -377,9 +371,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 className={view === "business" ? styles.active : ""}
                 onClick={() => {
                   setView("business");
-                  setTaskPage(1);
                   setTaskLabel("全部");
-                  void loadTodayCustomers("business");
                 }}
               >
                 经营视角
@@ -388,9 +380,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 className={view === "customer" ? styles.active : ""}
                 onClick={() => {
                   setView("customer");
-                  setTaskPage(1);
                   setTaskLabel("全部");
-                  void loadTodayCustomers("customer");
                 }}
               >
                 客户视角
@@ -470,7 +460,6 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
               defaultValue={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setTaskPage(1);
               }}
             />
           </div>
@@ -538,8 +527,8 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
               </tr>
             </thead>
             <tbody>
-              {rows.length ? (
-                rows.map((c) => (
+              {list.length ? (
+                list.map((c) => (
                   <tr key={c.id}>
                     <td className={styles.name}>{c.name}</td>
                     {!isBiz && (
@@ -641,49 +630,6 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
 
         <div className={styles.pagination}>
           <span className={styles.total}>共 {list.length} 条记录</span>
-          <button
-            className={styles.pageBtn}
-            aria-label="上一页"
-            disabled={currentPage === 1}
-            onClick={() => setTaskPage((p) => p - 1)}
-          >
-            ‹
-          </button>
-          {Array.from({ length: pages }, (_, i) => (
-            <button
-              key={i + 1}
-              className={cx(
-                styles.pageBtn,
-                currentPage === i + 1 && styles.active,
-              )}
-              aria-label={`第${i + 1}页`}
-              onClick={() => setTaskPage(i + 1)}
-            >
-              {i + 1}
-            </button>
-          ))}
-          <button
-            className={styles.pageBtn}
-            aria-label="下一页"
-            disabled={currentPage === pages}
-            onClick={() => setTaskPage((p) => p + 1)}
-          >
-            ›
-          </button>
-          <select
-            aria-label="每页记录数"
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setTaskPage(1);
-            }}
-          >
-            {[10, 20, 30].map((n) => (
-              <option key={n} value={n}>
-                {n} 条/页
-              </option>
-            ))}
-          </select>
         </div>
       </section>
 

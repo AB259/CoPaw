@@ -9,7 +9,7 @@
 import { parseCron, serializeCron } from "@/utils/parseCron";
 import { request } from "../../api/request";
 import { SCENE_CATEGORIES } from "./mock/data";
-import { DEFAULT_SCHEDULE } from "./utils";
+import { DEFAULT_SCHEDULE, sceneStatKey } from "./utils";
 import type {
   Account,
   Customer,
@@ -18,6 +18,8 @@ import type {
   Plan,
   PlanItem,
   Scene,
+  SkillStat,
+  SkillStatQuery,
 } from "./types";
 
 /** 模拟网络延迟（毫秒），让离线 mock 的异步行为贴近真实接口 */
@@ -200,6 +202,56 @@ export async function fetchAvailableSceneCount(): Promise<number | null> {
     return resp.items.length;
   } catch (error) {
     console.warn("[Wealth] 可用场景总数查询失败", error);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 技能统计：/wealth/skill-stats（外部接口代理）
+// ---------------------------------------------------------------------------
+
+interface SkillStatItemView {
+  skillId: string;
+  targetCustomerCount: number;
+  generatedTaskCount: number;
+}
+
+interface SkillStatsResponse {
+  items: SkillStatItemView[];
+}
+
+/**
+ * 看板「目标客户 / 已生成任务」统计：按技能 + 区间批量查询。
+ * 返回以 sceneStatKey 为键的结果表；接口不可达返回 null，由看板保持 "--" 占位。
+ */
+export async function fetchSkillStats(
+  queries: SkillStatQuery[],
+): Promise<Record<string, SkillStat> | null> {
+  if (!queries.length) return {};
+  try {
+    const resp = await request<SkillStatsResponse>("/wealth/skill-stats", {
+      method: "POST",
+      body: JSON.stringify({ skills: queries }),
+    });
+    // 外部按请求顺序返回且我们入参字段齐全（不会跳项），按下标对齐；
+    // skillId 不一致时退化为按 skillId 查找兜底
+    const bySkill = new Map(resp.items.map((i) => [i.skillId, i]));
+    const byKey: Record<string, SkillStat> = {};
+    queries.forEach((q, index) => {
+      const hit =
+        resp.items[index]?.skillId === q.skillId
+          ? resp.items[index]
+          : bySkill.get(q.skillId);
+      if (hit) {
+        byKey[sceneStatKey(q)] = {
+          targetCustomerCount: hit.targetCustomerCount,
+          generatedTaskCount: hit.generatedTaskCount,
+        };
+      }
+    });
+    return byKey;
+  } catch (error) {
+    console.warn("[Wealth] 技能统计接口不可用", error);
     return null;
   }
 }

@@ -45,6 +45,10 @@ from .models import (
     PlanView,
     SceneSkillItem,
     SceneSkillListResponse,
+    SkillStatItem,
+    SkillStatQuery,
+    SkillStatsRequest,
+    SkillStatsResponse,
     WealthPlanRecord,
 )
 from .publish import (
@@ -64,6 +68,7 @@ router = APIRouter(prefix="/wealth", tags=["wealth"])
 # 启动时由 load_env_defaults() 注入 os.environ；进程环境变量/K8s env 优先。
 _SKILL_CONFIG_API_BASE_ENV = "SWE_SKILL_CONFIG_API_BASE"
 _SKILL_CONFIG_PATH = "/api/agent/workspace/skill-config/list"
+_SKILL_STATS_PATH = "/api/agent/workspace/skill-stats"
 _NAME_LIST_PATH = "/api/agent/workspace/name-list"
 _SKILL_CONFIG_TIMEOUT_SECONDS = 8
 
@@ -158,6 +163,66 @@ def _parse_external_scene(row: Any) -> SceneSkillItem | None:
 
 
 # ---------------------------------------------------------------------------
+# 技能统计查询（外部接口代理）：看板「目标客户 / 已生成任务」
+# ---------------------------------------------------------------------------
+
+
+@router.post("/skill-stats", response_model=SkillStatsResponse)
+async def query_skill_stats(
+    request: Request,
+    body: SkillStatsRequest,
+) -> SkillStatsResponse:
+    """按技能 + 日期区间统计目标客户数与已生成任务数。
+
+    bbkId 由请求上下文注入；外部接口不可用时返回空列表，
+    由前端保持占位展示，不做假数据兜底。
+    """
+    items = await _fetch_external_skill_stats(request, body.skills)
+    return SkillStatsResponse(items=items)
+
+
+async def _fetch_external_skill_stats(
+    request: Request,
+    skills: list[SkillStatQuery],
+) -> list[SkillStatItem]:
+    base = os.environ.get(_SKILL_CONFIG_API_BASE_ENV, "").strip().rstrip("/")
+    if not base:
+        return []
+    bbk_id = getattr(request.state, "bbk_id", None) or ""
+    body = {
+        "bbkId": bbk_id,
+        "skills": [s.model_dump() for s in skills],
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=_SKILL_CONFIG_TIMEOUT_SECONDS,
+        ) as client:
+            resp = await client.post(f"{base}{_SKILL_STATS_PATH}", json=body)
+            payload = resp.json()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("skill-stats request failed: %s", exc)
+        return []
+    if str(payload.get("code")) != "200":
+        logger.warning("skill-stats rejected: %s", payload.get("code"))
+        return []
+    data = payload.get("data") or {}
+    return [
+        item
+        for row in data.get("items") or []
+        if (item := _parse_skill_stat(row)) is not None
+    ]
+
+
+def _parse_skill_stat(row: Any) -> SkillStatItem | None:
+    if not isinstance(row, dict) or not row.get("skillId"):
+        return None
+    try:
+        return SkillStatItem(**row)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 客户名单查询（外部接口代理）
 # ---------------------------------------------------------------------------
 
@@ -195,8 +260,8 @@ async def _fetch_external_name_list(
     bbk_id = getattr(request.state, "bbk_id", None) or ""
     body: dict[str, Any] = {
         "bbkId": bbk_id,
-        "platformSource": "AGENT_WORKSPACE",
-        "pageSource": "AGENT_WORKSPACE_TASK_LIST",
+        "platformSource": "WP",
+        "pageSource": "WP_AGENT_WORKSPACE_TASK_LIST",
     }
     if touched is not None:
         body["touched"] = touched

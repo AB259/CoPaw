@@ -229,6 +229,32 @@ class SceneSkillListResponse(BaseModel):
     items: list[SceneSkillItem] = Field(default_factory=list)
 
 
+class SkillStatQuery(_StrictModel):
+    """技能统计查询项：按技能 + 起止日期区间统计（yyyy-MM-dd）。"""
+
+    skillId: str = Field(min_length=1)
+    startDate: str = Field(min_length=1)
+    endDate: str = Field(min_length=1)
+
+
+class SkillStatsRequest(_StrictModel):
+    """看板「目标客户/已生成任务」统计入参；bbkId 由后端按请求上下文注入。"""
+
+    skills: list[SkillStatQuery] = Field(min_length=1, max_length=200)
+
+
+class SkillStatItem(BaseModel):
+    """技能统计结果项，字段与外部 skill-stats 接口保持一致。"""
+
+    skillId: str
+    targetCustomerCount: int = 0
+    generatedTaskCount: int = 0
+
+
+class SkillStatsResponse(BaseModel):
+    items: list[SkillStatItem] = Field(default_factory=list)
+
+
 class NameListItem(BaseModel):
     """客户名单明细，字段与外部 name-list 接口 data.list 保持一致。
 

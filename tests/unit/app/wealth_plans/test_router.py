@@ -346,6 +346,97 @@ def test_name_list_rejects_invalid_touched(client: TestClient) -> None:
     assert ok.status_code == 200
 
 
+def test_skill_stats_empty_when_external_absent(client: TestClient) -> None:
+    """外部接口未配置/不可达时返回空列表，由前端保持占位。"""
+    resp = client.post(
+        "/api/wealth/skill-stats",
+        json={
+            "skills": [
+                {
+                    "skillId": "s1",
+                    "startDate": "2026-09-01",
+                    "endDate": "2026-09-30",
+                },
+            ],
+        },
+        headers=VIEWER,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"items": []}
+
+
+def test_skill_stats_requires_non_empty_skills(client: TestClient) -> None:
+    resp = client.post(
+        "/api/wealth/skill-stats",
+        json={"skills": []},
+        headers=VIEWER,
+    )
+
+    assert resp.status_code == 422
+
+
+def test_skill_stats_forwards_bbk_and_skills(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """代理层注入 bbkId 并原样转发 skills，响应项透传。"""
+    captured: dict = {}
+
+    class FakeResponse:
+        def json(self) -> dict:
+            return {
+                "code": "200",
+                "data": {
+                    "items": [
+                        {
+                            "skillId": "s1",
+                            "targetCustomerCount": 5,
+                            "generatedTaskCount": 2,
+                        },
+                    ],
+                },
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *args) -> bool:
+            return False
+
+        async def post(self, url: str, json: dict) -> FakeResponse:
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setenv("SWE_SKILL_CONFIG_API_BASE", "http://external.test")
+    monkeypatch.setattr(wealth_router.httpx, "AsyncClient", FakeClient)
+
+    resp = client.post(
+        "/api/wealth/skill-stats",
+        json={
+            "skills": [
+                {
+                    "skillId": "s1",
+                    "startDate": "2026-09-01",
+                    "endDate": "2026-09-30",
+                },
+            ],
+        },
+        headers={**VIEWER, "X-Bbk-Id": "755"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["targetCustomerCount"] == 5
+    assert captured["url"].endswith("/api/agent/workspace/skill-stats")
+    assert captured["json"]["bbkId"] == "755"
+    assert captured["json"]["skills"][0]["skillId"] == "s1"
+
+
 async def _make_broadcast_store(
     task_status: str,
     results: list[dict] | None = None,

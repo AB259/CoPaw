@@ -90,8 +90,20 @@ export interface Draft {
   items: PlanItem[];
 }
 
-/** 分发目标用户（行长/中台发布规划时选择的下属客户经理） */
-export interface DistributeTarget {
+/** 技能统计查询项（/wealth/skill-stats 入参）：技能 + 起止日期 yyyy-MM-dd */
+export interface SkillStatQuery {
+  skillId: string;
+  startDate: string;
+  endDate: string;
+}
+
+/** 技能统计结果：目标客户数 / 已生成任务数 */
+export interface SkillStat {
+  targetCustomerCount: number;
+  generatedTaskCount: number;
+}
+
+/** 分发目标用户（行长/中台发布规划时选择的下属客户经理） */ export interface DistributeTarget {
   /** 用户 ID（sapId，即 /user-info/tenants/by-source 返回的 tenant_id） */
   sapId: string;
   name: string;

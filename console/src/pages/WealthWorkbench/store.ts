@@ -271,7 +271,6 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
     }
     const data = await api.fetchBootstrap(accountId);
     set({ initialized: true, accountId, ...data });
-    await get().loadTodayCustomers("business");
   },
 
   refreshPlans: async () => {
