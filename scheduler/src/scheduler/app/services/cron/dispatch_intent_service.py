@@ -247,6 +247,47 @@ def _viewer_heat_score_from_row(row: Mapping[str, Any]) -> Decimal:
     return min(read_count + fast_read_count, MAX_VIEWER_HEAT_SCORE)
 
 
+def _build_execution_row(
+    *,
+    job: Mapping[str, Any],
+    now: datetime,
+    policy: Mapping[str, Any],
+    definitions_by_key: Mapping[
+        tuple[str, str, str], Mapping[str, Any]
+    ],
+    heat_by_job_id: Mapping[str, Decimal],
+) -> dict[str, Any] | None:
+    job_id = str(job.get("job_id") or "").strip()
+    tenant_id = str(job.get("tenant_id") or "").strip()
+    if not job_id or not tenant_id:
+        return None
+    source_id = str(job.get("source_id") or "")
+    definition = definitions_by_key.get(
+        (job_id, tenant_id, source_id),
+        {},
+    )
+    payload = dict(_build_execution_payload(job))
+    payload["dispatch_priority"] = priority_snapshot(
+        policy,
+        tenant_id,
+        str(definition.get("bbk_id") or ""),
+    )
+    return {
+        **job,
+        "intent_role": str(job.get("intent_role") or "child"),
+        "job_id": job_id,
+        "tenant_id": tenant_id,
+        "source_id": source_id,
+        "agent_id": str(job.get("agent_id") or "default"),
+        "parent_job_id": str(job.get("parent_job_id") or ""),
+        "provider_id": _normalized_provider_id(job.get("provider_id")),
+        "model_id": _normalized_model_id(job.get("model_id")),
+        "due_at": _to_beijing_naive(job.get("due_at") or now),
+        "viewer_heat_score": heat_by_job_id.get(job_id, Decimal("0")),
+        "payload": payload,
+    }
+
+
 class CronDispatchIntentService:
     """Durable queue service for cron dispatch intents."""
 
@@ -515,45 +556,15 @@ class CronDispatchIntentService:
 
         ordered_rows: list[dict[str, Any]] = []
         for job in jobs:
-            job_id = str(job.get("job_id") or "").strip()
-            tenant_id = str(job.get("tenant_id") or "").strip()
-            if not job_id or not tenant_id:
-                continue
-            definition = definitions_by_key.get(
-                (
-                    job_id,
-                    tenant_id,
-                    str(job.get("source_id") or ""),
-                ),
-                {},
+            row = _build_execution_row(
+                job=job,
+                now=now,
+                policy=policy,
+                definitions_by_key=definitions_by_key,
+                heat_by_job_id=heat_by_job_id,
             )
-            payload = dict(_build_execution_payload(job))
-            payload["dispatch_priority"] = priority_snapshot(
-                policy,
-                tenant_id,
-                str(definition.get("bbk_id") or ""),
-            )
-            ordered_rows.append(
-                {
-                    **job,
-                    "intent_role": str(job.get("intent_role") or "child"),
-                    "job_id": job_id,
-                    "tenant_id": tenant_id,
-                    "source_id": str(job.get("source_id") or ""),
-                    "agent_id": str(job.get("agent_id") or "default"),
-                    "parent_job_id": str(job.get("parent_job_id") or ""),
-                    "provider_id": _normalized_provider_id(
-                        job.get("provider_id"),
-                    ),
-                    "model_id": _normalized_model_id(job.get("model_id")),
-                    "due_at": _to_beijing_naive(job.get("due_at") or now),
-                    "viewer_heat_score": heat_by_job_id.get(
-                        job_id,
-                        Decimal("0"),
-                    ),
-                    "payload": payload,
-                },
-            )
+            if row is not None:
+                ordered_rows.append(row)
 
         return compute_batch_dispatch_order(ordered_rows)
 
