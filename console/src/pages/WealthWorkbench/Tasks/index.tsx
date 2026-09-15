@@ -8,10 +8,25 @@ import { Navigate, useNavigate } from "react-router-dom";
 import cx from "classnames";
 import styles from "../index.module.less";
 import { Icon } from "../components/Icon";
-import { labels } from "../mock/data";
 import { useCanAccess, useWealthStore } from "../store";
 import type { Customer } from "../types";
 import { buildTaskTree, dateKey } from "../utils";
+
+/** 重点标签匹配：同一客户可能命中多个场景（标签以 "、" 分隔） */
+function matchLabel(label: string, selected: string) {
+  return label.split("、").includes(selected);
+}
+
+/** 标签筛选选项：从当前名单数据派生（客户视角为命中场景名） */
+function labelOptionsOf(customers: Customer[]): string[] {
+  const set = new Set<string>();
+  for (const c of customers) {
+    for (const part of c.label.split("、")) {
+      if (part) set.add(part);
+    }
+  }
+  return [...set];
+}
 
 export type TaskPageKind = "today" | "pending" | "done";
 
@@ -204,7 +219,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
         ).includes(search.trim()),
       );
     if (!ignoreLabel && taskLabel !== "全部")
-      list = list.filter((c) => c.label === taskLabel);
+      list = list.filter((c) => matchLabel(c.label, taskLabel));
     return list;
   };
 
@@ -224,7 +239,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
   );
 
   const doneToday = customers.filter(
-    (c) => c.done && (taskLabel === "全部" || c.label === taskLabel),
+    (c) => c.done && (taskLabel === "全部" || matchLabel(c.label, taskLabel)),
   ).length;
   const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const currentPage = Math.min(pages, taskPage);
@@ -507,6 +522,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 onClick={() => {
                   setView("business");
                   setTaskPage(1);
+                  setTaskLabel("全部");
                   void loadTodayCustomers("business");
                 }}
               >
@@ -517,6 +533,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 onClick={() => {
                   setView("customer");
                   setTaskPage(1);
+                  setTaskLabel("全部");
                   void loadTodayCustomers("customer");
                 }}
               >
@@ -613,45 +630,47 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
             <thead>
               <tr>
                 <th>客户姓名</th>
-                <th scope="col" className={styles.tagFilterHeading}>
-                  <button
-                    type="button"
-                    ref={triggerRef}
-                    className={cx(
-                      styles.tagFilterTrigger,
-                      filterActive && styles.filtered,
+                {!isBiz && (
+                  <th scope="col" className={styles.tagFilterHeading}>
+                    <button
+                      type="button"
+                      ref={triggerRef}
+                      className={cx(
+                        styles.tagFilterTrigger,
+                        filterActive && styles.filtered,
+                      )}
+                      aria-label={
+                        "筛选重点标签" +
+                        (filterActive ? `，当前：${taskLabel}` : "")
+                      }
+                      aria-haspopup="dialog"
+                      aria-expanded={tagFilterOpen}
+                      aria-controls="wealthTagFilterPopover"
+                      onClick={toggleTagFilter}
+                    >
+                      <span>重点标签</span>
+                      <span className={styles.tagFilterIcon}>
+                        <svg viewBox="0 0 20 20" aria-hidden="true">
+                          <path d="M3 4h14l-5.5 6v5l-3 1v-6Z" />
+                        </svg>
+                        {filterActive && <i></i>}
+                      </span>
+                    </button>
+                    {filterActive && (
+                      <div className={styles.tagFilterApplied}>
+                        <span>{taskLabel}</span>
+                        <button
+                          type="button"
+                          aria-label="清除重点标签筛选"
+                          title="清除筛选"
+                          onClick={() => applyTagFilter("全部")}
+                        >
+                          ×
+                        </button>
+                      </div>
                     )}
-                    aria-label={
-                      "筛选重点标签" +
-                      (filterActive ? `，当前：${taskLabel}` : "")
-                    }
-                    aria-haspopup="dialog"
-                    aria-expanded={tagFilterOpen}
-                    aria-controls="wealthTagFilterPopover"
-                    onClick={toggleTagFilter}
-                  >
-                    <span>重点标签</span>
-                    <span className={styles.tagFilterIcon}>
-                      <svg viewBox="0 0 20 20" aria-hidden="true">
-                        <path d="M3 4h14l-5.5 6v5l-3 1v-6Z" />
-                      </svg>
-                      {filterActive && <i></i>}
-                    </span>
-                  </button>
-                  {filterActive && (
-                    <div className={styles.tagFilterApplied}>
-                      <span>{taskLabel}</span>
-                      <button
-                        type="button"
-                        aria-label="清除重点标签筛选"
-                        title="清除筛选"
-                        onClick={() => applyTagFilter("全部")}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                </th>
+                  </th>
+                )}
                 <th className={styles.opportunityCol}>
                   {doneView ? "经营任务" : "经营机会"}
                 </th>
@@ -667,11 +686,15 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                 rows.map((c) => (
                   <tr key={c.id}>
                     <td className={styles.name}>{c.name}</td>
-                    <td>
-                      <span className={cx(styles.tag, labelTagClass(c.label))}>
-                        {c.label}
-                      </span>
-                    </td>
+                    {!isBiz && (
+                      <td>
+                        <span
+                          className={cx(styles.tag, labelTagClass(c.label))}
+                        >
+                          {c.label}
+                        </span>
+                      </td>
+                    )}
                     <td className={styles.reason}>
                       {doneView ? (
                         c.task
@@ -820,7 +843,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
         </div>
       </section>
 
-      {tagFilterOpen && (
+      {tagFilterOpen && !isBiz && (
         <div
           className={styles.tagFilterPopover}
           id="wealthTagFilterPopover"
@@ -834,12 +857,12 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
             筛选重点标签<span>单选</span>
           </div>
           <div>
-            {["全部", ...labels].map((label) => {
+            {["全部", ...labelOptionsOf(customers)].map((label) => {
               const base = buildList(true);
               const count =
                 label === "全部"
                   ? base.length
-                  : base.filter((c) => c.label === label).length;
+                  : base.filter((c) => matchLabel(c.label, label)).length;
               return (
                 <button
                   type="button"
@@ -855,14 +878,7 @@ export default function Tasks({ page }: { page: TaskPageKind }) {
                     className={
                       label === "全部"
                         ? styles.allTagText
-                        : cx(
-                            styles.tag,
-                            label === "总行重点"
-                              ? styles.red
-                              : label === "行长指派"
-                              ? styles.orange
-                              : "",
-                          )
+                        : cx(styles.tag, labelTagClass(label))
                     }
                   >
                     {label === "全部" ? "全部标签" : label}

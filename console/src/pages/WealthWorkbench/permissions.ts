@@ -42,9 +42,9 @@ export const FALLBACK_ROLE: WealthRole = "unknown";
  */
 export const POSITION_ROLE_MAP: Record<string, WealthRole> = {
   RB0101: "rm",
-  RB0208: "president",
-  RB0304: "middle",
-  RB0906: "middle",
+  RB1101: "president",
+  RB0306: "president",
+  RB0304: "middle"
 };
 
 /**
