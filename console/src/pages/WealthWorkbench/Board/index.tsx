@@ -11,15 +11,18 @@ import {
   addCalendarDays,
   calendarDate,
   calendarRange,
+  collectSkillStatQueries,
   cycleRange,
   dateKey,
   planFrequency,
   planScheduledOn,
+  sceneStatKey,
   scheduleLabel,
   todayKey,
 } from "../utils";
 import { selectCurrentAccount, useWealthStore } from "../store";
-import { fetchAvailableSceneCount } from "../api";
+import { fetchAvailableSceneCount, fetchSkillStats } from "../api";
+import type { Plan, SkillStat } from "../types";
 import { Calendar } from "./Calendar";
 
 const BOARD_TABS = ["全部", "分行关注", "行长关注", "我的关注"];
@@ -82,10 +85,61 @@ export default function Board() {
     [all, boardTab],
   );
 
-  // 已生成任务数 / 任务执行率的统计依赖任务实例接口，待接入后恢复计算（见下方统计卡注释）
+  // 覆盖经营场景数（本地去重统计）；任务执行率依赖任务实例接口，保持占位
   const sceneCount = new Set(
     all.flatMap((p) => p.items?.map((x) => x.id) ?? []),
   ).size;
+
+  // 目标客户 / 已生成任务：按「技能 + 区间」批量查询技能统计接口；
+  // 接口不可达时 planStat 返回 null，对应位置保持 "--" 占位
+  const [sceneStats, setSceneStats] = useState<Record<
+    string,
+    SkillStat
+  > | null>(null);
+  const statQueries = useMemo(() => collectSkillStatQueries(all), [all]);
+  useEffect(() => {
+    let alive = true;
+    void fetchSkillStats(statQueries).then((result) => {
+      if (alive) setSceneStats(result);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [statQueries]);
+
+  /** 单个规划的统计汇总：各场景目标客户/已生成任务求和 */
+  const planStat = (p: Plan): { customers: number; tasks: number } | null => {
+    if (sceneStats == null) return null;
+    let customers = 0;
+    let tasks = 0;
+    for (const item of p.items ?? []) {
+      if (!item.start || !item.end) continue;
+      const hit =
+        sceneStats[
+          sceneStatKey({
+            skillId: item.id,
+            startDate: item.start,
+            endDate: item.end,
+          })
+        ];
+      customers += hit?.targetCustomerCount ?? 0;
+      tasks += hit?.generatedTaskCount ?? 0;
+    }
+    return { customers, tasks };
+  };
+
+  const customersText = (p: Plan) => {
+    const stat = planStat(p);
+    return stat == null ? "--" : `${stat.customers} 人`;
+  };
+  const tasksText = (p: Plan) => {
+    const stat = planStat(p);
+    return stat == null ? "--" : `${stat.tasks} 个`;
+  };
+  const generatedTotal =
+    sceneStats == null
+      ? null
+      : all.reduce((sum, p) => sum + (planStat(p)?.tasks ?? 0), 0);
 
   // 发布中/分发中的规划都需要轮询，直至发布与分发状态收敛
   const hasActive = plans.some(
@@ -204,8 +258,8 @@ export default function Board() {
                       <td>
                         <span className={styles.tag}>{planFrequency(p)}</span>
                       </td>
-                      <td>{p.customers} 人</td>
-                      <td>{p.tasks} 个</td>
+                      <td>{customersText(p)}</td>
+                      <td>{tasksText(p)}</td>
                       <td>
                         <div className={styles.progressLine}>
                           <div className={styles.progress}>
@@ -287,8 +341,7 @@ export default function Board() {
     },
     {
       icon: "check",
-      // n: total.toLocaleString(),
-      n: "--",
+      n: generatedTotal == null ? "--" : generatedTotal.toLocaleString(),
       title: "已生成任务",
       detail: "较上月",
       val: "--",
@@ -449,11 +502,11 @@ export default function Board() {
                     </div>
                     <div className={styles.metric}>
                       <small>目标客户</small>
-                      <strong>{p.customers} 人</strong>
+                      <strong>{customersText(p)}</strong>
                     </div>
                     <div className={styles.metric}>
                       <small>已生成任务</small>
-                      <strong>{p.tasks} 个</strong>
+                      <strong>{tasksText(p)}</strong>
                     </div>
                     <div className={styles.metric}>
                       <small>任务执行率</small>

@@ -86,6 +86,41 @@ describe("WealthWorkbench api", () => {
     await expect(api.fetchAvailableSceneCount()).resolves.toBeNull();
   });
 
+  it("fetchSkillStats 按场景统计键映射结果；失败返回 null", async () => {
+    mockRequest.mockResolvedValueOnce({
+      items: [
+        { skillId: "s1", targetCustomerCount: 125, generatedTaskCount: 30 },
+        { skillId: "s2", targetCustomerCount: 89, generatedTaskCount: 17 },
+      ],
+    });
+    const queries = [
+      { skillId: "s1", startDate: "2026-09-01", endDate: "2026-09-30" },
+      { skillId: "s2", startDate: "2026-09-05", endDate: "2026-09-15" },
+    ];
+    const stats = await api.fetchSkillStats(queries);
+    expect(stats).toEqual({
+      "s1|2026-09-01|2026-09-30": {
+        targetCustomerCount: 125,
+        generatedTaskCount: 30,
+      },
+      "s2|2026-09-05|2026-09-15": {
+        targetCustomerCount: 89,
+        generatedTaskCount: 17,
+      },
+    });
+    const [path, options] = mockRequest.mock.calls[0] ?? [];
+    expect(String(path)).toBe("/wealth/skill-stats");
+    expect(JSON.parse(String((options as RequestInit).body))).toEqual({
+      skills: queries,
+    });
+
+    mockRequest.mockRejectedValueOnce(new Error("boom"));
+    await expect(api.fetchSkillStats(queries)).resolves.toBeNull();
+
+    // 空查询不发请求
+    await expect(api.fetchSkillStats([])).resolves.toEqual({});
+  });
+
   it("fetchTodayCustomers 按任务上下文映射名单并去重", async () => {
     const customers = await api.fetchTodayCustomers(
       [
