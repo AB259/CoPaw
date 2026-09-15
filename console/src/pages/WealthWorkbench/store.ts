@@ -68,7 +68,12 @@ interface WealthState {
   customers: Customer[];
   /** 客户名单查询中（今日任务视角切换时重新拉取） */
   customersLoading: boolean;
-  history: Customer[];
+  /** 待触达客户名单（/wealth/name-list，touched=0） */
+  pendingCustomers: Customer[];
+  pendingLoading: boolean;
+  /** 已完成客户名单（/wealth/name-list，touched=1） */
+  doneCustomers: Customer[];
+  doneLoading: boolean;
   draft: Draft;
   savedAt: string;
   editingId: string | null;
@@ -90,6 +95,10 @@ interface WealthState {
    * 客户视角（customer）不带 skillId 一次查全。仅客户经理可访问任务页。
    */
   loadTodayCustomers: (view: "business" | "customer") => Promise<void>;
+  /** 加载待触达客户名单（仅客户经理；touched=0） */
+  loadPendingCustomers: () => Promise<void>;
+  /** 加载已完成客户名单（仅客户经理；touched=1） */
+  loadDoneCustomers: () => Promise<void>;
 
   // —— 分发目标（行长/中台） ——
   loadTargets: () => Promise<void>;
@@ -163,6 +172,17 @@ function currentAccountOf(state: { accountId: WealthRole }): Account {
   return accountForRole(state.accountId);
 }
 
+/** 今日有排程的经营场景引用（客户名单查询的入参上下文：skillId → 场景名映射） */
+function todayTaskRefs(plans: Plan[]): api.TodayTaskRef[] {
+  return buildTaskTree(plans, todayKey()).flatMap((g) =>
+    g.nodes.map((n) => ({
+      skillId: n.sceneId,
+      sceneName: n.sceneName,
+      category: g.category,
+    })),
+  );
+}
+
 /** 与原型 normalizeDraft 一致：补齐周期区间与排程 */
 function normalizeItems(draft: Draft): Draft {
   const items = draft.items.map((x) => {
@@ -230,7 +250,10 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
   plans: [],
   customers: [],
   customersLoading: false,
-  history: [],
+  pendingCustomers: [],
+  pendingLoading: false,
+  doneCustomers: [],
+  doneLoading: false,
   draft: { name: "", items: [] },
   savedAt: "",
   editingId: null,
@@ -264,16 +287,37 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
     // 仅客户经理有任务页；行长/中台不发名单查询
     if (!canAccessPage(accountId, "tasks")) return;
     set({ customersLoading: true });
-    const tasks = buildTaskTree(plans, todayKey()).flatMap((g) =>
-      g.nodes.map((n) => ({
-        skillId: n.sceneId,
-        sceneName: n.sceneName,
-        category: g.category,
-      })),
-    );
     const sapId = useIframeStore.getState().userId || undefined;
-    const customers = await api.fetchTodayCustomers(tasks, sapId, view);
+    const customers = await api.fetchTodayCustomers(
+      todayTaskRefs(plans),
+      sapId,
+      view,
+    );
     set({ customers, customersLoading: false });
+  },
+
+  loadPendingCustomers: async () => {
+    const { accountId, plans } = get();
+    if (!canAccessPage(accountId, "tasks")) return;
+    set({ pendingLoading: true });
+    const sapId = useIframeStore.getState().userId || undefined;
+    const pendingCustomers = await api.fetchPendingCustomers(
+      todayTaskRefs(plans),
+      sapId,
+    );
+    set({ pendingCustomers, pendingLoading: false });
+  },
+
+  loadDoneCustomers: async () => {
+    const { accountId, plans } = get();
+    if (!canAccessPage(accountId, "tasks")) return;
+    set({ doneLoading: true });
+    const sapId = useIframeStore.getState().userId || undefined;
+    const doneCustomers = await api.fetchDoneCustomers(
+      todayTaskRefs(plans),
+      sapId,
+    );
+    set({ doneCustomers, doneLoading: false });
   },
 
   loadTargets: async () => {

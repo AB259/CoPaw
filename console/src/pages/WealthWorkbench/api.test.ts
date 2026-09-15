@@ -51,13 +51,13 @@ beforeEach(() => {
 });
 
 describe("WealthWorkbench api", () => {
-  it("fetchBootstrap 返回历史与空草稿；客户名单不在 bootstrap 内", async () => {
+  it("fetchBootstrap 返回空草稿；客户名单与触达历史均不在 bootstrap 内", async () => {
     const data = await api.fetchBootstrap("rm");
     expect(data.plans).toEqual([]);
-    expect(data.history).toHaveLength(34);
     expect(data.draft).toEqual({ name: "", items: [] });
     expect(data.savedAt).toBe("");
     expect("customers" in data).toBe(false);
+    expect("history" in data).toBe(false);
   });
 
   it("fetchNameList 透传 skillId 与 sapId；接口失败返回空列表", async () => {
@@ -136,6 +136,26 @@ describe("WealthWorkbench api", () => {
       category: "贷款",
     });
     expect(customers[1]).toMatchObject({ id: "CUST002", label: "", task: "" });
+  });
+
+  it("fetchPendingCustomers / fetchDoneCustomers 以 touched 区分名单口径", async () => {
+    await api.fetchPendingCustomers([TASK], "10086");
+    await api.fetchDoneCustomers([TASK], "10086");
+    const calls = mockRequest.mock.calls.map(([p]) => String(p));
+    expect(calls[0]).toContain("touched=0");
+    expect(calls[1]).toContain("touched=1");
+    // 两个口径都不带 skillId（客户视角粒度），都带 sapId
+    for (const c of calls) {
+      expect(c).not.toContain("skill_id=");
+      expect(c).toContain("sap_id=10086");
+    }
+  });
+
+  it("fetchDoneCustomers 名单全部为已触达，触达方式/时间置空待接口补字段", async () => {
+    const done = await api.fetchDoneCustomers([TASK], "10086");
+    expect(done).toHaveLength(2);
+    expect(done.every((c) => c.done)).toBe(true);
+    expect(done[0]).toMatchObject({ channel: "", time: "", note: "" });
   });
 
   it("reportContact 写入覆盖层，重新拉取名单后回填触达结果", async () => {

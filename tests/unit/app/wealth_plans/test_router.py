@@ -270,6 +270,16 @@ def test_name_list_allows_empty_sap_id(client: TestClient) -> None:
     assert resp.json() == {"items": []}
 
 
+def test_name_list_rejects_invalid_touched(client: TestClient) -> None:
+    """touched 仅接受 0 未触达 / 1 已触达 / 2 全部。"""
+    resp = client.get("/api/wealth/name-list?touched=3")
+
+    assert resp.status_code == 400
+
+    ok = client.get("/api/wealth/name-list?touched=2")
+    assert ok.status_code == 200
+
+
 async def _make_broadcast_store(
     task_status: str,
     results: list[dict] | None = None,
