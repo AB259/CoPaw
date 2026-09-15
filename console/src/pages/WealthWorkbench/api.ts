@@ -203,7 +203,8 @@ interface NameListResponse {
 }
 
 /**
- * 按技能查询客户名单；sapId 为空表示客户视角（不限定客户经理）。
+ * 按技能查询客户名单；传 sapId 为客户视角（该经理名下客户），
+ * 不传为经营视角（不限定客户经理，全分行客户池）。
  * 接口不可达时返回空列表，由页面展示空态，不做假数据兜底。
  */
 export async function fetchNameList(

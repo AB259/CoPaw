@@ -479,7 +479,7 @@ describe("WealthWorkbench store", () => {
     expect(useWealthStore.getState().targetSapIds).toEqual([]);
   });
 
-  it("loadTodayCustomers 经营视角传 sapId 拉取今日名单，客户视角不传", async () => {
+  it("loadTodayCustomers 客户视角传 sapId 拉取今日名单，经营视角不传", async () => {
     useIframeStore.setState({ userId: "10086" });
     useWealthStore.setState({ plans: [makeTodayPlan()] });
     const nameListCalls = () =>
@@ -487,7 +487,7 @@ describe("WealthWorkbench store", () => {
         .filter(([p]) => String(p).startsWith("/wealth/name-list"))
         .map(([p]) => String(p));
 
-    await useWealthStore.getState().loadTodayCustomers("business");
+    await useWealthStore.getState().loadTodayCustomers("customer");
     expect(nameListCalls().slice(-1)[0]).toContain("sap_id=10086");
     const customers = useWealthStore.getState().customers;
     expect(customers).toHaveLength(2);
@@ -499,7 +499,7 @@ describe("WealthWorkbench store", () => {
       done: false,
     });
 
-    await useWealthStore.getState().loadTodayCustomers("customer");
+    await useWealthStore.getState().loadTodayCustomers("business");
     expect(nameListCalls().slice(-1)[0]).not.toContain("sap_id=");
   });
 
