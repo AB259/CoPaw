@@ -142,6 +142,30 @@ class SweCronCallbackOutcomeUnknownError(RuntimeError):
         )
 
 
+def _callback_skip_outcome(response: httpx.Response) -> str | None:
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(
+            "SWE cron callback failed: "
+            f"status={response.status_code} body={response.text[:512]}",
+        )
+    try:
+        body = response.json()
+    except (ValueError, AttributeError):
+        body = {}
+    skipped = body.get("skipped") if isinstance(body, dict) else None
+    if skipped == "job_disabled":
+        return skipped
+    if skipped == "job_not_found":
+        raise RuntimeError("SWE cron callback skipped: job_not_found")
+    if skipped:
+        raise SweCronCallbackOutcomeUnknownError(
+            httpx.RemoteProtocolError(
+                "Unrecognized SWE callback skip outcome"
+            ),
+        )
+    return None
+
+
 class SweCronCallbackClient:
     """Small client for SWE's internal cron callback."""
 
@@ -226,27 +250,7 @@ class SweCronCallbackClient:
             raise
         except httpx.TransportError as exc:
             raise SweCronCallbackOutcomeUnknownError(exc) from exc
-        if response.status_code < 200 or response.status_code >= 300:
-            raise RuntimeError(
-                "SWE cron callback failed: "
-                f"status={response.status_code} body={response.text[:512]}",
-            )
-        try:
-            body = response.json()
-        except (ValueError, AttributeError):
-            body = {}
-        skipped = body.get("skipped") if isinstance(body, dict) else None
-        if skipped == "job_disabled":
-            return skipped
-        if skipped == "job_not_found":
-            raise RuntimeError("SWE cron callback skipped: job_not_found")
-        if skipped:
-            raise SweCronCallbackOutcomeUnknownError(
-                httpx.RemoteProtocolError(
-                    "Unrecognized SWE callback skip outcome"
-                ),
-            )
-        return None
+        return _callback_skip_outcome(response)
 
 
 class CronSchedulingService:
