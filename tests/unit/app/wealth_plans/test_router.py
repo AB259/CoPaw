@@ -40,6 +40,14 @@ def app(
     application.state.wealth_plan_store = store
     application.state.wealth_plan_launches = launches
     application.state.wealth_plan_cascades = cascades
+
+    @application.middleware("http")
+    async def _bbk_state(request, call_next):  # 模拟租户中间件的 bbk 注入
+        bbk = request.headers.get("X-Bbk-Id")
+        if bbk:
+            request.state.bbk_id = bbk
+        return await call_next(request)
+
     application.include_router(wealth_router.router, prefix="/api")
     return application
 
@@ -116,6 +124,59 @@ def test_list_visible_to_creator_and_target_only(client: TestClient) -> None:
     assert [p["id"] for p in target_items["items"]] == [created["id"]]
     assert target_items["items"][0]["editable"] is False
     assert outsider_items["items"] == []
+
+
+def test_list_branch_wide_for_president_and_middle(client: TestClient) -> None:
+    created = client.post(
+        "/api/wealth/plans",
+        json=plan_payload(),
+        headers={**VIEWER, "X-Bbk-Id": "100"},
+    ).json()
+
+    president = {
+        "X-User-Id": "wangly",
+        "X-Bbk-Id": "100",
+        "X-Position-Id": "RB1101",
+    }
+    middle = {**president, "X-Position-Id": "RB0304"}
+    rm = {**president, "X-Position-Id": "RB0101"}
+    other_branch = {**president, "X-Bbk-Id": "200"}
+
+    for headers in (president, middle):
+        items = client.get("/api/wealth/plans", headers=headers).json()[
+            "items"
+        ]
+        assert [p["id"] for p in items] == [created["id"]]
+        assert items[0]["editable"] is False  # 可见但只读
+    assert client.get("/api/wealth/plans", headers=rm).json()["items"] == []
+    assert (
+        client.get("/api/wealth/plans", headers=other_branch).json()["items"]
+        == []
+    )
+
+
+def test_detail_visible_to_branch_peer_readonly(client: TestClient) -> None:
+    created = client.post(
+        "/api/wealth/plans",
+        json=plan_payload(),
+        headers={**VIEWER, "X-Bbk-Id": "100"},
+    ).json()
+    president = {
+        "X-User-Id": "wangly",
+        "X-Bbk-Id": "100",
+        "X-Position-Id": "RB0306",
+    }
+
+    detail = client.get(
+        f"/api/wealth/plans/{created['id']}",
+        headers=president,
+    )
+    assert detail.status_code == 200
+    assert detail.json()["editable"] is False
+
+    outsider = {**president, "X-Bbk-Id": "200"}
+    resp = client.get(f"/api/wealth/plans/{created['id']}", headers=outsider)
+    assert resp.status_code == 403
 
 
 def test_get_detail_forbidden_for_outsider(client: TestClient) -> None:

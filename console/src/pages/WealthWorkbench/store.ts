@@ -44,6 +44,8 @@ export interface DialogButton {
   label: string;
   primary?: boolean;
   danger?: boolean;
+  /** 置灰不可点击（用于前置校验未通过的场景，原因在弹窗正文说明） */
+  disabled?: boolean;
   /** 缺省时点击仅关闭弹窗 */
   onClick?: () => void;
 }

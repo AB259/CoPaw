@@ -19,6 +19,7 @@ from .models import (
     PlanTargetRecord,
     WealthPlanRecord,
 )
+from .roles import can_view_branch_wide
 
 logger = logging.getLogger(__name__)
 
@@ -177,28 +178,48 @@ class WealthPlanStore:
             await self._fetch_targets(plan_id),
         )
 
-    async def list_for_sap(self, sap_id: str) -> list[WealthPlanRecord]:
-        """看板列表：我创建的 + 分发给我的，按创建时间倒序。"""
+    async def list_for_viewer(
+        self,
+        sap_id: str,
+        role: str,
+        bbk_id: str | None,
+    ) -> list[WealthPlanRecord]:
+        """看板列表按角色定可见范围，按创建时间倒序。
+
+        行长/中台（BRANCH_WIDE_ROLES）看本行（同 bbk_id）全部规划；
+        其余角色看自己创建的 + 分发给自己的。bbk_id 缺失时退化为个人口径。
+        """
+        branch_wide = can_view_branch_wide(role) and bool(bbk_id)
         if not self.is_available:
             records = [
                 record
                 for record in self._plans.values()
-                if self._visible_to(record, sap_id)
+                if self._visible_to(record, sap_id, branch_wide, bbk_id)
             ]
             records.sort(
                 key=lambda r: r.created_at or datetime.min,
                 reverse=True,
             )
             return copy.deepcopy(records)
-        rows = await self.db.fetch_all(
-            f"""
-            SELECT DISTINCT p.* FROM {_PLAN_TABLE} p
-            LEFT JOIN {_TARGET_TABLE} t ON t.plan_id = p.id
-            WHERE p.sap_id = %s OR t.sap_id = %s
-            ORDER BY p.created_at DESC
-            """,
-            (sap_id, sap_id),
-        )
+        if branch_wide:
+            rows = await self.db.fetch_all(
+                f"""
+                SELECT p.* FROM {_PLAN_TABLE} p
+                WHERE p.bbk_id = %s
+                ORDER BY p.created_at DESC
+                """,
+                (bbk_id,),
+            )
+        else:
+            rows = await self.db.fetch_all(
+                f"""
+                SELECT DISTINCT p.* FROM {_PLAN_TABLE} p
+                LEFT JOIN {_TARGET_TABLE} t ON t.plan_id = p.id
+                WHERE p.sap_id = %s OR t.sap_id = %s
+                ORDER BY p.created_at DESC
+                """,
+                (sap_id, sap_id),
+            )
         return [
             _row_to_plan(
                 row,
@@ -405,7 +426,14 @@ class WealthPlanStore:
         return [_row_to_target(row) for row in rows]
 
     @staticmethod
-    def _visible_to(record: WealthPlanRecord, sap_id: str) -> bool:
+    def _visible_to(
+        record: WealthPlanRecord,
+        sap_id: str,
+        branch_wide: bool = False,
+        bbk_id: str | None = None,
+    ) -> bool:
+        if branch_wide and bbk_id and record.bbk_id == bbk_id:
+            return True
         if record.sap_id == sap_id:
             return True
         return any(target.sap_id == sap_id for target in record.targets)

@@ -76,7 +76,7 @@ export function DialogHost() {
                     b.primary && styles.primary,
                     b.danger && styles.danger,
                   )}
-                  disabled={acting}
+                  disabled={acting || b.disabled}
                   onClick={() => (b.onClick ? b.onClick() : closeDialog())}
                 >
                   {acting && isAction ? "处理中…" : b.label}
