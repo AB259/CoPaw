@@ -86,8 +86,8 @@ interface WealthState {
   refreshPlans: () => Promise<void>;
   /**
    * 拉取今日任务的客户经营清单（/wealth/name-list）。
-   * 客户视角（customer）传当前登录人 sapId 只看自己名下客户；
-   * 经营视角（business）不传，看全分行客户池。仅客户经理可访问任务页。
+   * 两个视角都传当前登录人 sapId；经营视角（business）另带 skillId 按技能过滤，
+   * 客户视角（customer）不带 skillId 一次查全。仅客户经理可访问任务页。
    */
   loadTodayCustomers: (view: "business" | "customer") => Promise<void>;
 
@@ -271,11 +271,8 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
         category: g.category,
       })),
     );
-    const sapId =
-      view === "customer"
-        ? useIframeStore.getState().userId || undefined
-        : undefined;
-    const customers = await api.fetchTodayCustomers(tasks, sapId);
+    const sapId = useIframeStore.getState().userId || undefined;
+    const customers = await api.fetchTodayCustomers(tasks, sapId, view);
     set({ customers, customersLoading: false });
   },
 

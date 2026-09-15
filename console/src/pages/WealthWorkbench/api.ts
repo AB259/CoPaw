@@ -196,6 +196,8 @@ interface NameListItemView {
   bbkOrgId?: string | null;
   filename?: string | null;
   recomReason?: string | null;
+  /** 客户命中的技能列表（SWE 代理层从 data.items 关联补齐） */
+  skillIds?: string[];
 }
 
 interface NameListResponse {
@@ -203,16 +205,19 @@ interface NameListResponse {
 }
 
 /**
- * 按技能查询客户名单；传 sapId 为客户视角（该经理名下客户），
- * 不传为经营视角（不限定客户经理，全分行客户池）。
+ * 查询客户名单。两个视角都传 sapId（当前登录客户经理）：
+ * 传 skillId 为经营视角（按技能过滤）；不传为客户视角（该经理全部技能客户）。
  * 接口不可达时返回空列表，由页面展示空态，不做假数据兜底。
  */
 export async function fetchNameList(
-  skillId: string,
+  skillId?: string,
   sapId?: string,
 ): Promise<NameListItemView[]> {
   try {
-    const params = new URLSearchParams({ skill_id: skillId });
+    const params = new URLSearchParams();
+    if (skillId) {
+      params.set("skill_id", skillId);
+    }
     if (sapId) {
       params.set("sap_id", sapId);
     }
@@ -234,14 +239,19 @@ export interface TodayTaskRef {
 }
 
 /**
- * 拉取今日任务对应的客户经营清单：按技能去重并发查询 name-list，
- * 合并为页面客户列表并回填会话级触达登记；同一客户在同一任务下只出现一次。
+ * 拉取今日任务对应的客户经营清单并回填会话级触达登记。
+ * 经营视角：按技能去重并发查询（skillId + sapId），同一客户在同一任务下只出现一次；
+ * 客户视角：一次查询该经理名下全部技能客户（仅 sapId），同一客户聚合为一条。
  */
 export async function fetchTodayCustomers(
   tasks: TodayTaskRef[],
-  sapId?: string,
+  sapId: string | undefined,
+  view: "business" | "customer",
 ): Promise<Customer[]> {
   const uniqueTasks = [...new Map(tasks.map((t) => [t.skillId, t])).values()];
+  if (view === "customer") {
+    return fetchCustomerViewCustomers(uniqueTasks, sapId);
+  }
   const groups = await Promise.all(
     uniqueTasks.map(async (t) => ({
       task: t,
@@ -276,6 +286,58 @@ export async function fetchTodayCustomers(
         link: item.filename ?? undefined,
       });
     }
+  }
+  db.customers = clone(customers);
+  return customers;
+}
+
+/**
+ * 客户视角名单：一次查询（不带 skillId），按客户聚合。
+ * 重点标签列展示客户命中的场景名（skillId → 今日任务树场景名映射，
+ * 不在今日树中的技能不产生标签）；触达登记以 custUid 为键。
+ */
+async function fetchCustomerViewCustomers(
+  tasks: TodayTaskRef[],
+  sapId?: string,
+): Promise<Customer[]> {
+  const sceneBySkill = new Map(tasks.map((t) => [t.skillId, t]));
+  const list = await fetchNameList(undefined, sapId);
+  const byCust = new Map<string, NameListItemView[]>();
+  for (const item of list) {
+    const bucket = byCust.get(item.custUid) ?? [];
+    bucket.push(item);
+    byCust.set(item.custUid, bucket);
+  }
+  const customers: Customer[] = [];
+  for (const [custUid, entries] of byCust) {
+    const first = entries[0];
+    if (!first) continue;
+    const skillIds = [...new Set(entries.flatMap((e) => e.skillIds ?? []))];
+    const scenes = skillIds
+      .map((sid) => sceneBySkill.get(sid))
+      .filter((t): t is TodayTaskRef => Boolean(t));
+    const reasons = [
+      ...new Set(
+        entries.map((e) => e.recomReason ?? "").filter((r) => r.length > 0),
+      ),
+    ];
+    const mark = db.contacts[custUid];
+    customers.push({
+      id: custUid,
+      custUid,
+      skillId: scenes[0]?.skillId ?? skillIds[0] ?? "",
+      name: first.custNm,
+      label: scenes.map((t) => t.sceneName).join("、"),
+      reason: reasons[0] ?? "",
+      category: scenes[0]?.category ?? "",
+      task: scenes.map((t) => t.sceneName).join("、"),
+      done: mark?.done ?? false,
+      channel: mark?.channel ?? "",
+      time: mark?.time ?? "",
+      note: mark?.note ?? "",
+      opportunities: reasons,
+      link: first.filename ?? undefined,
+    });
   }
   db.customers = clone(customers);
   return customers;
