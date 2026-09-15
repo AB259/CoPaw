@@ -392,6 +392,7 @@ def _build_record(
                 cycle=scene.cycle,
                 start_date=scene.start_date,
                 end_date=scene.end_date,
+                cron_example=scene.cron_example,
                 mcp_relations=list(scene.mcp_relations),
                 sort_order=index,
             )
@@ -453,6 +454,7 @@ async def _build_view(
                 start_date=scene.start_date,
                 end_date=scene.end_date,
                 cron_expr=scene.cron_expr,
+                cron_example=scene.cron_example,
                 mcp_relations=list(scene.mcp_relations),
             )
             for scene in record.scenes

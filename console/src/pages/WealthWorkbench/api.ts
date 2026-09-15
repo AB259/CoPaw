@@ -46,6 +46,7 @@ interface PlanSceneView {
   start_date?: string | null;
   end_date?: string | null;
   cron_expr: string;
+  cron_example?: string | null;
   mcp_relations: string[];
 }
 
@@ -132,6 +133,7 @@ function mapSceneItem(scene: PlanSceneView): PlanItem {
     categoryLabel: scene.category_label,
     categoryCode: scene.category,
     itemId: scene.item_id,
+    cronExample: scene.cron_example,
     mcpRelations: scene.mcp_relations ?? [],
     direction: scene.direction ?? "",
     cycle: scene.cycle ?? "自定义",
@@ -394,6 +396,7 @@ interface PlanScenePayload {
   start_date?: string;
   end_date?: string;
   cron_expr: string;
+  cron_example?: string | null;
   mcp_relations: string[];
 }
 
@@ -411,6 +414,7 @@ function buildScenePayload(item: PlanItem): PlanScenePayload {
     scene_name: item.sceneName,
     category: item.categoryCode,
     item_id: item.itemId ?? null,
+    cron_example: item.cronExample ?? null,
     direction: item.direction,
     cycle: item.cycle,
     start_date: item.start,

@@ -368,6 +368,7 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
               categoryLabel: scene.category,
               categoryCode: scene.categoryCode,
               itemId: scene.itemId,
+              cronExample: scene.cronExample,
               mcpRelations: scene.mcpRelations,
               direction: scene.desc,
               cycle: "本月",

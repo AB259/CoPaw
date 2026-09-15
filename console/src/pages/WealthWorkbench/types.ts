@@ -49,6 +49,8 @@ export interface PlanItem {
   /** 产品大类英文 code（发布入参用） */
   categoryCode: string;
   itemId?: string | null;
+  /** 场景技能自带的 cron 示例文本（发布时作为定时任务请求内容） */
+  cronExample?: string | null;
   mcpRelations: string[];
   direction: string;
   /** 任务周期（有效期）：本月 / 本季 / 今日 / T+1日 / 自定义 */

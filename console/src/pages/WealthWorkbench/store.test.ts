@@ -133,6 +133,7 @@ const SCENE_FIXTURES = [
     senceName: "保障潜客经营",
     category: "insurance",
     senceDesc: "挖掘高潜保险客户",
+    cronExample: "每日生成高潜保险客户名单",
     mcpRelationList: ["mcp-customer", "mcp-insurance"],
     skillBbkLabel: "总部预置",
   },
@@ -218,6 +219,7 @@ function makeItem(patch: Partial<PlanItem> = {}): PlanItem {
     sceneName: "保障潜客经营",
     categoryLabel: "保险",
     categoryCode: "insurance",
+    cronExample: "每日生成高潜保险客户名单",
     mcpRelations: [],
     direction: "d",
     cycle: "本月",
@@ -337,6 +339,10 @@ describe("WealthWorkbench store", () => {
     const ids = () => useWealthStore.getState().draft.items.map((x) => x.id);
     toggleScene(INSURANCE);
     expect(ids()).toEqual([INSURANCE]);
+    // 选入草稿时携带场景技能的 cronExample（发布时作为定时任务请求内容）
+    expect(useWealthStore.getState().draft.items[0]?.cronExample).toBe(
+      "每日生成高潜保险客户名单",
+    );
     toggleScene(INSURANCE_2);
     expect(ids()).toEqual([INSURANCE, INSURANCE_2]);
     toggleScene("skill-not-in-pool"); // 场景池外的 id 为无效操作
@@ -449,6 +455,14 @@ describe("WealthWorkbench store", () => {
     expect(s.plans).toHaveLength(7);
     expect(s.editingId).toBeNull();
     expect(s.toastText).toContain("规划已发布");
+    // 发布 payload 携带场景技能的 cron_example（后端组装定时任务请求内容用）
+    const post = mockRequest.mock.calls.find(
+      ([p, o]) =>
+        String(p) === "/wealth/plans" &&
+        (o as RequestInit | undefined)?.method === "POST",
+    );
+    const body = JSON.parse(String((post?.[1] as RequestInit).body));
+    expect(body.scenes[0].cron_example).toBe("每日生成高潜保险客户名单");
   });
 
   it("publishPlan 客户经理默认分发给自己", async () => {
