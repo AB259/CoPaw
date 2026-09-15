@@ -60,20 +60,46 @@ async def test_create_and_get_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_for_sap_covers_creator_and_target() -> None:
+async def test_list_for_viewer_covers_creator_and_target() -> None:
     store = WealthPlanStore()
     await store.create(
         make_plan("plan-1", sap_id="zhangwl", targets=["chenjy"]),
     )
     await store.create(make_plan("plan-2", sap_id="liuxt", targets=[]))
 
-    creator_view = await store.list_for_sap("zhangwl")
-    target_view = await store.list_for_sap("chenjy")
-    outsider_view = await store.list_for_sap("wangly")
+    creator_view = await store.list_for_viewer("zhangwl", "rm", None)
+    target_view = await store.list_for_viewer("chenjy", "rm", None)
+    outsider_view = await store.list_for_viewer("wangly", "rm", None)
 
     assert {r.id for r in creator_view} == {"plan-1"}
     assert {r.id for r in target_view} == {"plan-1"}
     assert outsider_view == []
+
+
+@pytest.mark.asyncio
+async def test_list_for_viewer_branch_wide_for_president_and_middle() -> None:
+    store = WealthPlanStore()
+    await store.create(
+        make_plan("plan-1", sap_id="zhangwl", targets=["chenjy"]),
+    )
+    await store.create(make_plan("plan-2", sap_id="liuxt", targets=[]))
+    other_branch = make_plan("plan-3", sap_id="waibu", targets=[])
+    other_branch.bbk_id = "200"
+    await store.create(other_branch)
+
+    # 行长/中台看本行全部规划（fixture 默认 bbk_id=None，需显式补上）
+    for record in store._plans.values():
+        if record.id != "plan-3":
+            record.bbk_id = "100"
+    president_view = await store.list_for_viewer("wangly", "president", "100")
+    middle_view = await store.list_for_viewer("wangly", "middle", "100")
+    rm_view = await store.list_for_viewer("wangly", "rm", "100")
+    no_bbk_view = await store.list_for_viewer("wangly", "president", None)
+
+    assert {r.id for r in president_view} == {"plan-1", "plan-2"}
+    assert {r.id for r in middle_view} == {"plan-1", "plan-2"}
+    assert rm_view == []  # 客户经理不看本行全部
+    assert no_bbk_view == []  # bbk 缺失时退化为个人口径
 
 
 @pytest.mark.asyncio
@@ -126,7 +152,7 @@ async def test_delete_removes_plan() -> None:
     await store.delete("plan-1")
 
     assert await store.get("plan-1") is None
-    assert await store.list_for_sap("zhangwl") == []
+    assert await store.list_for_viewer("zhangwl", "rm", None) == []
 
 
 @pytest.mark.asyncio

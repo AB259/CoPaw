@@ -20,6 +20,7 @@ import {
   useWealthStore,
   validateDraft,
 } from "../store";
+import { findSceneConflicts } from "../utils";
 import type { PlanItem, Scene } from "../types";
 
 const STEP_DEFS = [
@@ -292,6 +293,7 @@ export default function Create() {
   const openDialog = useWealthStore((s) => s.openDialog);
   const toast = useWealthStore((s) => s.toast);
   const targetSapIds = useWealthStore((s) => s.targetSapIds);
+  const plans = useWealthStore((s) => s.plans);
   const navigate = useNavigate();
 
   const [filterCategory, setFilterCategory] = useState("全部");
@@ -346,11 +348,29 @@ export default function Create() {
       return;
     }
     const currentId = editingId;
+    // 行长/中台：草稿场景若已被其他已发布/发布中的规划占用，禁止重复新建发布
+    const conflicts = needsTargets
+      ? findSceneConflicts(plans, draft, currentId)
+      : [];
     openDialog({
       title: currentId ? "保存规划修改" : "发布工作规划",
       body: (
         <>
           <p>请确认以下规划配置：</p>
+          {conflicts.length > 0 && (
+            <p className={styles.pageNote}>
+              <b className={styles.red}>
+                以下经营场景已发布过：
+                {conflicts
+                  .map(
+                    (c) =>
+                      `「${c.scene.sceneName}」（见规划「${c.planName}」）`,
+                  )
+                  .join("、")}
+                。请前往规划看板编辑对应规划，无需新建。
+              </b>
+            </p>
+          )}
           <div className={styles.detailGrid}>
             <div>
               <small>规划名称</small>
@@ -386,6 +406,7 @@ export default function Create() {
         {
           label: currentId ? "确认修改" : "确认发布",
           primary: true,
+          disabled: conflicts.length > 0,
           onClick: () => {
             void publishPlan().then((ok) => {
               if (ok) navigate("/wealth/board");

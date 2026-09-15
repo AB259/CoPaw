@@ -52,6 +52,7 @@ from .publish import (
     delete_removed_scene_jobs,
     launch_publish,
 )
+from .roles import can_view_branch_wide, resolve_role
 from .store import WealthPlanStore, new_plan_id
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,11 @@ def _request_sap_id(request: Request) -> str:
         "X-User-Id",
     )
     return (sap_id or "default").strip()
+
+
+def _request_role(request: Request) -> str:
+    """当前用户角色：由 X-Position-Id 解析（前端 authHeaders 透传父系统岗位）。"""
+    return resolve_role(request.headers.get("X-Position-Id"))
 
 
 def _fmt_dt(value: datetime | None) -> str | None:
@@ -271,10 +277,14 @@ async def create_plan(
 
 @router.get("/plans", response_model=PlanListResponse)
 async def list_plans(request: Request) -> PlanListResponse:
-    """看板列表：我创建的 + 分发给我的。"""
+    """看板列表：客户经理看自己创建 + 分发给自己的；行长/中台看本行全部。"""
     store = _get_store(request)
     viewer = _request_sap_id(request)
-    records = await store.list_for_sap(viewer)
+    records = await store.list_for_viewer(
+        viewer,
+        _request_role(request),
+        getattr(request.state, "bbk_id", None),
+    )
     items = [await _build_view(request, record, viewer) for record in records]
     return PlanListResponse(items=items)
 
@@ -283,7 +293,13 @@ async def list_plans(request: Request) -> PlanListResponse:
 async def get_plan(request: Request, plan_id: str) -> PlanView:
     store = _get_store(request)
     viewer = _request_sap_id(request)
-    record = await _get_visible_plan(store, plan_id, viewer)
+    record = await _get_visible_plan(
+        store,
+        plan_id,
+        viewer,
+        _request_role(request),
+        getattr(request.state, "bbk_id", None),
+    )
     return await _build_view(request, record, viewer)
 
 
@@ -337,13 +353,19 @@ async def _get_visible_plan(
     store: WealthPlanStore,
     plan_id: str,
     viewer: str,
+    role: str,
+    bbk_id: str | None,
 ) -> WealthPlanRecord:
     record = await store.get(plan_id)
     if record is None:
         raise HTTPException(status_code=404, detail="plan not found")
     is_creator = record.sap_id == viewer
     is_target = any(t.sap_id == viewer for t in record.targets)
-    if not is_creator and not is_target:
+    # 行长/中台可读本行（同 bbk_id）全部规划，但仍只读、不可编辑
+    is_branch_peer = (
+        can_view_branch_wide(role) and bool(bbk_id) and record.bbk_id == bbk_id
+    )
+    if not is_creator and not is_target and not is_branch_peer:
         raise HTTPException(status_code=403, detail="forbidden")
     return record
 
