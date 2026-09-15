@@ -19,6 +19,7 @@ import {
   todayKey,
 } from "../utils";
 import { selectCurrentAccount, useWealthStore } from "../store";
+import { fetchAvailableSceneCount } from "../api";
 import { Calendar } from "./Calendar";
 
 const BOARD_TABS = ["全部", "分行关注", "行长关注", "我的关注"];
@@ -53,6 +54,18 @@ export default function Board() {
   const [boardMode, setBoardMode] = useState<"calendar" | "list">("calendar");
   const [dimension, setDimension] = useState<"week" | "month">("month");
   const [anchor, setAnchor] = useState(todayKey);
+  const [availableScenes, setAvailableScenes] = useState<number | null>(null);
+
+  // 「可用能力」统计：全部大类的场景技能总数；接口不可达时保持 "--" 占位
+  useEffect(() => {
+    let alive = true;
+    void fetchAvailableSceneCount().then((count) => {
+      if (alive) setAvailableScenes(count);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const range: [string, string] =
     boardMode === "calendar"
@@ -269,7 +282,7 @@ export default function Board() {
       n: String(sceneCount),
       title: "覆盖经营场景",
       detail: "可用能力",
-      val: "--",
+      val: availableScenes == null ? "--" : `${availableScenes} 个`,
       up: false,
     },
     {

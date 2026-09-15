@@ -187,6 +187,23 @@ export async function fetchScenesByCategory(
   }
 }
 
+/**
+ * 看板「可用能力」统计：全部大类的场景技能总数。
+ * 与 fetchScenesByCategory 不同，接口不可达时返回 null，
+ * 由页面保持 "--" 占位，避免把查询失败误显为 0。
+ */
+export async function fetchAvailableSceneCount(): Promise<number | null> {
+  try {
+    const resp = await request<SceneSkillListResponse>(
+      "/wealth/scene-skills?category=",
+    );
+    return resp.items.length;
+  } catch (error) {
+    console.warn("[Wealth] 可用场景总数查询失败", error);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 客户名单查询：/wealth/name-list（外部接口代理）
 // ---------------------------------------------------------------------------

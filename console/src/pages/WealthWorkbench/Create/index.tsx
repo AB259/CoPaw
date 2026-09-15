@@ -641,6 +641,7 @@ export default function Create() {
                 id="wealthPlanName"
                 value={draft.name}
                 maxLength={40}
+                placeholder="请输入规划名称"
                 onChange={(e) => setDraftName(e.target.value)}
               />
             </div>

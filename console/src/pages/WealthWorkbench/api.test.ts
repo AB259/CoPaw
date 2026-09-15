@@ -73,6 +73,19 @@ describe("WealthWorkbench api", () => {
     await expect(api.fetchNameList("skill-loan-1")).resolves.toEqual([]);
   });
 
+  it("fetchAvailableSceneCount 返回全部大类场景数；失败返回 null", async () => {
+    mockRequest.mockResolvedValueOnce({
+      items: [{ skillId: "a" }, { skillId: "b" }, { skillId: "c" }],
+    });
+    await expect(api.fetchAvailableSceneCount()).resolves.toBe(3);
+    expect(String(mockRequest.mock.calls[0]?.[0])).toBe(
+      "/wealth/scene-skills?category=",
+    );
+
+    mockRequest.mockRejectedValueOnce(new Error("boom"));
+    await expect(api.fetchAvailableSceneCount()).resolves.toBeNull();
+  });
+
   it("fetchTodayCustomers 按任务上下文映射名单并去重", async () => {
     const customers = await api.fetchTodayCustomers(
       [
