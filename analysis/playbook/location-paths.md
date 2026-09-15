@@ -220,3 +220,17 @@ kubectl wait --for=condition=complete job/swe-session-nas-lock-verification --ti
 - 页面入口：`ChatAutoPreviewHtmlProvider.tsx` 在会话加载完成后确定目标 URL；其他消息仍在生成时，已经出现的最新报告仍可自动预览。`AutoPreviewHtmlContext.tsx` 只接受该目标的文件卡片，120ms 防抖后打开一次。URL 比较沿用聊天媒体地址转换，父组件回调变化不能重置已经消费的预览机会。
 - 排错注意：`MessageList` 会倒序挂载消息，不能用组件注册先后判断报告新旧。历史执行默认折叠规则在 `console/src/pages/Chat/sessionApi/index.ts`；最新执行没有报告时，不应回退到折叠的旧执行。加载期间不应消耗 5 秒候选等待窗口。
 - 回归验证：在 `console/` 运行 `npm run test:run -- src/components/agentscope-chat/ChatAutoPreviewHtmlProvider.test.tsx src/components/agentscope-chat/autoPreviewSelection.test.ts src/pages/Chat/components/TaskRunGroupCard/index.test.tsx src/components/agentscope-chat/DownloadFileCard/index.test.tsx`。
+
+## Claw 技能运行看板
+
+- 页面：`/analytics/claw-data-overview`；组件：`console/src/pages/Analytics/ClawDataOverview/index.tsx`。
+- 接口适配：`console/src/api/modules/taskTypeReport.ts`，使用共享 request 向 monitor 的 `/api/monitor/cron/task-type-report` 请求，继承来源与认证头。
+- 日期按同一自然月限制。使用实际认证头 `X-Bbk-Id`：100 可选全部分行，非100只显示本分行并锁定；缺失身份不请求。分行和支行级联选项从 `/task-type-report/options` 查询 `jkh_user_inf` 同一名单快照；切换分行清空支行。
+- 技能明细追加 `skill_detail=true` 和当前行分行/支行/user_id；客户经理查询支持 keyword（姓名/SAP号/岗位）。分行/支行全量查回、先展示20行并本地滚动追加；经理和经理技能明细请求 page/page_size=20，滚动逐页查询。切换条件取消旧请求，后续页失败保留已加载行并重试同一页。
+- `ratio_unit=percent` 的值直接加百分号，不能再乘 100；null 显示“—”，比率可能超过 100%。技能明细是关联归属，不能将明细行相加作为总计。
+- 本地 Vite 将 `/api/monitor` 代理至 `127.0.0.1:9090`；未启动 monitor 时可出现代理 500，先检查该服务，不要在页面伪造数据。
+- 验证入口：`npm run test:run -- src/pages/Analytics/ClawDataOverview/index.test.tsx src/api/modules/taskTypeReport.test.ts`。
+- 开发预览：`http://localhost:5173/analytics/claw-data-overview?demo=1`（注意是 data，不是 date）。仅开发环境启用显式模拟数据，包含三类任务、24 个默认分行及支行/经理/技能明细；不写入数据库。去掉 demo=1 恢复正式接口。
+
+- 统计和技能明细各自通过 GET /task-type-report/export 导出后端 XLSX，传当前完整筛选、移除分页，包含未加载的行；模拟模式禁用导出。50000行以上后端返回413。契约见 docs/superpowers/specs/2026-09-14-claw-report-console/API.md。
+- 客户行为同时展示去重客户数和点击总次数：`insight_customer_count` / `insight_count`、`phone_customer_count` / `phone_count`；次数列位于对应覆盖率之后，非名单方案显示“—”。
