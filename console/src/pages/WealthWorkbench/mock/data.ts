@@ -5,9 +5,6 @@
  */
 import type { Customer } from "../types";
 
-/** 平台可用能力总量（示例），不随本期覆盖场景筛选缩减 */
-export const PLATFORM_CAPABILITY_COUNT = 12;
-
 /** 产品大类：中文名 ↔ 英文 code，与后端 CATEGORY_CODE_BY_LABEL 一致 */
 export const SCENE_CATEGORIES = [
   { label: "保险", code: "insurance" },
