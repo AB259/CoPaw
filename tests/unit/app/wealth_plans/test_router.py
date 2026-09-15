@@ -63,6 +63,7 @@ def plan_payload(**overrides) -> dict:
                 "start_date": "2026-09-01",
                 "end_date": "2026-09-30",
                 "cron_expr": "0 9 * * *",
+                "cron_example": "每日生成高潜保险客户名单",
                 "mcp_relations": ["mcp-customer"],
             },
         ],
@@ -108,6 +109,10 @@ def test_list_visible_to_creator_and_target_only(client: TestClient) -> None:
     assert [p["id"] for p in creator_items["items"]] == [created["id"]]
     assert creator_items["items"][0]["editable"] is True
     assert creator_items["items"][0]["board_status"] == "发布中"
+    assert (
+        creator_items["items"][0]["scenes"][0]["cron_example"]
+        == "每日生成高潜保险客户名单"
+    )
     assert [p["id"] for p in target_items["items"]] == [created["id"]]
     assert target_items["items"][0]["editable"] is False
     assert outsider_items["items"] == []

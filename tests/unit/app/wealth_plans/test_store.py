@@ -31,6 +31,7 @@ def make_plan(
                 scene_name="保障潜客经营",
                 category="insurance",
                 cron_expr="0 9 * * *",
+                cron_example="每日生成高潜保险客户名单",
                 direction="挖掘高潜保险客户",
                 mcp_relations=["mcp-customer", "mcp-insurance"],
             ),
@@ -53,6 +54,7 @@ async def test_create_and_get_roundtrip() -> None:
     assert record.sap_id == "zhangwl"
     assert record.status == PUBLISH_STATUS_PUBLISHING
     assert record.scenes[0].mcp_relations == ["mcp-customer", "mcp-insurance"]
+    assert record.scenes[0].cron_example == "每日生成高潜保险客户名单"
     assert [t.sap_id for t in record.targets] == ["chenjy", "liuxt"]
     assert record.created_at is not None
 

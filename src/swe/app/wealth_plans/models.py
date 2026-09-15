@@ -73,6 +73,10 @@ class PlanSceneInput(_StrictModel):
     start_date: str | None = None
     end_date: str | None = None
     cron_expr: str = Field(min_length=1, description="执行排程 cron 表达式")
+    cron_example: str | None = Field(
+        default=None,
+        description="场景技能自带的 cron 示例文本（定时任务请求内容来源）",
+    )
     mcp_relations: list[str] = Field(default_factory=list)
 
 
@@ -109,6 +113,7 @@ class PlanSceneRecord:
     cycle: str | None = None
     start_date: str | None = None
     end_date: str | None = None
+    cron_example: str | None = None
     mcp_relations: list[str] = field(default_factory=list)
     cron_job_id: str | None = None
     broadcast_task_id: str | None = None
@@ -165,6 +170,7 @@ class PlanSceneView(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     cron_expr: str
+    cron_example: str | None = None
     mcp_relations: list[str] = Field(default_factory=list)
     dispatch_status: str = ""
 

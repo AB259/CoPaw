@@ -49,9 +49,9 @@ _UPDATE_PLAN_SQL = f"""
 _INSERT_SCENE_SQL = f"""
     INSERT INTO {_SCENE_TABLE} (
         plan_id, scene_id, item_id, scene_name, category, direction,
-        cycle, start_date, end_date, cron_expr, mcp_relations,
+        cycle, start_date, end_date, cron_expr, cron_example, mcp_relations,
         cron_job_id, broadcast_task_id, sort_order
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 _INSERT_TARGET_SQL = f"""
@@ -90,6 +90,7 @@ def _row_to_scene(row: dict[str, Any]) -> PlanSceneRecord:
         cycle=row.get("cycle"),
         start_date=row.get("start_date"),
         end_date=row.get("end_date"),
+        cron_example=row.get("cron_example"),
         mcp_relations=_split_mcps(row.get("mcp_relations")),
         cron_job_id=row.get("cron_job_id"),
         broadcast_task_id=row.get("broadcast_task_id"),
@@ -353,6 +354,7 @@ class WealthPlanStore:
                     scene.start_date,
                     scene.end_date,
                     scene.cron_expr,
+                    scene.cron_example,
                     _join_mcps(scene.mcp_relations),
                     scene.cron_job_id,
                     scene.broadcast_task_id,
