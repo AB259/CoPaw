@@ -2,7 +2,7 @@
  * 智能财富工作台 —— 数据访问层测试
  * 规划、场景与客户名单接口不做假数据回退：离线时读路径返回空列表、写路径上抛
  * （错误传播用例见 api.http-errors.test.ts）。
- * 本文件覆盖客户名单映射、触达登记覆盖层与草稿等内存行为。
+ * 本文件覆盖客户名单映射与草稿等内存行为。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./api";
@@ -171,51 +171,9 @@ describe("WealthWorkbench api", () => {
     expect(done[0]).toMatchObject({ channel: "", time: "", note: "" });
   });
 
-  it("reportContact 写入覆盖层，重新拉取名单后回填触达结果", async () => {
-    await api.fetchTodayCustomers([TASK], "10086", "business");
-    const { customers } = await api.reportContact(
-      {
-        id: "skill-loan-1|CUST001",
-        channel: "电话",
-        outcome: "done",
-        note: "已沟通",
-      },
-      "2026-09-14",
-    );
-    const hit = customers.find((c) => c.id === "skill-loan-1|CUST001");
-    expect(hit?.done).toBe(true);
-    expect(hit?.channel).toBe("电话");
-    expect(hit?.time.startsWith("2026-09-14 ")).toBe(true);
-
-    // 重新拉取后触达结果仍回填
-    const again = await api.fetchTodayCustomers([TASK], "10086", "business");
-    expect(again.find((c) => c.id === "skill-loan-1|CUST001")?.done).toBe(true);
-    expect(again.find((c) => c.id === "skill-loan-1|CUST002")?.done).toBe(
-      false,
-    );
-  });
-
-  it("resetMockDb 后触达覆盖层与草稿恢复初始（模拟刷新）", async () => {
-    await api.fetchTodayCustomers([TASK], "10086", "business");
-    await api.reportContact(
-      {
-        id: "skill-loan-1|CUST001",
-        channel: "电话",
-        outcome: "done",
-        note: "已沟通",
-      },
-      "2026-09-14",
-    );
+  it("resetMockDb 后草稿恢复初始（模拟刷新）", async () => {
     await api.saveDraft("rm", { name: "改过的草稿", items: [] });
     api.resetMockDb();
-    const customers = await api.fetchTodayCustomers(
-      [TASK],
-      "10086",
-      "business",
-    );
-    expect(customers.find((c) => c.id === "skill-loan-1|CUST001")?.done).toBe(
-      false,
-    );
     const data = await api.fetchBootstrap("rm");
     expect(data.draft).toEqual({ name: "", items: [] });
   });

@@ -83,6 +83,8 @@ interface WealthState {
   /** 已选中的分发目标 sapId 列表 */
   targetSapIds: string[];
   dialog: DialogState | null;
+  /** 写操作进行中（发布/移除）：弹窗按钮禁用并防重复提交 */
+  acting: boolean;
   toastText: string;
   toastSeq: number;
 
@@ -124,14 +126,6 @@ interface WealthState {
   clearEditingId: () => void;
   publishPlan: () => Promise<boolean>;
   removePlan: (id: string) => Promise<void>;
-
-  // —— 客户触达 ——
-  reportContact: (
-    id: string,
-    channel: string,
-    outcome: "done" | "pending",
-    note: string,
-  ) => Promise<void>;
 
   // —— 全局 UI ——
   openDialog: (dialog: DialogState) => void;
@@ -261,6 +255,7 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
   targetsLoaded: false,
   targetSapIds: [],
   dialog: null,
+  acting: false,
   toastText: "",
   toastSeq: 0,
 
@@ -499,6 +494,8 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
       get().toast("请至少选择一个分发目标");
       return false;
     }
+    if (get().acting) return false; // 防重复提交
+    set({ acting: true });
     const draft = normalizeItems(state.draft);
     try {
       const { plans, created } = await api.publishPlan(
@@ -527,10 +524,14 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
         error instanceof Error ? `发布失败：${error.message}` : "发布失败",
       );
       return false;
+    } finally {
+      set({ acting: false });
     }
   },
 
   removePlan: async (id) => {
+    if (get().acting) return; // 防重复提交
+    set({ acting: true });
     try {
       const { plans } = await api.removePlan(id);
       set({ plans, dialog: null });
@@ -539,20 +540,9 @@ export const useWealthStore = create<WealthState>()((set, get) => ({
       get().toast(
         error instanceof Error ? `移除失败：${error.message}` : "移除失败",
       );
+    } finally {
+      set({ acting: false });
     }
-  },
-
-  reportContact: async (id, channel, outcome, note) => {
-    const { customers } = await api.reportContact(
-      { id, channel, outcome, note },
-      todayKey(),
-    );
-    set({ customers, dialog: null });
-    get().toast(
-      outcome === "done"
-        ? "触达已登记，任务已移至已完成"
-        : "跟进记录已保存，客户保留在待触达清单",
-    );
   },
 
   openDialog: (dialog) => set({ dialog }),
