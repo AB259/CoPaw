@@ -8,7 +8,6 @@ import { Icon } from "./Icon";
 
 /** 消息通知弹窗（原型 showNotifications） */
 function NotificationsDialogBody() {
-  const customers = useWealthStore((s) => s.customers);
   const hasTasks = useCanAccess("tasks");
   return (
     <>
@@ -19,10 +18,7 @@ function NotificationsDialogBody() {
       {hasTasks ? (
         <div className={styles.recommendation}>
           <h3>今日客户清单已准备</h3>
-          <p>
-            目标客户 {customers.length} 人，尚有{" "}
-            {customers.filter((c) => !c.done).length} 人待触达。
-          </p>
+          <p>目标客户名单已生成，请前往「今日任务」查看并跟进。</p>
         </div>
       ) : (
         <div className={styles.recommendation}>
