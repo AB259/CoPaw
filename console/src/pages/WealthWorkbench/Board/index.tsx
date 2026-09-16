@@ -347,15 +347,15 @@ export default function Board() {
       val: "--",
       up: true,
     },
-    {
-      icon: "users",
-      // n: rate + "%",
-      n: "--",
-      title: "任务执行率",
-      detail: "较上月",
-      val: "--",
-      up: true,
-    },
+    // {
+    //   icon: "users",
+    //   // n: rate + "%",
+    //   n: "--",
+    //   title: "任务执行率",
+    //   detail: "较上月",
+    //   val: "--",
+    //   up: true,
+    // },
   ];
 
   return (
