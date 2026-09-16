@@ -5,6 +5,8 @@
  */
 // import { useNavigate } from "react-router-dom"; // 随通知入口一并注释
 import styles from "../index.module.less";
+import { getBbkDisplayName } from "@/constants/bbk";
+import { useIframeStore } from "@/stores/iframeStore";
 import { selectCurrentAccount, useWealthStore } from "../store";
 // import { useCanAccess } from "../store"; // 随通知入口一并注释
 // import { Icon } from "./Icon"; // 随通知入口一并注释
@@ -37,6 +39,8 @@ function NotificationsDialogBody() {
 
 export function Topbar() {
   const account = useWealthStore(selectCurrentAccount);
+  const bbkId = useIframeStore((state) => state.bbk);
+  const branchName = bbkId ? getBbkDisplayName(bbkId) : "";
   // 以下通知相关状态随入口一并注释，恢复时取消注释
   // const openDialog = useWealthStore((s) => s.openDialog);
   // const closeDialog = useWealthStore((s) => s.closeDialog);
@@ -102,7 +106,7 @@ export function Topbar() {
         <span className={styles.sep}></span>
         */}
         <span className={`${styles.department} ${styles.subtle}`}>
-          {[account?.name, account?.department].filter(Boolean).join(" · ")}
+          {[account?.name, branchName].filter(Boolean).join(" · ")}
         </span>
       </div>
     </header>

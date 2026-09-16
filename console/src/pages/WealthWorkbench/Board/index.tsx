@@ -215,7 +215,7 @@ export default function Board() {
                   <th>执行频率</th>
                   <th>目标客户</th>
                   <th>已生成任务</th>
-                  <th>任务执行率</th>
+                  {/* <th>任务执行率</th> */}
                   <th>状态</th>
                   <th>操作</th>
                 </tr>
@@ -343,8 +343,10 @@ export default function Board() {
       icon: "check",
       n: generatedTotal == null ? "--" : generatedTotal.toLocaleString(),
       title: "已生成任务",
-      detail: "较上月",
-      val: "--",
+      detail: "定时任务",
+      val: "",
+      // detail: "较上月",
+      // val: "--",
       up: true,
     },
     // {
@@ -508,7 +510,8 @@ export default function Board() {
                       <small>已生成任务</small>
                       <strong>{tasksText(p)}</strong>
                     </div>
-                    <div className={styles.metric}>
+                    {/* 恢复后，同步修改index.module.less中的样式 */}
+                    {/* <div className={styles.metric}>
                       <small>任务执行率</small>
                       <div className={styles.progressLine}>
                         <div className={styles.progress}>
@@ -516,7 +519,7 @@ export default function Board() {
                         </div>
                         <b>{p.rate}%</b>
                       </div>
-                    </div>
+                    </div> */}
                     <div className={styles.metric}>
                       <small>状态</small>
                       <span
