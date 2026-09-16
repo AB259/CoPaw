@@ -346,6 +346,67 @@ def test_name_list_rejects_invalid_touched(client: TestClient) -> None:
     assert ok.status_code == 200
 
 
+def test_name_list_forwards_touch_filter_context(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """触达筛选请求应携带支行、岗位和登录态。"""
+    captured: dict = {}
+
+    class FakeResponse:
+        def json(self) -> dict:
+            return {"code": "200", "data": {"list": []}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *args) -> bool:
+            return False
+
+        async def post(
+            self,
+            url: str,
+            json: dict,
+            headers: dict | None = None,
+        ) -> FakeResponse:
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setenv("SWE_SKILL_CONFIG_API_BASE", "http://external.test")
+    monkeypatch.setattr(wealth_router.httpx, "AsyncClient", FakeClient)
+
+    resp = client.get(
+        "/api/wealth/name-list?skill_id=SKILL0001&sap_id=80280256&touched=0",
+        headers={
+            **VIEWER,
+            "X-Bbk-Id": "755",
+            "X-Org-Code": "755480",
+            "X-Position-Id": "RB0101",
+            "x-header-cookie": "session=active",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert captured["url"].endswith("/api/agent/workspace/name-list")
+    assert captured["json"] == {
+        "bbkId": "755",
+        "platformSource": "WP",
+        "pageSource": "WP_AGENT_WORKSPACE_TASK_LIST",
+        "touched": 0,
+        "skillId": "SKILL0001",
+        "sapId": "80280256",
+        "subBbkId": "755480",
+        "posId": "RB0101",
+    }
+    assert captured["headers"] == {"Cookie": "session=active"}
+
+
 def test_skill_stats_empty_when_external_absent(client: TestClient) -> None:
     """外部接口未配置/不可达时返回空列表，由前端保持占位。"""
     resp = client.post(
