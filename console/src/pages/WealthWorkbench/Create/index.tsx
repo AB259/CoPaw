@@ -226,6 +226,12 @@ function ScheduleEditor({
 function TaskSchedule({ item, scene }: { item: PlanItem; scene: Scene }) {
   const setTaskCycle = useWealthStore((s) => s.setTaskCycle);
   const setItemDates = useWealthStore((s) => s.setItemDates);
+  const startDateRef = useRef<HTMLInputElement>(null);
+  const endDateRef = useRef<HTMLInputElement>(null);
+
+  const openDatePicker = (ref: { current: HTMLInputElement | null }) => {
+    ref.current?.showPicker?.();
+  };
 
   return (
     <>
@@ -248,16 +254,20 @@ function TaskSchedule({ item, scene }: { item: PlanItem; scene: Scene }) {
         {item.cycle === "自定义" ? (
           <div className={styles.taskCustomDates}>
             <input
+              ref={startDateRef}
               type="date"
               aria-label={`${scene.name}任务开始日期`}
               value={item.start ?? ""}
+              onClick={() => openDatePicker(startDateRef)}
               onChange={(e) => setItemDates(scene.id, "start", e.target.value)}
             />
             <span>至</span>
             <input
+              ref={endDateRef}
               type="date"
               aria-label={`${scene.name}任务结束日期`}
               value={item.end ?? ""}
+              onClick={() => openDatePicker(endDateRef)}
               onChange={(e) => setItemDates(scene.id, "end", e.target.value)}
             />
           </div>
