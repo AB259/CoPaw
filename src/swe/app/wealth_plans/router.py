@@ -269,11 +269,25 @@ async def _fetch_external_name_list(
         body["skillId"] = skill_id
     if sap_id:
         body["sapId"] = sap_id
+    sub_bbk_id = request.headers.get("X-Org-Code")
+    if sub_bbk_id:
+        body["subBbkId"] = sub_bbk_id
+    pos_id = request.headers.get("X-Position-Id")
+    if pos_id:
+        body["posId"] = pos_id
+    cookie = request.headers.get("cookie") or request.headers.get(
+        "x-header-cookie",
+    )
+    headers = {"Cookie": cookie} if cookie else None
     try:
         async with httpx.AsyncClient(
             timeout=_SKILL_CONFIG_TIMEOUT_SECONDS,
         ) as client:
-            resp = await client.post(f"{base}{_NAME_LIST_PATH}", json=body)
+            resp = await client.post(
+                f"{base}{_NAME_LIST_PATH}",
+                json=body,
+                headers=headers,
+            )
             payload = resp.json()
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("name-list request failed: %s", exc)
